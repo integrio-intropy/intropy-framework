@@ -8,15 +8,15 @@ public class StepResultTests
 {
     private static readonly TechnicalFailure Failure = new("");
     private static readonly BusinessIncidentData Incident = new() {Description = "", Context =[]};
-    
-    public static TheoryData<(StepResult<string>, string)> ValidResults =>
-    [
+
+    public static TheoryData<(StepResult<string>, string)> ValidResults => new()
+    {
         (new StepResult<string>.Success(""), "success"),
         (new StepResult<string>.Cancelled(), "cancelled"),
         (new StepResult<string>.TechnicalFailure(Failure), "technical_failure"),
         (new StepResult<string>.BusinessFailure(Incident), "business_failure"),
         (new StepResult<string>.Aborted(), "aborted")
-    ];
+    };
     
     [Theory]
     [MemberData(nameof(ValidResults))]

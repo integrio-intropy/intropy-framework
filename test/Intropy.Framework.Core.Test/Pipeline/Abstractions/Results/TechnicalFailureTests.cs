@@ -6,13 +6,14 @@ namespace Intropy.Framework.Core.Test.Pipeline.Abstractions.Results;
 public class TechnicalFailureTests
 {
     private static readonly TechnicalFailure Failure = new("");
-    public static TheoryData<(TechnicalStepResult<string>, StepResult<string>, string)> ValidResults =>
-    [
+
+    public static TheoryData<(TechnicalStepResult<string>, StepResult<string>, string)> ValidResults => new()
+    {
         (new TechnicalStepResult<string>.Success(""), new StepResult<string>.Success(""), "success"),
         (new TechnicalStepResult<string>.Cancelled(), new StepResult<string>.Cancelled(), "cancelled"),
         (new TechnicalStepResult<string>.Failure(Failure), new StepResult<string>.TechnicalFailure(Failure), "technical_failure"),
         (new TechnicalStepResult<string>.Aborted(), new StepResult<string>.Aborted(), "aborted")
-    ];
+    };
 
     [Theory]
     [MemberData(nameof(ValidResults))]
