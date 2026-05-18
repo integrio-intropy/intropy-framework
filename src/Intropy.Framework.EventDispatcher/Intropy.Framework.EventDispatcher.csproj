@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>CloudEvent routing to typed handlers via dependency injection for the Intropy.Framework pipeline framework.</Description>
+    <PackageTags>intropy;framework;cloudevents;event-dispatcher;routing</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Intropy.Framework.EventDispatcher.Test" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CloudNative.CloudEvents" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Options" />
+  </ItemGroup>
+
+</Project>

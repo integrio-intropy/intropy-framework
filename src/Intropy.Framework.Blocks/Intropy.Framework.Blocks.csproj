@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Reusable pipeline blocks (Extractor, Loader, TransactionalIntegration) for the Intropy.Framework pipeline framework.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;blocks;cloudevents</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intropy.Framework.Adapters\Intropy.Framework.Adapters.csproj" />
+    <ProjectReference Include="..\Intropy.Framework.Core\Intropy.Framework.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CloudNative.CloudEvents" />
+    <PackageReference Include="CloudNative.CloudEvents.SystemTextJson" />
+    <PackageReference Include="Dapr.Client" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,35 @@
+<Project>
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <AnalysisMode>All</AnalysisMode>
+        <AnalysisLevel>9.0</AnalysisLevel>
+        <NoWarn>$(NoWarn);CA1707;CA1711;CA2007;CA1034;CA1031;CA1724;CA1716;CA1848;CA1000</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Authors>Integrio</Authors>
+        <Company>Integrio</Company>
+        <Copyright>Copyright (c) 2026 Integrio</Copyright>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/integrio-intropy/intropy-framework</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/integrio-intropy/intropy-framework</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/README.md')">
+        <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <PropertyGroup>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <DebugType>embedded</DebugType>
+        <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+</Project>

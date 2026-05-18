@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>File adapters (SFTP, local, Azure Blob) for the Intropy.Framework pipeline framework, built on Dapr bindings.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;adapters;dapr;sftp</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.Client" />
+  </ItemGroup>
+
+</Project>

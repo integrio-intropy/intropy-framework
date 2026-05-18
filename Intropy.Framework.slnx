@@ -1,0 +1,12 @@
+<Solution>
+  <Project Path="src\Intropy.Framework.Adapters\Intropy.Framework.Adapters.csproj" />
+  <Project Path="src\Intropy.Framework.Blocks\Intropy.Framework.Blocks.csproj" />
+  <Project Path="src\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
+  <Project Path="src\Intropy.Framework.Core\Intropy.Framework.Core.csproj" />
+  <Project Path="src\Intropy.Framework.EventDispatcher\Intropy.Framework.EventDispatcher.csproj" />
+  <Project Path="test\Intropy.Framework.Blocks.Test\Intropy.Framework.Blocks.Test.csproj" />
+  <Project Path="test\Intropy.Framework.Hosting.Test\Intropy.Framework.Hosting.Test.csproj" />
+  <Project Path="test\Intropy.Framework.Adapters.Test\Intropy.Framework.Adapters.Test.csproj" />
+  <Project Path="test\Intropy.Framework.EventDispatcher.Test\Intropy.Framework.EventDispatcher.Test.csproj" />
+  <Project Path="test\Intropy.Framework.Core.Test\Intropy.Framework.Core.Test.csproj" />
+</Solution>

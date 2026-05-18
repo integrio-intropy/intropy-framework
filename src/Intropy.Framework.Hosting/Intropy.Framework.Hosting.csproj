@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Runtime orchestration (Dapr sidecar lifecycle, idle timeout, message subscription) for the Intropy.Framework pipeline framework.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;hosting;dapr</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intropy.Framework.Blocks\Intropy.Framework.Blocks.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.Client" />
+    <PackageReference Include="Dapr.Messaging" />
+  </ItemGroup>
+
+</Project>
