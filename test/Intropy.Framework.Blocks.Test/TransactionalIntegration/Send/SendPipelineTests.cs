@@ -102,6 +102,67 @@ public class SendPipelineTests
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
 
+    [Fact]
+    public async Task Pipeline_ShouldProcess_WhenIdempotencyNotConfigured()
+    {
+        // Arrange
+        var pipeline = SendPipelineBuilder<MyInput, MyOutput, MyContext>
+            .Create("TestPipeline", _frameworkOptions, _loggerFactory)
+            .WithDeserializer(new JsonDeserializer())
+            .WithExtractor(new PassThroughExtractor())
+            .WithValidator(new SchemaValidator())
+            .WithTransformer(new MyBusinessTransformer())
+            .WithSerializer(new XmlSerializer())
+            .WithSender(new HttpSender())
+            .WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata["MessageId"],
+                ctx => ctx.Metadata["MessageId"])
+            .Build();
+
+        const string rawInput = """
+                                {"orderId": "123", "eventDateTime": "2025-01-01T00:00:01"}
+                                """;
+        var input = new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(rawInput));
+        var context = MyContext.Create();
+
+        // Act
+        var (result, _) = await pipeline.Execute(input, context);
+
+        // Assert
+        Assert.IsType<StepResult<string>.Success>(result);
+        await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().GetStatusAsync(Arg.Any<MessageInfo>());
+        await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().CommitAsync(Arg.Any<MessageInfo>());
+    }
+
+    [Fact]
+    public async Task Pipeline_ShouldProcess_WhenBusinessIncidentsNotConfigured()
+    {
+        // Arrange
+        var pipeline = SendPipelineBuilder<MyInput, MyOutput, MyContext>
+            .Create("TestPipeline", _frameworkOptions, _loggerFactory)
+            .WithDeserializer(new JsonDeserializer())
+            .WithIdempotency(_idempotencyServiceClient, (i, _) => i.OrderId, (i, _) => i.EventDateTime)
+            .WithExtractor(new PassThroughExtractor())
+            .WithValidator(new SchemaValidator())
+            .WithTransformer(new MyBusinessTransformer())
+            .WithSerializer(new XmlSerializer())
+            .WithSender(new HttpSender())
+            .Build();
+
+        const string rawInput = """
+                                {"orderId": "_", "eventDateTime": "2025-01-01T00:00:01"}
+                                """;
+        var input = new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(rawInput));
+        var context = MyContext.Create();
+
+        // Act
+        var (result, _) = await pipeline.Execute(input, context);
+
+        // Assert - validation fails and there's no router to convert the failure to success
+        Assert.IsType<StepResult<string>.BusinessFailure>(result);
+        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+    }
+
     private SendPipelineBuilder<MyInput, MyOutput, MyContext> GetPreparedPipelineBuilder()
     {
         var pipelineBuilder = SendPipelineBuilder<MyInput, MyOutput, MyContext>

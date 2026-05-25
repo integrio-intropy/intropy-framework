@@ -224,20 +224,15 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
     /// <exception cref="InvalidOperationException">Thrown when any of the required services are not configured.</exception>
     public SendPipeline<TInput, TOutput, TCtx> Build()
     {
-        // Validate all required steps are set
+        // Validate all required steps are set. Idempotency and business incident routing are optional and
+        // are skipped at runtime when not configured (see SendPipeline using AddOptionalStep/AddOptionalFinalizer).
         if (_deserializer == null)
             throw new InvalidOperationException($"{nameof(DeserializeStep<,>)} must be configured");
-        if (_idempotencyChecker == null)
-            throw new InvalidOperationException($"{nameof(IdempotencyCheckStep<,>)} must be configured");
         if (_validator == null) throw new InvalidOperationException($"{nameof(ValidateStep<,>)} must be configured");
         if (_transformer == null)
             throw new InvalidOperationException($"{nameof(TransformStep<,,>)} must be configured");
         if (_serializer == null) throw new InvalidOperationException($"{nameof(SerializeStep<,>)} must be configured");
         if (_sender == null) throw new InvalidOperationException($"{nameof(SendStep<>)} must be configured");
-        if (_idempotencyRecorder == null)
-            throw new InvalidOperationException($"{nameof(IdempotencyRecordStep<,>)} must be configured");
-        if (_businessIncidentRouter == null)
-            throw new InvalidOperationException($"{nameof(BusinessIncidentRouteStep<,>)} must be configured");
 
         return new SendPipeline<TInput, TOutput, TCtx>(
             _pipelineName,
