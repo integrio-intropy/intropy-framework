@@ -171,6 +171,73 @@ public static class Pipeline
     }
 
     /// <summary>
+    /// Adds an optional <see cref="Step{T,T,TCtx}"/> to the pipeline. If the step is null, the input is passed through unchanged.
+    /// Only applicable for identity-type steps where input and output types are the same.
+    /// </summary>
+    /// <param name="input">The previous step</param>
+    /// <param name="step">The optional step to add, or null to skip</param>
+    /// <typeparam name="T">The type that enters and exits the step</typeparam>
+    /// <typeparam name="TCtx">The type of context used in the step</typeparam>
+    /// <returns></returns>
+    public static Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)>
+        AddOptionalStep<T, TCtx>(
+            this Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)> input,
+            Step<T, T, TCtx>? step)
+    {
+        return step is null ? input : input.AddStep(step);
+    }
+
+    /// <summary>
+    /// Adds an optional <see cref="BusinessStep{T,T,TCtx}"/> to the pipeline. If the step is null, the input is passed through unchanged.
+    /// Only applicable for identity-type steps where input and output types are the same.
+    /// </summary>
+    /// <param name="input">The previous step</param>
+    /// <param name="step">The optional step to add, or null to skip</param>
+    /// <typeparam name="T">The type that enters and exits the step</typeparam>
+    /// <typeparam name="TCtx">The type of context used in the step</typeparam>
+    /// <returns></returns>
+    public static Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)>
+        AddOptionalStep<T, TCtx>(
+            this Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)> input,
+            BusinessStep<T, T, TCtx>? step)
+    {
+        return step is null ? input : input.AddStep(step);
+    }
+
+    /// <summary>
+    /// Adds an optional <see cref="TechnicalStep{T,T,TCtx}"/> to the pipeline. If the step is null, the input is passed through unchanged.
+    /// Only applicable for identity-type steps where input and output types are the same.
+    /// </summary>
+    /// <param name="input">The previous step</param>
+    /// <param name="step">The optional step to add, or null to skip</param>
+    /// <typeparam name="T">The type that enters and exits the step</typeparam>
+    /// <typeparam name="TCtx">The type of context used in the step</typeparam>
+    /// <returns></returns>
+    public static Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)>
+        AddOptionalStep<T, TCtx>(
+            this Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)> input,
+            TechnicalStep<T, T, TCtx>? step)
+    {
+        return step is null ? input : input.AddStep(step);
+    }
+
+    /// <summary>
+    /// Adds an optional <see cref="Finalizer{T,TCtx}"/> to the pipeline. If the finalizer is null, the input is passed through unchanged.
+    /// </summary>
+    /// <param name="input">The previous step</param>
+    /// <param name="finalizer">The optional finalizer to add, or null to skip</param>
+    /// <typeparam name="T">The type that enters the finalizer</typeparam>
+    /// <typeparam name="TCtx">The type of context used in the finalizer</typeparam>
+    /// <returns></returns>
+    public static Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)>
+        AddOptionalFinalizer<T, TCtx>(
+            this Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)> input,
+            Finalizer<T, TCtx>? finalizer)
+    {
+        return finalizer is null ? input : input.AddFinalizer(finalizer);
+    }
+
+    /// <summary>
     /// Adds a <see cref="Finalizer{T,TCtx}"/> to the pipeline. Will only execute based on the configured finalizer trigger flag.
     /// </summary>
     /// <param name="input">The previous step</param>
