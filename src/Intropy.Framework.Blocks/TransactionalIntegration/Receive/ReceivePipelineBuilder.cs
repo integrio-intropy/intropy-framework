@@ -134,15 +134,14 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     /// <exception cref="InvalidOperationException">Thrown when any of the required steps are not configured.</exception>
     public ReceivePipeline<TCtx> Build()
     {
+        // Business incident routing is optional and is skipped at runtime when not configured
+        // (see ReceivePipeline using AddOptionalFinalizer).
         if (_receiver == null)
             throw new InvalidOperationException($"{nameof(ReceiveStep<TCtx>)} must be configured");
         if (_enqueuer == null)
             throw new InvalidOperationException($"{nameof(EnqueueStep<TCtx>)} must be configured");
         if (_completer == null)
             throw new InvalidOperationException($"{nameof(CompleteStep<TCtx>)} must be configured");
-        if (_businessIncidentRouter == null)
-            throw new InvalidOperationException(
-                $"{nameof(BusinessIncidentRouteStep<SourceItem, TCtx>)} must be configured");
 
         return new ReceivePipeline<TCtx>(
             _pipelineName,

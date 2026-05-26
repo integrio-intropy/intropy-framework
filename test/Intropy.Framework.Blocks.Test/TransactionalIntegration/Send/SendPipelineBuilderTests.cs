@@ -1,7 +1,6 @@
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.Shared;
-using Intropy.Framework.Blocks.Shared.Steps;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send.Steps;
 using Intropy.Framework.Core.Configuration;
@@ -95,11 +94,9 @@ public class SendPipelineBuilderTests
     [Theory]
     [InlineData(typeof(ValidateStep<,>))]
     [InlineData(typeof(DeserializeStep<,>))]
-    [InlineData(typeof(IdempotencyCheckStep<,>))]
     [InlineData(typeof(TransformStep<,,>))]
     [InlineData(typeof(SerializeStep<,>))]
     [InlineData(typeof(SendStep<>))]
-    [InlineData(typeof(BusinessIncidentRouteStep<,>))]
     public void Build_WhenDependencyMissing_ThrowsInvalidOperationException(Type missingDependency)
     {
         // Arrange
@@ -109,6 +106,66 @@ public class SendPipelineBuilderTests
         // Act & Assert
         var exception = Assert.Throws<InvalidOperationException>(() => builder.Build());
         Assert.Contains(exceptionMessageMatch, exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Build_WithoutIdempotency_Succeeds()
+    {
+        // Arrange
+        var builder = GetBuilder()
+            .WithDeserializer(_deserializer)
+            .WithExtractor(_extractor)
+            .WithValidator(_validator)
+            .WithTransformer(_transformer)
+            .WithSerializer(_serializer)
+            .WithSender(_sender)
+            .WithBusinessIncidents(_businessIncidentServiceClient, x => x.Metadata["TEST"],
+                x => x.Metadata["TEST"]);
+
+        // Act
+        var result = builder.Build();
+
+        // Assert
+        Assert.IsType<SendPipeline<int, int, Context>>(result);
+    }
+
+    [Fact]
+    public void Build_WithoutBusinessIncidents_Succeeds()
+    {
+        // Arrange
+        var builder = GetBuilder()
+            .WithDeserializer(_deserializer)
+            .WithIdempotency(_idempotencyServiceClient, (_, _) => "test", (_, _) => DateTime.Now)
+            .WithExtractor(_extractor)
+            .WithValidator(_validator)
+            .WithTransformer(_transformer)
+            .WithSerializer(_serializer)
+            .WithSender(_sender);
+
+        // Act
+        var result = builder.Build();
+
+        // Assert
+        Assert.IsType<SendPipeline<int, int, Context>>(result);
+    }
+
+    [Fact]
+    public void Build_WithoutIdempotencyOrBusinessIncidents_Succeeds()
+    {
+        // Arrange
+        var builder = GetBuilder()
+            .WithDeserializer(_deserializer)
+            .WithExtractor(_extractor)
+            .WithValidator(_validator)
+            .WithTransformer(_transformer)
+            .WithSerializer(_serializer)
+            .WithSender(_sender);
+
+        // Act
+        var result = builder.Build();
+
+        // Assert
+        Assert.IsType<SendPipeline<int, int, Context>>(result);
     }
 
     [Fact]
@@ -163,8 +220,7 @@ public class SendPipelineBuilderTests
         if (skip != typeof(DeserializeStep<,>))
             builder.WithDeserializer(_deserializer);
 
-        if (skip != typeof(IdempotencyCheckStep<,>))
-            builder.WithIdempotency(_idempotencyServiceClient, (_, _) => "test", (_, _) => DateTime.Now);
+        builder.WithIdempotency(_idempotencyServiceClient, (_, _) => "test", (_, _) => DateTime.Now);
 
         if (skip != typeof(ExtractStep<,>))
             builder.WithExtractor(_extractor);
@@ -181,9 +237,8 @@ public class SendPipelineBuilderTests
         if (skip != typeof(SendStep<>))
             builder.WithSender(_sender);
 
-        if (skip != typeof(BusinessIncidentRouteStep<,>))
-            builder.WithBusinessIncidents(_businessIncidentServiceClient, x => x.Metadata["TEST"],
-                x => x.Metadata["TEST"]);
+        builder.WithBusinessIncidents(_businessIncidentServiceClient, x => x.Metadata["TEST"],
+            x => x.Metadata["TEST"]);
 
         return builder;
     }

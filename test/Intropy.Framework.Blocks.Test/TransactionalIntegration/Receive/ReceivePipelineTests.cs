@@ -99,6 +99,50 @@ public class ReceivePipelineTests
     }
 
     [Fact]
+    public async Task Execute_WithoutBusinessIncidents_ProcessesSuccessfully()
+    {
+        // Arrange
+        var pipeline = GetPipelineBuilder()
+            .WithReceiver(new SuccessfulReceiver())
+            .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
+            .WithCompleter(new SuccessfulCompleter())
+            .Build();
+
+        var itemInfo = new SourceItemInfo("test-file.txt");
+        var context = ReceiveContext.Create();
+
+        // Act
+        var (result, _) = await pipeline.Execute(itemInfo, context);
+
+        // Assert
+        Assert.IsType<StepResult<SourceItem>.Success>(result);
+        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task Execute_WithoutBusinessIncidents_WhenReceiveFails_ReturnsBusinessFailure()
+    {
+        // Arrange
+        var pipeline = GetPipelineBuilder()
+            .WithReceiver(new FailingReceiver())
+            .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
+            .WithCompleter(new SuccessfulCompleter())
+            .Build();
+
+        var itemInfo = new SourceItemInfo("missing-file.txt");
+        var context = ReceiveContext.Create();
+
+        // Act
+        var (result, _) = await pipeline.Execute(itemInfo, context);
+
+        // Assert - no router means the failure surfaces instead of being routed
+        Assert.IsType<StepResult<SourceItem>.BusinessFailure>(result);
+        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+    }
+
+    [Fact]
     public async Task Execute_ProcessesMultipleItems()
     {
         // Arrange

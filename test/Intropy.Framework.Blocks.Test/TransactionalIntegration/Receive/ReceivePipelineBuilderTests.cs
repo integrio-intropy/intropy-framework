@@ -63,7 +63,6 @@ public class ReceivePipelineBuilderTests
     [InlineData(typeof(ReceiveStep<>))]
     [InlineData(typeof(EnqueueStep<>))]
     [InlineData(typeof(CompleteStep<>))]
-    [InlineData(typeof(BusinessIncidentRouteStep<,>))]
     public void Build_WhenDependencyMissing_ThrowsInvalidOperationException(Type missingDependency)
     {
         var builder = ConfigureAllDependenciesExcept(missingDependency);
@@ -88,6 +87,19 @@ public class ReceivePipelineBuilderTests
         Assert.IsType<ReceivePipeline<ReceiveContext>>(result);
     }
 
+    [Fact]
+    public void Build_WithoutBusinessIncidents_Succeeds()
+    {
+        var builder = GetBuilder()
+            .WithReceiver(_receiver)
+            .WithEnqueuer(_enqueuer)
+            .WithCompleter(_completer);
+
+        var result = builder.Build();
+
+        Assert.IsType<ReceivePipeline<ReceiveContext>>(result);
+    }
+
     private ReceivePipelineBuilder<ReceiveContext> ConfigureAllDependenciesExcept(Type skip)
     {
         var builder = GetBuilder();
@@ -101,9 +113,8 @@ public class ReceivePipelineBuilderTests
         if (skip != typeof(CompleteStep<>))
             builder.WithCompleter(_completer);
 
-        if (skip != typeof(BusinessIncidentRouteStep<,>))
-            builder.WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata["sourceItemId"],
-                ctx => ctx.Metadata["sourceItemId"]);
+        builder.WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata["sourceItemId"],
+            ctx => ctx.Metadata["sourceItemId"]);
 
         return builder;
     }

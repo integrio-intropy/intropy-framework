@@ -13,7 +13,7 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 ///   <item>Receive: reads content from a source (e.g., file adapter)</item>
 ///   <item>Enqueue: publishes the content to a message queue</item>
 ///   <item>Complete: handles cleanup (delete/archive source)</item>
-///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
+///   <item>Route business incidents (optional): routes any business incidents that occurred during the execution</item>
 /// </list>
 /// </summary>
 /// <typeparam name="TCtx">The type of the context used in the pipeline.</typeparam>
@@ -22,14 +22,14 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 /// <param name="receiver">The step that reads content from the source.</param>
 /// <param name="enqueuer">The step that publishes content to the queue.</param>
 /// <param name="completer">The step that handles cleanup.</param>
-/// <param name="businessIncidentRouter">The finalizer that routes business incidents.</param>
+/// <param name="businessIncidentRouter">Optional finalizer that routes business incidents. Skipped when null.</param>
 public class ReceivePipeline<TCtx>(
     string pipelineName,
     ILogger logger,
     ReceiveStep<TCtx> receiver,
     EnqueueStep<TCtx> enqueuer,
     CompleteStep<TCtx> completer,
-    BusinessIncidentRouteStep<SourceItem, TCtx> businessIncidentRouter) : IReceivePipeline<TCtx> where TCtx : Context
+    BusinessIncidentRouteStep<SourceItem, TCtx>? businessIncidentRouter) : IReceivePipeline<TCtx> where TCtx : Context
 {
     /// <summary>
     /// Executes the pipeline for a single source item.
@@ -46,7 +46,7 @@ public class ReceivePipeline<TCtx>(
                 .AddStep(receiver)
                 .AddStep(enqueuer)
                 .AddStep(completer)
-                .AddFinalizer(businessIncidentRouter),
+                .AddOptionalFinalizer(businessIncidentRouter),
             pipelineName: pipelineName,
             logger: logger,
             configureActivity: activity => activity?.SetTag("source_item_id", itemInfo.Id),

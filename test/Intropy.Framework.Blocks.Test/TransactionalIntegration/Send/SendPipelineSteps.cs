@@ -6,7 +6,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Send.Steps;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using JetBrains.Annotations;
 
-namespace Intropy.Framework.Blocks.Test.TransactionalIntegration;
+namespace Intropy.Framework.Blocks.Test.TransactionalIntegration.Send;
 
 public sealed class MyInput
 {
