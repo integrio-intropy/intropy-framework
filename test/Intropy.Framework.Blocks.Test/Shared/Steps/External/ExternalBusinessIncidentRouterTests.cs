@@ -68,16 +68,20 @@ public class ExternalBusinessIncidentRouterTests
         // Arrange
         var router = CreateRouter();
         var stepContext = GetContext("123");
-        var result = new StepResult<string>.Success("");
+        var result = new StepResult<string>.Success("1");
 
         // Act
-        await router.ExecuteAsync(result, stepContext, CancellationToken.None);
+        var (finalResult, _) = await router.ExecuteAsync(result, stepContext, CancellationToken.None);
+        var castResult = (StepResult<string>.Success)finalResult;
+
 
         // Assert
         await _mockClient.DidNotReceive().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
         await _mockClient.DidNotReceive().Resolve(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<string?>());
+
+        Assert.Equal(result.Value, castResult.Value);
     }
 
     [Fact]
@@ -86,16 +90,19 @@ public class ExternalBusinessIncidentRouterTests
         // Arrange
         var router = CreateRouter();
         var stepContext = GetContext("123") with { IsRetry = true };
-        var result = new StepResult<string>.Success("");
+        var result = new StepResult<string>.Success("1");
 
         // Act
-        await router.ExecuteAsync(result, stepContext, CancellationToken.None);
+        var (finalResult, _) = await router.ExecuteAsync(result, stepContext, CancellationToken.None);
+        var castResult = (StepResult<string>.Success)finalResult;
 
         // Assert
         await _mockClient.DidNotReceive().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
         await _mockClient.Received(1).Resolve(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<string?>());
+        
+        Assert.Equal(result.Value, castResult.Value);
     }
 
     [Fact]

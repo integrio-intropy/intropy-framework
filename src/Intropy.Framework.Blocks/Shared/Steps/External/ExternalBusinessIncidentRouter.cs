@@ -35,8 +35,8 @@ public class ExternalBusinessIncidentRouter<T, TCtx>(
 
         return result switch
         {
-            StepResult<T>.Success when context.IsRetry => await ResolveBusinessIncident(context),
-            StepResult<T>.Success => (new StepResult<T>.Success(defaultValueFactory()), context),
+            StepResult<T>.Success s when context.IsRetry => await ResolveBusinessIncident(s, context),
+            StepResult<T>.Success s => (s, context),
             StepResult<T>.BusinessFailure businessFailure => await TriggerBusinessIncident(businessFailure, context),
             _ => throw new UnreachableException(
                 "Unreachable") // this.Triggers is configured to only run this step on Success | BusinessFailure
@@ -68,7 +68,7 @@ public class ExternalBusinessIncidentRouter<T, TCtx>(
         return (new StepResult<T>.Success(defaultValueFactory()), context);
     }
 
-    private async Task<(StepResult<T> Result, TCtx context)> ResolveBusinessIncident(TCtx context)
+    private async Task<(StepResult<T> Result, TCtx context)> ResolveBusinessIncident(StepResult<T> result, TCtx context)
     {
         var source = FormatSource(frameworkOptions);
         var messageId = messageIdExtractor(context);
@@ -90,7 +90,7 @@ public class ExternalBusinessIncidentRouter<T, TCtx>(
             return (new StepResult<T>.TechnicalFailure(tf), context);
         }
 
-        return (new StepResult<T>.Success(defaultValueFactory()), context);
+        return (result, context);
     }
 
     [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase",
