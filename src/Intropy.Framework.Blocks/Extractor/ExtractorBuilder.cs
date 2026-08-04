@@ -164,7 +164,7 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <remarks>
     /// Register the sender against the abstract base type, e.g.
     /// <c>services.AddSingleton&lt;SendStep&lt;MyContext&gt;&gt;(sp =&gt; new DaprTopicPublisher&lt;MyContext&gt;(...))</c>.
-    /// The sender is resolved once at build time; register it as a singleton (or transient) rather than scoped.
+    /// The sender is resolved once, when this method is called; register it as a singleton (or transient) rather than scoped.
     /// </remarks>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when no <see cref="SendStep{TCtx}"/> is registered in the service provider.</exception>
@@ -331,7 +331,7 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
         if (_sender == null)
             throw new InvalidOperationException(
-                "Sender step must be configured using WithDaprTopicPublisher(), WithSender() or WithSenderFromServices()");
+                "Sender step must be configured using WithDaprTopicPublisher(), WithDaprServiceInvoker(), WithSender() or WithSenderFromServices()");
 
         if (_idempotencyRecorder == null)
             throw new InvalidOperationException("Idempotency must be configured using WithIdempotency()");

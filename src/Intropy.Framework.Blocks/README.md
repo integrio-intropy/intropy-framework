@@ -42,7 +42,7 @@ var extractor = ExtractorBuilder<Order, OrderDto, OrderContext>.Create("orders",
     .Build();
 ```
 
-The sender is resolved once at `Build()` time — register it as a singleton (or transient), not scoped.
+The sender is resolved once, when `WithSenderFromServices()` is called — register it as a singleton (or transient), not scoped.
 
 ## Install
 

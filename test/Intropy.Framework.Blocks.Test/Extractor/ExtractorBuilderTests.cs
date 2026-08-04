@@ -251,7 +251,7 @@ public class ExtractorBuilderTests
     public void WithSenderFromServices_WhenSenderIsMissing_ThrowsException()
     {
         // Arrange
-        var serviceProvider = GetServiceCollection().RemoveAll<SendStep<Context>>().BuildServiceProvider();
+        var serviceProvider = GetServiceCollection().BuildServiceProvider();
         var builder = ExtractorBuilder<int, int, Context>.Create("Test", serviceProvider);
 
         // Act & Assert

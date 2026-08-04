@@ -162,7 +162,7 @@ public class LoaderBuilderTests
     public void WithSenderFromServices_WhenSenderIsMissing_ThrowsException()
     {
         // Arrange
-        var serviceProvider = GetServiceCollection().RemoveAll<SendStep<int, Context>>().BuildServiceProvider();
+        var serviceProvider = GetServiceCollection().BuildServiceProvider();
         var builder = LoaderBuilder<int, int, Context>.Create("Test", serviceProvider);
 
         // Act & Assert
