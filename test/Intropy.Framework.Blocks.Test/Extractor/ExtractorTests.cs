@@ -4,6 +4,7 @@ using Dapr.Client;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.Extractor;
+using Intropy.Framework.Blocks.Extractor.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
@@ -170,6 +171,35 @@ public class ExtractorTests
         // Assert                       
         Assert.IsType<StepResult<CloudEvent>.Success>(result);
         Assert.Equal(customHash, finalContext.Metadata[IdempotencyContextKeys.Hash]);
+    }
+
+    [Fact]
+    public async Task Execute_WithCloudEventSerializeStep_ProducesEquivalentEnvelope()
+    {
+        // Arrange - register the reusable step through the existing WithSerializer overload
+        const string customerId = "1337";
+        var context = GetInitialContext(customerId);
+
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider())
+            .WithSerializer(new CloudEventSerializeStep<CustomerOut, Context>(
+                subject: c => c.CustomerId.ToString(),
+                time: _ => DateTimeOffset.UtcNow))
+            .Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(customerId, context);
+
+        // Assert - envelope equivalent to the hand-rolled CustomerSerializer: same Subject
+        // and Data, a fresh parseable Id, a set Time, and the default DataContentType
+        var success = Assert.IsType<StepResult<CloudEvent>.Success>(result);
+        var cloudEvent = success.Value;
+        Assert.Equal(customerId, cloudEvent.Subject);
+        Assert.Equal("application/json", cloudEvent.DataContentType);
+        Assert.NotNull(cloudEvent.Time);
+        Assert.NotEqual(default, cloudEvent.Time.Value);
+        Assert.True(Guid.TryParse(cloudEvent.Id, out _));
+        var data = Assert.IsType<CustomerOut>(cloudEvent.Data);
+        Assert.Equal(1337, data.CustomerId);
     }
 
     [Fact]
