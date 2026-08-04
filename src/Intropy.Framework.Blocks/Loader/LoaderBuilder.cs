@@ -155,7 +155,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <remarks>
     /// Register the sender against the abstract base type, e.g.
     /// <c>services.AddSingleton&lt;SendStep&lt;MyOutput, MyContext&gt;&gt;(sp =&gt; new MySender(...))</c>.
-    /// The sender is resolved once at build time; register it as a singleton (or transient) rather than scoped.
+    /// The sender is resolved once, when this method is called; register it as a singleton (or transient) rather than scoped.
     /// </remarks>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when no <see cref="SendStep{T,TCtx}"/> is registered in the service provider.</exception>
