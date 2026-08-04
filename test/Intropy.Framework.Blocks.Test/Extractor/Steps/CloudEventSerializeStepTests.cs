@@ -44,6 +44,20 @@ public class CloudEventSerializeStepTests
         Assert.Equal("time", exception.ParamName);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Constructor_WithInvalidDataContentType_ThrowsArgumentException(string? dataContentType)
+    {
+        // Act & Assert
+        Assert.Throws<ArgumentException>(() =>
+            new CloudEventSerializeStep<CustomerOut, Context>(
+                c => c.CustomerId.ToString(),
+                _ => DateTimeOffset.UtcNow,
+                dataContentType!));
+    }
+
     #endregion
 
     #region ExecuteAsync - Happy Path Tests

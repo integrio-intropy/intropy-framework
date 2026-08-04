@@ -26,6 +26,8 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 /// <param name="subject">Extracts the subject identifying the entity the event is about.</param>
 /// <param name="time">Extracts the time the event occurred in the source system.</param>
 /// <param name="dataContentType">The content type of the data payload. Defaults to <c>application/json</c>.</param>
+/// <exception cref="ArgumentNullException">Thrown if <paramref name="subject"/> or <paramref name="time"/> is null.</exception>
+/// <exception cref="ArgumentException">Thrown if <paramref name="dataContentType"/> is null or whitespace.</exception>
 public class CloudEventSerializeStep<TOutput, TCtx>(
     Func<TOutput, string> subject,
     Func<TOutput, DateTimeOffset> time,
@@ -37,7 +39,10 @@ public class CloudEventSerializeStep<TOutput, TCtx>(
     private readonly Func<TOutput, DateTimeOffset> _time =
         time ?? throw new ArgumentNullException(nameof(time));
 
-    private readonly string _dataContentType = dataContentType;
+    private readonly string _dataContentType =
+        string.IsNullOrWhiteSpace(dataContentType)
+            ? throw new ArgumentException("Data content type cannot be null or whitespace", nameof(dataContentType))
+            : dataContentType;
 
     /// <inheritdoc/>
     public override Task<(TechnicalStepResult<CloudEvent> Result, TCtx Context)> ExecuteAsync(
@@ -47,7 +52,7 @@ public class CloudEventSerializeStep<TOutput, TCtx>(
         if (string.IsNullOrWhiteSpace(subjectValue))
         {
             var tf = new TechnicalFailure(
-                "CloudEvent.Subject must be set by the serialize step. The subject identifies the entity this event is about.");
+                "CloudEvent.Subject must be set by the SerializeStep. The subject identifies the entity this event is about.");
             return Task.FromResult<(TechnicalStepResult<CloudEvent>, TCtx)>(
                 (new TechnicalStepResult<CloudEvent>.Failure(tf), context));
         }
@@ -56,7 +61,7 @@ public class CloudEventSerializeStep<TOutput, TCtx>(
         if (timeValue == default)
         {
             var tf = new TechnicalFailure(
-                "CloudEvent.Time must be set by the serialize step. The time indicates when the event occurred in the source system.");
+                "CloudEvent.Time must be set by the SerializeStep. The time indicates when the event occurred in the source system.");
             return Task.FromResult<(TechnicalStepResult<CloudEvent>, TCtx)>(
                 (new TechnicalStepResult<CloudEvent>.Failure(tf), context));
         }
