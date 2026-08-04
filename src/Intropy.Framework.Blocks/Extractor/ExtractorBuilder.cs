@@ -157,6 +157,28 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures sending by resolving the registered <see cref="SendStep{TCtx}"/> from the service provider.
+    /// Use this when the sender is registered in DI, so the "which sender?" decision lives in service
+    /// registration alongside the other external edges, and tests can replace the registration with a fake.
+    /// </summary>
+    /// <remarks>
+    /// Register the sender against the abstract base type, e.g.
+    /// <c>services.AddSingleton&lt;SendStep&lt;MyContext&gt;&gt;(sp =&gt; new DaprTopicPublisher&lt;MyContext&gt;(...))</c>.
+    /// The sender is resolved once at build time; register it as a singleton (or transient) rather than scoped.
+    /// </remarks>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <see cref="SendStep{TCtx}"/> is registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithSenderFromServices()
+    {
+        _sender = _serviceProvider.GetService<SendStep<TCtx>>()
+                  ?? throw new InvalidOperationException(
+                      $"{nameof(SendStep<TCtx>)}<{typeof(TCtx).Name}> is not registered in the service provider. " +
+                      $"Please register it using services.AddSingleton<{nameof(SendStep<TCtx>)}<{typeof(TCtx).Name}>>(...) " +
+                      $"with a sender implementation (e.g. {nameof(DaprTopicPublisher<TCtx>)}).");
+        return this;
+    }
+
+    /// <summary>
     /// Configures sending CloudEvents to a Dapr pub/sub topic.
     /// This is the recommended way to configure sending for extractors.
     /// The publisher will set the source and type on the CloudEvent from the configured values,
@@ -309,7 +331,7 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
         if (_sender == null)
             throw new InvalidOperationException(
-                "Sender step must be configured using WithDaprTopicPublisher() or WithSender()");
+                "Sender step must be configured using WithDaprTopicPublisher(), WithSender() or WithSenderFromServices()");
 
         if (_idempotencyRecorder == null)
             throw new InvalidOperationException("Idempotency must be configured using WithIdempotency()");
