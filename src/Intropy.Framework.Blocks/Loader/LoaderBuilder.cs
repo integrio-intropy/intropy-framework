@@ -148,6 +148,28 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures sending by resolving the registered <see cref="SendStep{T,TCtx}"/> from the service provider.
+    /// Use this when the sender is registered in DI, so the "which sender?" decision lives in service
+    /// registration alongside the other external edges, and tests can replace the registration with a fake.
+    /// </summary>
+    /// <remarks>
+    /// Register the sender against the abstract base type, e.g.
+    /// <c>services.AddSingleton&lt;SendStep&lt;MyOutput, MyContext&gt;&gt;(sp =&gt; new MySender(...))</c>.
+    /// The sender is resolved once at build time; register it as a singleton (or transient) rather than scoped.
+    /// </remarks>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <see cref="SendStep{T,TCtx}"/> is registered in the service provider.</exception>
+    public LoaderBuilder<TInput, TOutput, TCtx> WithSenderFromServices()
+    {
+        _sender = _serviceProvider.GetService<SendStep<TOutput, TCtx>>()
+                  ?? throw new InvalidOperationException(
+                      $"{nameof(SendStep<TOutput, TCtx>)}<{typeof(TOutput).Name}, {typeof(TCtx).Name}> is not registered in the service provider. " +
+                      $"Please register it using services.AddSingleton<{nameof(SendStep<TOutput, TCtx>)}<{typeof(TOutput).Name}, {typeof(TCtx).Name}>>(...) " +
+                      "with a sender implementation.");
+        return this;
+    }
+
+    /// <summary>
     /// Configures an optional receipt sender that runs after a successful load and idempotency record.
     /// The receipt sender receives the pipeline output (TOutput) and can publish it in any format
     /// (e.g., CloudEvent to a Dapr topic, HTTP call, etc.).
@@ -246,7 +268,8 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
             throw new InvalidOperationException("Transform step must be configured using WithTransformer()");
 
         if (_sender == null)
-            throw new InvalidOperationException("Sender step must be configured using WithSender()");
+            throw new InvalidOperationException(
+                "Sender step must be configured using WithSender() or WithSenderFromServices()");
 
         if (_idempotencyRecorder == null)
             throw new InvalidOperationException("Idempotency must be configured using WithIdempotency()");
