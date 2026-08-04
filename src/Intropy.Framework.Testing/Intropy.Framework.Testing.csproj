@@ -11,6 +11,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Dapr.Client" />
     <PackageReference Include="Intropy.Contracts" />
   </ItemGroup>
 

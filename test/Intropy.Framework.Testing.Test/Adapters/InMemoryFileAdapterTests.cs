@@ -158,4 +158,74 @@ public class InMemoryFileAdapterTests
         Assert.Single(snapshot);
         Assert.Empty(adapter.Files);
     }
+
+    [Fact]
+    public async Task AddUnreadableFile_IsListedButThrowsOnRead_OtherFilesReadFine()
+    {
+        var adapter = new InMemoryFileAdapter()
+            .AddFile("good.txt", "good")
+            .AddUnreadableFile("corrupt.txt");
+
+        Assert.Equal(2, (await adapter.ListAsync()).Count);
+        Assert.Single(adapter.Files);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(UnreadableThrows);
+        Assert.Equal("good", adapter.GetString("good.txt"));
+        return;
+
+        Task<byte[]> UnreadableThrows() => adapter.GetContentAsync("corrupt.txt");
+    }
+
+    [Fact]
+    public async Task AddUnreadableFile_EncodingOverloadAlsoThrows()
+    {
+        var adapter = new InMemoryFileAdapter()
+            .AddUnreadableFile("corrupt.txt", new IOException("disk error"));
+
+        await Assert.ThrowsAsync<IOException>(UnreadableThrows);
+        return;
+
+        async Task<string?> UnreadableThrows() => await adapter.GetContentAsync("corrupt.txt", Encoding.UTF8);
+    }
+
+    [Fact]
+    public async Task DeleteException_ThrowsForEveryFile_RecoversWhenCleared()
+    {
+        var adapter = new InMemoryFileAdapter
+        {
+            DeleteException = new InvalidOperationException("deletes refused"),
+        }.AddFile("a.txt", "alpha");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(DeleteThrows);
+        Assert.Single(adapter.Files); // file left in the store, as in production
+
+        adapter.DeleteException = null;
+
+        await adapter.DeleteAsync("a.txt");
+        Assert.Empty(adapter.Files);
+        return;
+
+        Task DeleteThrows() => adapter.DeleteAsync("a.txt");
+    }
+
+    [Fact]
+    public async Task SetDeleteException_ThrowsPerFile_OtherDeletesSucceed()
+    {
+        var adapter = new InMemoryFileAdapter()
+            .AddFile("stuck.txt", "stuck")
+            .AddFile("fine.txt", "fine")
+            .SetDeleteException("stuck.txt", new InvalidOperationException("locked"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(DeleteThrows);
+
+        await adapter.DeleteAsync("fine.txt");
+        Assert.Equal(["stuck.txt"], adapter.Files.Keys);
+
+        adapter.SetDeleteException("stuck.txt", null); // restore
+        await adapter.DeleteAsync("stuck.txt");
+        Assert.Empty(adapter.Files);
+        return;
+
+        Task DeleteThrows() => adapter.DeleteAsync("stuck.txt");
+    }
 }

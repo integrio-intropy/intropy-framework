@@ -16,6 +16,7 @@ does:
 | `FakeIdempotencyServiceClient` | `Intropy.Framework.Testing.Services` | `IIdempotencyServiceClient` |
 | `FakeBusinessIncidentServiceClient` | `Intropy.Framework.Testing.Services` | `IBusinessIncidentServiceClient` |
 | `DaprDelivery` | `Intropy.Framework.Testing.Delivery` | Sidecar CloudEvents delivery to loader endpoints |
+| `PublishedMessageCapture` | `Intropy.Framework.Testing.Dapr` | Publish-call capture for `DaprClient` substitutes |
 
 ## The canonical pattern
 
@@ -57,7 +58,12 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
   Dapr binding throws; it never returns null); deletes of missing files no-op
   (binding delete is idempotent); files are keyed on the effective path
   (`basePath/fileName` when a write passes an override). `ReadException` /
-  `WriteException` simulate a dead source/destination.
+  `WriteException` / `DeleteException` simulate a dead source/destination.
+  Per-file faults: `AddUnreadableFile(name)` seeds a file that is listed but
+  throws on read (corrupt source file), and `SetDeleteException(name, ex)`
+  makes deletes fail for one file while others succeed — the
+  publish-succeeds-but-delete-fails path, where the file is re-processed next
+  run and idempotency must catch it.
 - **`FakeTopic<TCtx>`** — captures the exact `CloudEvent` instances the real
   publisher would have encoded. `SendException` surfaces as a *technical
   failure* through the framework's normal exception handling, matching a dead
@@ -71,6 +77,29 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
   Unknown, missing, or malformed statuses map to `DeliveryAck.Retry`, matching
   the sidecar's fail-safe redelivery. `DeliveryAck` members map to wire values
   as `Success` ↔ `SUCCESS`, `Retry` ↔ `RETRY`, `Drop` ↔ `DROP`.
+- **`PublishedMessageCapture`** — records publish calls made through a
+  `DaprClient` substitute configured by your test project (works with any
+  mocking framework; one wiring line per fake). Assert on the captured
+  `PublishedMessage`s and decode envelopes via `DecodeCloudEvent()`:
+
+  ```csharp
+  var daprClient = Substitute.For<DaprClient>();
+  var capture = new PublishedMessageCapture();
+  daprClient
+      .PublishByteEventAsync(
+          Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+          Arg.Any<string?>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+      .Returns(Task.CompletedTask)
+      .AndDoes(ci => capture.Capture(
+          ci.Arg<string>(), ci.ArgAt<string>(1), ci.ArgAt<ReadOnlyMemory<byte>>(2),
+          ci.ArgAt<string?>(3)));
+
+  // ... run the pipeline ...
+
+  var message = capture.Messages.Single();
+  Assert.Equal("orders", message.TopicName);
+  Assert.Equal("order-42", message.DecodeCloudEvent().Subject);
+  ```
 
 ## Loader ack/consumption matrix
 

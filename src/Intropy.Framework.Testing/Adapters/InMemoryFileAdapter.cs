@@ -26,7 +26,7 @@ namespace Intropy.Framework.Testing.Adapters;
 /// </remarks>
 public sealed class InMemoryFileAdapter : IFileAdapter
 {
-    private readonly Dictionary<string, byte[]> _files = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Entry> _files = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
 
     /// <summary>
@@ -54,7 +54,58 @@ public sealed class InMemoryFileAdapter : IFileAdapter
 
         lock (_lock)
         {
-            _files[fileName] = [.. content];
+            _files[fileName] = new Entry(content);
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Seeds a file that is listed but cannot be read: both <c>GetContentAsync</c> overloads throw
+    /// <paramref name="exception"/> for this file while other files read fine. Simulates a
+    /// corrupt or inaccessible source file.
+    /// </summary>
+    /// <param name="fileName">The effective-path key of the file.</param>
+    /// <param name="exception">The exception thrown when the file is read. Defaults to an
+    /// <see cref="InvalidOperationException"/>.</param>
+    /// <returns>This adapter, for fluent seeding.</returns>
+    public InMemoryFileAdapter AddUnreadableFile(string fileName, Exception? exception = null)
+    {
+        ArgumentNullException.ThrowIfNull(fileName);
+
+        lock (_lock)
+        {
+            _files[fileName] = new Entry(readException: exception ?? new InvalidOperationException(
+                $"File cannot be read: {fileName}"));
+        }
+
+        return this;
+    }
+
+    /// <summary>
+    /// Makes <see cref="DeleteAsync"/> throw for a specific file while other deletes succeed.
+    /// Simulates the publish-succeeds-but-delete-fails path, where the file is re-processed on the
+    /// next run and idempotency must catch it. Set <paramref name="exception"/> to null to restore
+    /// normal behavior for the file.
+    /// </summary>
+    /// <param name="fileName">The effective-path key of the file.</param>
+    /// <param name="exception">The exception thrown when the file is deleted, or null to restore
+    /// normal behavior.</param>
+    /// <returns>This adapter, for fluent setup.</returns>
+    public InMemoryFileAdapter SetDeleteException(string fileName, Exception? exception)
+    {
+        ArgumentNullException.ThrowIfNull(fileName);
+
+        lock (_lock)
+        {
+            if (_files.TryGetValue(fileName, out var entry))
+            {
+                entry.DeleteException = exception;
+            }
+            else if (exception is not null)
+            {
+                _files[fileName] = new Entry([]) { DeleteException = exception };
+            }
         }
 
         return this;
@@ -70,7 +121,9 @@ public sealed class InMemoryFileAdapter : IFileAdapter
             lock (_lock)
             {
                 return new Dictionary<string, byte[]>(
-                    _files.Select(kv => new KeyValuePair<string, byte[]>(kv.Key, [.. kv.Value])),
+                    _files
+                        .Where(kv => kv.Value.Content is not null)
+                        .Select(kv => new KeyValuePair<string, byte[]>(kv.Key, [.. kv.Value.Content!])),
                     StringComparer.OrdinalIgnoreCase);
             }
         }
@@ -87,6 +140,14 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     /// Clearing the property restores normal behavior.
     /// </summary>
     public Exception? WriteException { get; set; }
+
+    /// <summary>
+    /// When set, thrown by <see cref="DeleteAsync"/> for every file to simulate a source that
+    /// refuses deletes — the publish-succeeds-but-delete-fails path, where the file is
+    /// re-processed on the next run and idempotency must catch it. For per-file delete failures,
+    /// use <see cref="SetDeleteException"/>. Clearing the property restores normal behavior.
+    /// </summary>
+    public Exception? DeleteException { get; set; }
 
     /// <summary>
     /// Gets a seeded or written file's content as a UTF-8 string.
@@ -144,7 +205,7 @@ public sealed class InMemoryFileAdapter : IFileAdapter
 
         lock (_lock)
         {
-            _files[CombinePath(basePathOverride, fileName)] = [.. content];
+            _files[CombinePath(basePathOverride, fileName)] = new Entry(content);
         }
 
         return Task.CompletedTask;
@@ -159,12 +220,20 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     }
 
     /// <inheritdoc/>
-    /// <remarks>Deleting a missing file no-ops, matching the idempotent Dapr binding delete.</remarks>
+    /// <remarks>Deleting a missing file no-ops, matching the idempotent Dapr binding delete. Throws
+    /// <see cref="DeleteException"/> when set, or a per-file exception configured via
+    /// <see cref="SetDeleteException"/>; the file is left in the store, as in production.</remarks>
     public Task DeleteAsync(string fileName)
     {
+        ThrowIfSet(DeleteException);
+
         lock (_lock)
         {
-            _files.Remove(fileName);
+            if (_files.TryGetValue(fileName, out var entry))
+            {
+                ThrowIfSet(entry.DeleteException);
+                _files.Remove(fileName);
+            }
         }
 
         return Task.CompletedTask;
@@ -174,9 +243,10 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     {
         lock (_lock)
         {
-            if (_files.TryGetValue(key, out var content))
+            if (_files.TryGetValue(key, out var entry))
             {
-                return [.. content];
+                ThrowIfSet(entry.ReadException);
+                return [.. entry.Content!];
             }
         }
 
@@ -193,4 +263,11 @@ public sealed class InMemoryFileAdapter : IFileAdapter
 
     private static string CombinePath(string? basePath, string fileName) =>
         string.IsNullOrEmpty(basePath) ? fileName : $"{basePath}/{fileName}";
+
+    private sealed class Entry(byte[]? content = null, Exception? readException = null)
+    {
+        public byte[]? Content { get; } = content is null ? null : [.. content];
+        public Exception? ReadException { get; } = readException;
+        public Exception? DeleteException { get; set; }
+    }
 }
