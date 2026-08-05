@@ -1,5 +1,6 @@
 using Dapr.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace Intropy.Framework.Hosting.RunToCompletion;
@@ -14,7 +15,8 @@ public static class ServiceCollectionExtensions
     {
         /// <summary>
         /// Adds a run-to-completion job host to the service collection.
-        /// NOTE: You must register the <typeparamref name="TJob"/> implementation yourself.
+        /// <typeparamref name="TJob"/> is registered as a singleton if not already registered,
+        /// so an explicit registration (e.g. a pre-built instance) takes precedence.
         /// </summary>
         /// <typeparam name="TJob">The <see cref="IRunToCompletionJob"/> implementation to host.</typeparam>
         /// <param name="configureOptions">Action to configure the job options.</param>
@@ -33,6 +35,7 @@ public static class ServiceCollectionExtensions
 
             services.AddSingleton(options);
 
+            services.TryAddSingleton<TJob>();
             services.AddSingleton<IRunToCompletionJob>(sp => sp.GetRequiredService<TJob>());
 
             services.AddSingleton<RunToCompletionRunner>(sp =>

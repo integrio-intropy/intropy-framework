@@ -69,9 +69,23 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddRunToCompletionJob_ShouldRegisterJob_WhenConsumerDidNot()
+    {
+        // Verifies that the framework registers TJob itself, so the caller does not have to
+        var services = GetServices();
+
+        services.AddRunToCompletionJob<TestJob>(options => options.JobName = "my-job");
+
+        var provider = services.BuildServiceProvider();
+        var resolved = provider.GetRequiredService<IRunToCompletionJob>();
+
+        Assert.IsType<TestJob>(resolved);
+    }
+
+    [Fact]
     public void AddRunToCompletionJob_ShouldResolveJob_FromConsumerRegistration()
     {
-        // Verifies that IRunToCompletionJob resolves to the consumer-registered TJob
+        // Verifies that an explicit consumer registration (e.g. a pre-built instance) wins
         var services = GetServices();
         var job = new TestJob();
         services.AddSingleton<TestJob>(job);
@@ -89,7 +103,6 @@ public class ServiceCollectionExtensionsTests
     {
         // Verifies that the runner is successfully registered when all dependencies exist
         var services = GetServices();
-        services.AddSingleton<TestJob>();
         services.AddSingleton(Substitute.For<ILoggerFactory>());
 
         services.AddRunToCompletionJob<TestJob>(options => options.JobName = "my-job");

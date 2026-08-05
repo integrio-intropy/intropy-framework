@@ -36,12 +36,13 @@ Wire it up in `Program.cs`. The component owns the cancellation token (e.g. SIGT
 ```csharp
 var services = new ServiceCollection();
 services.AddDaprClient();
-services.AddSingleton<MyExtractorJob>();
 services.AddRunToCompletionJob<MyExtractorJob>(o => o.JobName = "my-extractor");
 
 await using var provider = services.BuildServiceProvider();
 return await provider.GetRequiredService<RunToCompletionRunner>().RunAsync(ct);
 ```
+
+`AddRunToCompletionJob` registers the job as a singleton if you haven't. Register it yourself first if you need control over construction — your registration takes precedence.
 
 ### Exit codes
 
