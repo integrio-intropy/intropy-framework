@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dapr.Client;
 using Intropy.Framework.Hosting.Common;
 using Microsoft.Extensions.Logging;
@@ -64,9 +65,10 @@ public class RunToCompletionRunner
             return RunToCompletionExitCodes.InfrastructureFailure;
         }
 
+        using var activity = ActivitySourceProvider.ActivitySource.StartActivity(_options.JobName);
+
         try
         {
-            using var activity = ActivitySourceProvider.ActivitySource.StartActivity(_options.JobName);
             var summary = await _job.ExecuteAsync(ct);
 
             _logger.LogInformation(
@@ -91,6 +93,7 @@ public class RunToCompletionRunner
         catch (Exception e)
         {
             _logger.LogError(e, "Job {JobName} failed", _options.JobName);
+            activity?.SetStatus(ActivityStatusCode.Error, e.Message);
             return RunToCompletionExitCodes.JobFailure;
         }
         finally

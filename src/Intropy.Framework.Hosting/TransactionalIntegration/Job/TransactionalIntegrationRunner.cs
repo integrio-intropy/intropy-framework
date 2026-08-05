@@ -47,7 +47,8 @@ public class TransactionalIntegrationRunner
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Failed to wait for Dapr sidecar");
+            _logger.LogError(e, "Dapr sidecar did not become available within {TimeoutSeconds} seconds",
+                _options.SidecarTimeoutSeconds);
             return 1;
         }
 

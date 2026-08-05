@@ -38,6 +38,43 @@ public class RunToCompletionRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_ShouldReturnSuccess_WhenJobHasNothingToDo()
+    {
+        _job.ExecuteAsync(Arg.Any<CancellationToken>()).Returns(JobRunSummary.Empty);
+
+        var runner = CreateRunner();
+
+        var result = await runner.RunAsync();
+
+        Assert.Equal(RunToCompletionExitCodes.Success, result);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldReturnSuccess_WhenCancelledDuringSidecarWait()
+    {
+        // External cancellation before the job starts is success by design — the
+        // job is idempotent and must not be retried by the scheduler. It must not
+        // be confused with a sidecar timeout (infrastructure failure).
+        _daprClient.WaitForSidecarAsync(Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                var ct = callInfo.Arg<CancellationToken>();
+                await Task.Delay(Timeout.Infinite, ct);
+            });
+
+        using var cts = new CancellationTokenSource();
+        var runner = CreateRunner();
+
+        var run = runner.RunAsync(cts.Token);
+        await cts.CancelAsync();
+
+        var result = await run;
+
+        Assert.Equal(RunToCompletionExitCodes.Success, result);
+        await _job.DidNotReceive().ExecuteAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task RunAsync_ShouldReturnJobFailure_WhenJobReportsFailedItems()
     {
         _job.ExecuteAsync(Arg.Any<CancellationToken>())
