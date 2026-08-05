@@ -18,7 +18,8 @@ public class TransactionalIntegrationRunnerTests
     {
         DaprPubSubName = "test-pubsub",
         DaprTopicName = "test-topic",
-        SidecarTimeoutSeconds = 1
+        SidecarTimeoutSeconds = 1,
+        SidecarShutdownTimeoutSeconds = 1
     };
 
     private readonly StubLifecycle _lifecycle = new();
@@ -86,6 +87,26 @@ public class TransactionalIntegrationRunnerTests
         await runner.RunAsync();
 
         await _daprClient.Received(1).ShutdownSidecarAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldNotHang_WhenSidecarShutdownIsWedged()
+    {
+        // A wedged sidecar must not hang the host after the lifecycle has completed.
+        _daprClient.ShutdownSidecarAsync(Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                var ct = callInfo.Arg<CancellationToken>();
+                await Task.Delay(Timeout.Infinite, ct);
+            });
+
+        var runner = CreateRunner();
+
+        var run = runner.RunAsync();
+        var completed = await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(10)));
+
+        Assert.Same(run, completed);
+        Assert.Equal(0, await run);
     }
 
     private TransactionalIntegrationRunner CreateRunner() =>
