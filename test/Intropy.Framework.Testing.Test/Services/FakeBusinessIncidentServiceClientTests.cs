@@ -46,6 +46,19 @@ public class FakeBusinessIncidentServiceClientTests
     }
 
     [Fact]
+    public async Task Resolve_DifferentSource_DoesNotMarkIncidentResolved()
+    {
+        var client = new FakeBusinessIncidentServiceClient();
+        await client.Trigger(Source, "order.invalid", "ce-1", Data(), null);
+
+        await client.Resolve(new Uri("urn:other-component"), "order.invalid", "ce-1", null);
+
+        Assert.Single(client.Resolved);
+        var list = await client.List(new IncidentFilter { Status = "Resolved" });
+        Assert.Equal(0, list.Total);
+    }
+
+    [Fact]
     public async Task Resolve_Unmatched_RecordedWithoutThrowing()
     {
         var client = new FakeBusinessIncidentServiceClient();

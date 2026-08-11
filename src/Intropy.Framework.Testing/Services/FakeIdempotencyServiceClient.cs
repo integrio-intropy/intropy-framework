@@ -31,19 +31,32 @@ public sealed class FakeIdempotencyServiceClient : IIdempotencyServiceClient
     private readonly Dictionary<(string Component, string Id), MessageInfo> _store = new();
     private readonly object _lock = new();
 
+    private volatile StatusResponse _nextStatus = new(Action.Proceed, Reason.NoPreviousData);
+    private volatile IdempotencyServiceException? _statusException;
+
     /// <summary>
     /// The sticky status returned by <see cref="GetStatusAsync"/> when the queue set up by
     /// <see cref="QueueStatus"/> is empty. Defaults to
-    /// <c>Proceed</c> / <c>NoPreviousData</c>.
+    /// <c>Proceed</c> / <c>NoPreviousData</c>. Safe to toggle between runs; not a coordination
+    /// primitive for mid-run assertions.
     /// </summary>
-    public StatusResponse NextStatus { get; set; } = new(Action.Proceed, Reason.NoPreviousData);
+    public StatusResponse NextStatus
+    {
+        get => _nextStatus;
+        set => _nextStatus = value;
+    }
 
     /// <summary>
     /// When set, thrown by <see cref="GetStatusAsync"/> to simulate the idempotency service being
     /// down. The typed exception matches the real client's failure mode. Clearing the property
-    /// restores normal behavior.
+    /// restores normal behavior. Safe to toggle between runs; not a coordination primitive for
+    /// mid-run assertions.
     /// </summary>
-    public IdempotencyServiceException? StatusException { get; set; }
+    public IdempotencyServiceException? StatusException
+    {
+        get => _statusException;
+        set => _statusException = value;
+    }
 
     /// <summary>
     /// Gets every <see cref="MessageInfo"/> passed to <see cref="GetStatusAsync"/>, in call order,
@@ -77,7 +90,8 @@ public sealed class FakeIdempotencyServiceClient : IIdempotencyServiceClient
 
     /// <summary>
     /// Queues statuses to be returned by <see cref="GetStatusAsync"/> in order. When the queue runs
-    /// dry, <see cref="GetStatusAsync"/> falls back to <see cref="NextStatus"/>.
+    /// dry, <see cref="GetStatusAsync"/> falls back to <see cref="NextStatus"/>. The queue is
+    /// global: statuses are dequeued in call order across all component/id pairs, not per message.
     /// </summary>
     /// <param name="statuses">The statuses to dequeue, in order.</param>
     public void QueueStatus(params StatusResponse[] statuses)
@@ -98,10 +112,7 @@ public sealed class FakeIdempotencyServiceClient : IIdempotencyServiceClient
     {
         ArgumentNullException.ThrowIfNull(messageInfo);
 
-        if (StatusException is not null)
-        {
-            throw StatusException;
-        }
+        ThrowIfSet(_statusException);
 
         lock (_lock)
         {
@@ -133,6 +144,14 @@ public sealed class FakeIdempotencyServiceClient : IIdempotencyServiceClient
         lock (_lock)
         {
             return Task.FromResult(_store.TryGetValue((component, id), out var info) ? info : null);
+        }
+    }
+
+    private static void ThrowIfSet(Exception? exception)
+    {
+        if (exception is not null)
+        {
+            throw exception;
         }
     }
 }

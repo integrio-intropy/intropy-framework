@@ -24,6 +24,8 @@ public class FakeTopic<TCtx> : SendStep<TCtx> where TCtx : Context
     private readonly List<CloudEvent> _events = [];
     private readonly object _lock = new();
 
+    private volatile Exception? _sendException;
+
     /// <summary>
     /// Gets the number of published events.
     /// </summary>
@@ -54,17 +56,24 @@ public class FakeTopic<TCtx> : SendStep<TCtx> where TCtx : Context
 
     /// <summary>
     /// When set, thrown by <see cref="ExecuteAsync"/> to simulate a dead broker. Clearing the
-    /// property restores normal behavior.
+    /// property restores normal behavior. Safe to toggle between runs; not a coordination
+    /// primitive for mid-run assertions.
     /// </summary>
-    public Exception? SendException { get; set; }
+    public Exception? SendException
+    {
+        get => _sendException;
+        set => _sendException = value;
+    }
 
     /// <inheritdoc/>
+    /// <remarks>When <see cref="SendException"/> is set, the exception is thrown before the event
+    /// is captured — a dead broker does not observe the publish.</remarks>
     public override Task<(TechnicalStepResult<CloudEvent> Result, TCtx Context)> ExecuteAsync(
         CloudEvent input, TCtx context, CancellationToken ct)
     {
-        if (SendException is not null)
+        if (_sendException is not null)
         {
-            throw SendException;
+            throw _sendException;
         }
 
         lock (_lock)

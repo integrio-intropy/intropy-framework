@@ -17,8 +17,11 @@ public interface IFileAdapter
     /// <summary>
     /// Gets the content of a file.
     /// </summary>
-    /// <param name="fileName"></param>
-    /// <returns>A binary representation of the file content if the file exists, otherwise null.</returns>
+    /// <param name="fileName">The name of the file.</param>
+    /// <returns>A binary representation of the file content.</returns>
+    /// <exception cref="Exception">Implementations throw on adapter or binding failure, including a
+    /// missing file. The concrete exception type is adapter-specific: Dapr-binding adapters
+    /// propagate the binding's exception.</exception>
     Task<byte[]> GetContentAsync(string fileName);
 
     /// <summary>
@@ -26,7 +29,10 @@ public interface IFileAdapter
     /// </summary>
     /// <param name="fileName">The name of the file.</param>
     /// <param name="encoding">The encoding to use to decode the binary content.</param>
-    /// <returns>A string representation of the file content if the file exists, otherwise null.</returns>
+    /// <returns>A string representation of the file content.</returns>
+    /// <exception cref="Exception">Implementations throw on adapter or binding failure, including a
+    /// missing file. The concrete exception type is adapter-specific: Dapr-binding adapters
+    /// propagate the binding's exception.</exception>
     Task<string?> GetContentAsync(string fileName, Encoding encoding);
 
     /// <summary>

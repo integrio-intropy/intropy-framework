@@ -16,18 +16,42 @@ namespace Intropy.Framework.Testing.Adapters;
 /// <para>
 /// Missing-file behavior matches production: reads throw <see cref="FileNotFoundException"/>
 /// (the Dapr binding throws; it never returns null), while deletes no-op (binding delete is
-/// idempotent). Unlike <c>LocalFileAdapter</c>, <see cref="ListAsync"/> returns every file in the
-/// store — the fake has no configured base path to filter on.
+/// idempotent).
 /// </para>
 /// <para>
 /// Use <see cref="ReadException"/> and <see cref="WriteException"/> to simulate a dead source or
-/// destination. All state is guarded by a lock; assertion members return snapshots.
+/// destination. Recorded state is guarded by a lock and assertion members return snapshots;
+/// the fault knobs are <see langword="volatile"/>, safe to toggle between runs.
 /// </para>
 /// </remarks>
 public sealed class InMemoryFileAdapter : IFileAdapter
 {
     private readonly Dictionary<string, Entry> _files = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Exception> _deleteExceptions = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _lock = new();
+    private readonly string? _basePath;
+
+    private volatile Exception? _readException;
+    private volatile Exception? _writeException;
+    private volatile Exception? _deleteException;
+
+    /// <summary>
+    /// Creates an adapter that lists every file in the store.
+    /// </summary>
+    public InMemoryFileAdapter()
+    {
+    }
+
+    /// <summary>
+    /// Creates an adapter whose <see cref="ListAsync"/> mirrors <c>LocalFileAdapter</c>: only files
+    /// under <paramref name="basePath"/> are listed, by file name with the base path stripped.
+    /// Reads, writes, and deletes are unaffected — they are keyed on the effective path as always.
+    /// </summary>
+    /// <param name="basePath">The base path to filter listings on.</param>
+    public InMemoryFileAdapter(string? basePath)
+    {
+        _basePath = string.IsNullOrEmpty(basePath) ? null : basePath.TrimEnd('/');
+    }
 
     /// <summary>
     /// Seeds a file with UTF-8 encoded string content.
@@ -86,7 +110,8 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     /// Makes <see cref="DeleteAsync"/> throw for a specific file while other deletes succeed.
     /// Simulates the publish-succeeds-but-delete-fails path, where the file is re-processed on the
     /// next run and idempotency must catch it. Set <paramref name="exception"/> to null to restore
-    /// normal behavior for the file.
+    /// normal behavior for the file. Configuring an exception for a file that does not exist
+    /// creates no file; the fault is simply never hit.
     /// </summary>
     /// <param name="fileName">The effective-path key of the file.</param>
     /// <param name="exception">The exception thrown when the file is deleted, or null to restore
@@ -98,13 +123,13 @@ public sealed class InMemoryFileAdapter : IFileAdapter
 
         lock (_lock)
         {
-            if (_files.TryGetValue(fileName, out var entry))
+            if (exception is null)
             {
-                entry.DeleteException = exception;
+                _deleteExceptions.Remove(fileName);
             }
-            else if (exception is not null)
+            else
             {
-                _files[fileName] = new Entry([]) { DeleteException = exception };
+                _deleteExceptions[fileName] = exception;
             }
         }
 
@@ -120,34 +145,47 @@ public sealed class InMemoryFileAdapter : IFileAdapter
         {
             lock (_lock)
             {
-                return new Dictionary<string, byte[]>(
-                    _files
-                        .Where(kv => kv.Value.Content is not null)
-                        .Select(kv => new KeyValuePair<string, byte[]>(kv.Key, [.. kv.Value.Content!])),
-                    StringComparer.OrdinalIgnoreCase);
+                return _files
+                    .Where(kv => kv.Value.Content is not null)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value.Content!.ToArray(), StringComparer.OrdinalIgnoreCase);
             }
         }
     }
 
     /// <summary>
     /// When set, thrown by <see cref="ListAsync"/> and both <c>GetContentAsync</c> overloads to
-    /// simulate a dead source. Clearing the property restores normal behavior.
+    /// simulate a dead source. Clearing the property restores normal behavior. Safe to toggle
+    /// between runs; not a coordination primitive for mid-run assertions.
     /// </summary>
-    public Exception? ReadException { get; set; }
+    public Exception? ReadException
+    {
+        get => _readException;
+        set => _readException = value;
+    }
 
     /// <summary>
     /// When set, thrown by both <c>WriteAsync</c> overloads to simulate a dead destination.
-    /// Clearing the property restores normal behavior.
+    /// Clearing the property restores normal behavior. Safe to toggle between runs; not a
+    /// coordination primitive for mid-run assertions.
     /// </summary>
-    public Exception? WriteException { get; set; }
+    public Exception? WriteException
+    {
+        get => _writeException;
+        set => _writeException = value;
+    }
 
     /// <summary>
     /// When set, thrown by <see cref="DeleteAsync"/> for every file to simulate a source that
     /// refuses deletes — the publish-succeeds-but-delete-fails path, where the file is
     /// re-processed on the next run and idempotency must catch it. For per-file delete failures,
     /// use <see cref="SetDeleteException"/>. Clearing the property restores normal behavior.
+    /// Safe to toggle between runs; not a coordination primitive for mid-run assertions.
     /// </summary>
-    public Exception? DeleteException { get; set; }
+    public Exception? DeleteException
+    {
+        get => _deleteException;
+        set => _deleteException = value;
+    }
 
     /// <summary>
     /// Gets a seeded or written file's content as a UTF-8 string.
@@ -166,17 +204,24 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     /// <returns>The UTF-8 decoded content.</returns>
     /// <exception cref="FileNotFoundException">Thrown when no file exists under the effective path.</exception>
     public string GetString(string basePath, string fileName) =>
-        Encoding.UTF8.GetString(Read(CombinePath(basePath, fileName)));
+        GetString(CombinePath(basePath, fileName));
 
     /// <inheritdoc/>
-    /// <remarks>Returns every file in the store; the fake has no configured base path to filter on.</remarks>
+    /// <remarks>Without a configured base path, returns every file in the store. With one, returns
+    /// only files under it, by file name with the base path stripped — mirroring
+    /// <c>LocalFileAdapter</c>, which lists its configured base path and strips full paths to the
+    /// file name.</remarks>
     public Task<List<FileInfo>> ListAsync()
     {
-        ThrowIfSet(ReadException);
+        ThrowIfSet(_readException);
 
         lock (_lock)
         {
-            return Task.FromResult(_files.Keys.Select(key => new FileInfo(key)).ToList());
+            var prefix = _basePath is null ? null : _basePath + "/";
+            return Task.FromResult(_files.Keys
+                .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Select(key => new FileInfo(prefix is null ? key : key[prefix.Length..]))
+                .ToList());
         }
     }
 
@@ -184,7 +229,7 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     /// <exception cref="FileNotFoundException">Thrown when the file does not exist, matching the Dapr binding.</exception>
     public Task<byte[]> GetContentAsync(string fileName)
     {
-        ThrowIfSet(ReadException);
+        ThrowIfSet(_readException);
         return Task.FromResult(Read(fileName));
     }
 
@@ -201,7 +246,7 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null)
     {
         ArgumentNullException.ThrowIfNull(content);
-        ThrowIfSet(WriteException);
+        ThrowIfSet(_writeException);
 
         lock (_lock)
         {
@@ -225,15 +270,16 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     /// <see cref="SetDeleteException"/>; the file is left in the store, as in production.</remarks>
     public Task DeleteAsync(string fileName)
     {
-        ThrowIfSet(DeleteException);
+        ThrowIfSet(_deleteException);
 
         lock (_lock)
         {
-            if (_files.TryGetValue(fileName, out var entry))
+            if (_deleteExceptions.TryGetValue(fileName, out var deleteException))
             {
-                ThrowIfSet(entry.DeleteException);
-                _files.Remove(fileName);
+                throw deleteException;
             }
+
+            _files.Remove(fileName);
         }
 
         return Task.CompletedTask;
@@ -268,6 +314,5 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     {
         public byte[]? Content { get; } = content is null ? null : [.. content];
         public Exception? ReadException { get; } = readException;
-        public Exception? DeleteException { get; set; }
     }
 }

@@ -50,7 +50,8 @@ public static class DaprDelivery
     /// <returns>The parsed ack. Unknown, missing, or malformed status values map to
     /// <see cref="DeliveryAck.Retry"/>, matching the sidecar's fail-safe redelivery.</returns>
     /// <exception cref="HttpRequestException">Thrown when the endpoint answers with a non-success
-    /// status code — surfacing host errors in the test rather than masking them as retries.</exception>
+    /// status code — surfacing host errors in the test rather than masking them as retries. A
+    /// wrong <paramref name="route"/> (404) surfaces here too.</exception>
     public static async Task<DeliveryAck> DeliverAsync(
         this HttpClient client, string route, CloudEvent cloudEvent, CancellationToken ct = default)
     {
@@ -89,11 +90,16 @@ public static class DaprDelivery
             }
         }
 
-        return status?.ToUpperInvariant() switch
+        if (string.Equals(status, "SUCCESS", StringComparison.OrdinalIgnoreCase))
         {
-            "SUCCESS" => DeliveryAck.Success,
-            "DROP" => DeliveryAck.Drop,
-            _ => DeliveryAck.Retry,
-        };
+            return DeliveryAck.Success;
+        }
+
+        if (string.Equals(status, "DROP", StringComparison.OrdinalIgnoreCase))
+        {
+            return DeliveryAck.Drop;
+        }
+
+        return DeliveryAck.Retry;
     }
 }

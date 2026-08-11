@@ -30,17 +30,25 @@ public sealed class FakeBusinessIncidentServiceClient : IBusinessIncidentService
     private const string StatusTriggered = "Triggered";
     private const string StatusResolved = "Resolved";
     private const string ResolvedBySystem = "system";
+    private const string ResolvedByManual = "manual";
 
     private readonly List<RecordedIncident> _incidents = [];
     private readonly List<ResolvedIncident> _resolved = [];
     private readonly List<Projection> _projections = [];
     private readonly object _lock = new();
 
+    private volatile BusinessIncidentServiceException? _triggerException;
+
     /// <summary>
     /// When set, thrown by <see cref="Trigger"/> to simulate the business incident service being
-    /// down. Clearing the property restores normal behavior.
+    /// down. Clearing the property restores normal behavior. Safe to toggle between runs; not a
+    /// coordination primitive for mid-run assertions.
     /// </summary>
-    public BusinessIncidentServiceException? TriggerException { get; set; }
+    public BusinessIncidentServiceException? TriggerException
+    {
+        get => _triggerException;
+        set => _triggerException = value;
+    }
 
     /// <summary>
     /// Gets every triggered incident, in call order, as a snapshot.
@@ -77,10 +85,7 @@ public sealed class FakeBusinessIncidentServiceClient : IBusinessIncidentService
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(data);
 
-        if (TriggerException is not null)
-        {
-            throw TriggerException;
-        }
+        ThrowIfSet(_triggerException);
 
         lock (_lock)
         {
@@ -106,8 +111,9 @@ public sealed class FakeBusinessIncidentServiceClient : IBusinessIncidentService
     }
 
     /// <inheritdoc/>
-    /// <remarks>Always appends to <see cref="Resolved"/> and marks the matching incident resolved.
-    /// An unmatched resolve is recorded and otherwise no-ops (never throws).</remarks>
+    /// <remarks>Always appends to <see cref="Resolved"/> and marks the matching incident resolved —
+    /// the last unresolved incident with equal source, subject, and CloudEvent id. An unmatched
+    /// resolve is recorded and otherwise no-ops (never throws).</remarks>
     public Task Resolve(Uri source, string subject, string id, string? batchId)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -117,7 +123,10 @@ public sealed class FakeBusinessIncidentServiceClient : IBusinessIncidentService
             _resolved.Add(new ResolvedIncident(source, subject, id, batchId));
 
             var projection = _projections.LastOrDefault(p =>
-                p.Response.Subject == subject && p.Response.CeId == id && p.ResolvedAt is null);
+                p.Response.Source == source.ToString() &&
+                p.Response.Subject == subject &&
+                p.Response.CeId == id &&
+                p.ResolvedAt is null);
             if (projection is not null)
             {
                 projection.ResolvedAt = DateTimeOffset.UtcNow;
@@ -184,31 +193,27 @@ public sealed class FakeBusinessIncidentServiceClient : IBusinessIncidentService
 
             var events = new List<IncidentEventResponse>
             {
-                new()
-                {
-                    Id = Guid.NewGuid(),
-                    IncidentId = id,
-                    EventType = EventTypes.Triggered,
-                    Metadata = string.Empty,
-                    OccurredAt = projection.Response.TriggeredAt,
-                },
+                CreateEvent(id, EventTypes.Triggered, projection.Response.TriggeredAt),
             };
 
             if (projection.ResolvedAt is not null)
             {
-                events.Add(new IncidentEventResponse
-                {
-                    Id = Guid.NewGuid(),
-                    IncidentId = id,
-                    EventType = EventTypes.Resolved,
-                    Metadata = string.Empty,
-                    OccurredAt = projection.ResolvedAt.Value,
-                });
+                events.Add(CreateEvent(id, EventTypes.Resolved, projection.ResolvedAt.Value));
             }
 
             return Task.FromResult(events);
         }
     }
+
+    private static IncidentEventResponse CreateEvent(Guid incidentId, string eventType, DateTimeOffset occurredAt) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            IncidentId = incidentId,
+            EventType = eventType,
+            Metadata = string.Empty,
+            OccurredAt = occurredAt,
+        };
 
     /// <inheritdoc/>
     /// <remarks>Marks the incident resolved by <c>manual</c>. Returns false when no incident matches
@@ -224,7 +229,7 @@ public sealed class FakeBusinessIncidentServiceClient : IBusinessIncidentService
             }
 
             projection.ResolvedAt ??= DateTimeOffset.UtcNow;
-            projection.ResolvedBy = "manual";
+            projection.ResolvedBy = ResolvedByManual;
             return Task.FromResult(true);
         }
     }
@@ -232,26 +237,25 @@ public sealed class FakeBusinessIncidentServiceClient : IBusinessIncidentService
     private static string CurrentStatus(Projection projection) =>
         projection.ResolvedAt is null ? StatusTriggered : StatusResolved;
 
+    private static void ThrowIfSet(Exception? exception)
+    {
+        if (exception is not null)
+        {
+            throw exception;
+        }
+    }
+
     private sealed class Projection
     {
         public required IncidentResponse Response { get; init; }
         public DateTimeOffset? ResolvedAt { get; set; }
         public string? ResolvedBy { get; set; }
 
-        public IncidentResponse ToResponse() => new()
+        // Status on the stored response is frozen at "Triggered"; the served response derives it
+        // from ResolvedAt so reads reflect resolutions.
+        public IncidentResponse ToResponse() => Response with
         {
-            Id = Response.Id,
-            PreviousId = Response.PreviousId,
-            Source = Response.Source,
-            CeId = Response.CeId,
-            Subject = Response.Subject,
-            Description = Response.Description,
             Status = CurrentStatus(this),
-            BatchId = Response.BatchId,
-            Context = Response.Context,
-            RetryCount = Response.RetryCount,
-            TriggeredAt = Response.TriggeredAt,
-            LastRetriedAt = Response.LastRetriedAt,
             ResolvedAt = ResolvedAt,
             ResolvedBy = ResolvedBy,
         };

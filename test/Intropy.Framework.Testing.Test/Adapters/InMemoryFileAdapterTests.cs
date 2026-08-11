@@ -228,4 +228,56 @@ public class InMemoryFileAdapterTests
 
         Task DeleteThrows() => adapter.DeleteAsync("stuck.txt");
     }
+
+    [Fact]
+    public async Task SetDeleteException_ForMissingFile_CreatesNoFile()
+    {
+        var adapter = new InMemoryFileAdapter()
+            .SetDeleteException("ghost.txt", new InvalidOperationException("locked"));
+
+        Assert.Empty(await adapter.ListAsync());
+        Assert.Empty(adapter.Files);
+    }
+
+    [Fact]
+    public async Task ListAsync_WithBasePath_ListsOnlyFilesUnderIt_StrippedToFileName()
+    {
+        var adapter = new InMemoryFileAdapter("inbox")
+            .AddFile("inbox/a.txt", "alpha")
+            .AddFile("inbox/b.txt", "bravo")
+            .AddFile("archive/c.txt", "charlie")
+            .AddFile("loose.txt", "delta");
+
+        var listed = await adapter.ListAsync();
+
+        Assert.Equal(
+            ["archive/c.txt", "inbox/a.txt", "inbox/b.txt", "loose.txt"],
+            adapter.Files.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
+        Assert.Equal(["a.txt", "b.txt"], listed.Select(f => f.FileName).OrderBy(n => n));
+    }
+
+    [Fact]
+    public async Task ListAsync_WithBasePath_TrailingSlashInBasePath_IsTolerated()
+    {
+        var adapter = new InMemoryFileAdapter("inbox/")
+            .AddFile("inbox/a.txt", "alpha");
+
+        var listed = await adapter.ListAsync();
+
+        Assert.Equal("a.txt", Assert.Single(listed).FileName);
+    }
+
+    [Fact]
+    public async Task ListAsync_WithoutBasePath_ListsEveryFileByFullKey()
+    {
+        var adapter = new InMemoryFileAdapter()
+            .AddFile("inbox/a.txt", "alpha")
+            .AddFile("loose.txt", "delta");
+
+        var listed = await adapter.ListAsync();
+
+        Assert.Equal(
+            ["inbox/a.txt", "loose.txt"],
+            listed.Select(f => f.FileName).OrderBy(n => n));
+    }
 }

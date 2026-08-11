@@ -57,7 +57,9 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 - **`InMemoryFileAdapter`** — missing reads throw `FileNotFoundException` (the
   Dapr binding throws; it never returns null); deletes of missing files no-op
   (binding delete is idempotent); files are keyed on the effective path
-  (`basePath/fileName` when a write passes an override). `ReadException` /
+  (`basePath/fileName` when a write passes an override). Pass a `basePath` to
+  the constructor to make `ListAsync` mirror `LocalFileAdapter`: only files
+  under that path, listed by file name. `ReadException` /
   `WriteException` / `DeleteException` simulate a dead source/destination.
   Per-file faults: `AddUnreadableFile(name)` seeds a file that is listed but
   throws on read (corrupt source file), and `SetDeleteException(name, ex)`
@@ -103,6 +105,11 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 
 ## Loader ack/consumption matrix
 
+> This matrix describes the behavior of framework-composed loader and
+> transactional pipelines (which acks their endpoints/handlers produce), not
+> of this package. `DaprDelivery` only delivers the envelope and parses the
+> ack.
+
 | Scenario | Ack | Side effects |
 |---|---|---|
 | Valid message | `SUCCESS` | File written to destination |
@@ -130,5 +137,7 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 ## Notes
 
 - Thread-safe: all recorded state is lock-guarded and exposed as snapshots, so
-  parallel extractor sweeps cannot corrupt assertions.
+  parallel extractor sweeps cannot corrupt assertions. Fault knobs
+  (`ReadException`, `SendException`, ...) are `volatile` — safe to toggle
+  between runs, not a coordination primitive for mid-run assertions.
 - Versioned in lockstep with the framework packages.
