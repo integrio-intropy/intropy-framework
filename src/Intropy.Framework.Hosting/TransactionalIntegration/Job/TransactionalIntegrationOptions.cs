@@ -43,6 +43,14 @@ public class TransactionalIntegrationOptions
     /// <value>Default: 30</value>
     public int SidecarTimeoutSeconds { get; set; } = 30;
 
+    /// <summary>
+    /// The maximum time to wait for the Dapr sidecar to shut down, in seconds.
+    /// Bounded on purpose: a wedged sidecar must not hang the host after the lifecycle
+    /// has completed.
+    /// </summary>
+    /// <value>Default: 10</value>
+    public int SidecarShutdownTimeoutSeconds { get; set; } = 10;
+
 
     /// <summary>
     /// Creates new instance of <see cref="TransactionalIntegrationOptions"/>

@@ -43,18 +43,12 @@ public class TransactionalIntegrationRunner
     {
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(_options.SidecarTimeoutSeconds));
-            await _daprClient.WaitForSidecarAsync(cts.Token);
-        }
-        catch (OperationCanceledException e)
-        {
-            _logger.LogError(e, "Dapr sidecar did not become available within {TimeoutSeconds} seconds",
-                _options.SidecarTimeoutSeconds);
-            return 1;
+            await DaprSidecarManager.WaitAsync(_daprClient, _options.SidecarTimeoutSeconds, _logger);
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Failed to wait for Dapr sidecar");
+            _logger.LogError(e, "Dapr sidecar did not become available within {TimeoutSeconds} seconds",
+                _options.SidecarTimeoutSeconds);
             return 1;
         }
 
@@ -71,14 +65,7 @@ public class TransactionalIntegrationRunner
         }
         finally
         {
-            try
-            {
-                await _daprClient.ShutdownSidecarAsync();
-            }
-            catch (Exception e)
-            {
-                _logger.LogWarning(e, "Failed to shut down Dapr sidecar");
-            }
+            await DaprSidecarManager.ShutdownAsync(_daprClient, _options.SidecarShutdownTimeoutSeconds, _logger);
         }
     }
 }
