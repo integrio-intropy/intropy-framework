@@ -13,6 +13,7 @@ does:
 |---|---|---|
 | `InMemoryFileAdapter` | `Intropy.Framework.Testing.Adapters` | `IFileAdapter` (source/destination connectors) |
 | `FakeTopic<TCtx>` | `Intropy.Framework.Testing.Topics` | The extractor's Dapr pub/sub publish step |
+| `FakeEnqueueStep<TCtx>` | `Intropy.Framework.Testing.Topics` | The transactional receive pipeline's queue publish step |
 | `FakeIdempotencyServiceClient` | `Intropy.Framework.Testing.Services` | `IIdempotencyServiceClient` |
 | `FakeBusinessIncidentServiceClient` | `Intropy.Framework.Testing.Services` | `IBusinessIncidentServiceClient` |
 | `DaprDelivery` | `Intropy.Framework.Testing.Delivery` | Sidecar CloudEvents delivery to loader endpoints |
@@ -70,6 +71,18 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
   publisher would have encoded. `SendException` surfaces as a *technical
   failure* through the framework's normal exception handling, matching a dead
   broker.
+- **`FakeEnqueueStep<TCtx>`** — the transactional receive pipeline's enqueue
+  seam, plugged in via `ReceivePipelineBuilder<TCtx>.WithEnqueuer(fake)`.
+  Captures each `SourceItem` and its already-encoded structured-mode CloudEvents
+  envelope (defensive `byte[]` copies — the formatter's buffer is recycled);
+  decode via `CapturedEnqueue.DecodeCloudEvent()`. Item identity survives into
+  the capture, so completer-failure tests can assert what was enqueued even
+  when the pipeline result is a business failure. `SendException` is thrown
+  before capture, surfaces as a *technical failure*, and — because the complete
+  step follows the enqueue step — leaves the source file undeleted, matching a
+  dead broker in production. The `EnqueueStep` API this fake plugs into is
+  documented in `docs/blocks/transactional-integration.md`; the
+  `DaprEnqueuer` sample in the block's README is stale (fixed separately).
 - **Service fakes** — faults throw the *typed* `IdempotencyServiceException` /
   `BusinessIncidentServiceException`. Typing matters: the framework's incident
   router has a dedicated catch for `BusinessIncidentServiceException`; any
@@ -133,6 +146,43 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 | Duplicate (idempotency `Ignore`) | No | Still deleted |
 | Validation failure | Incident routed | Consumed (empty-`CloudEvent` success) |
 | Technical failure (`SendException` / `ReadException`) | No | Left for the next run |
+
+## Transactional receive pipeline matrix
+
+Per source item:
+
+| Scenario | Enqueued | Source file |
+|---|---|---|
+| Valid | Yes | Deleted by completer |
+| Unreadable source (adapter read throws)¹ | No | Incident routed, keyed on file name |
+| Broker down (`SendException` set) | No — technical failure | Left for the next run |
+| Enqueue OK, delete throws (`SetDeleteException`) | Yes — the duplicate lands on the queue | Left; re-processed next run, send-side idempotency must absorb it |
+
+¹ `ReceiveStep` is a `BusinessStep`, so adapter faults here are *business*
+failures — unlike the loader's technical read path.
+
+The fourth row is the transactional analogue of
+`InMemoryFileAdapter.SetDeleteException` and the most valuable row in the
+matrix: the enqueue is captured, the pipeline result is a business failure,
+and the file is re-processed next run.
+
+## Transactional send pipeline matrix
+
+Per delivered message:
+
+| Scenario | Written | Idempotency |
+|---|---|---|
+| Valid | Yes | Committed |
+| Duplicate (idempotency `Ignore`) | No | No new commit |
+| Validation failure | No — incident routed, consumed | No commit |
+| Destination throws | No — business failure, incident routed² | No commit |
+
+² Transactional `SendStep` is a `BusinessStep`; an uncaught exception routes an
+incident, it is *not* a technical failure. This is why this package ships no
+`FakeSendStep` for the send pipeline: a `FakeTopic`-style `SendException` knob
+would surface as a business incident and mis-model production. Assert through
+the component's real sender + `InMemoryFileAdapter` instead — it tests more,
+including the file-naming convention.
 
 ## Notes
 
