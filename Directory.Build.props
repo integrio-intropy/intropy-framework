@@ -14,7 +14,7 @@
         <Authors>Integrio</Authors>
         <Company>Integrio</Company>
         <Copyright>Copyright (c) 2026 Integrio</Copyright>
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageProjectUrl>https://github.com/integrio-intropy/intropy-framework</PackageProjectUrl>
         <RepositoryUrl>https://github.com/integrio-intropy/intropy-framework</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
@@ -23,6 +23,14 @@
 
     <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/README.md')">
         <None Include="$(MSBuildProjectDirectory)/README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <!-- Pack the repo-root LICENSE into every package. Path is anchored to this props
+         file's directory (MSBuildThisFileDirectory) because this file is imported into
+         every project; MSBuildProjectDirectory would look for a LICENSE inside each
+         project folder and find none. -->
+    <ItemGroup>
+        <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Visible="false" />
     </ItemGroup>
 
     <PropertyGroup>

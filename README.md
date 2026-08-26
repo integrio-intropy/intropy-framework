@@ -84,4 +84,4 @@ dotnet test Intropy.Framework.slnx
 
 ## License
 
-[MIT](LICENSE) © Integrio
+[FSL-1.1-ALv2](LICENSE) © Integrio — Functional Source License, converting to Apache 2.0 two years after each release.
