@@ -48,8 +48,7 @@ public class DaprContainerFixture : IAsyncLifetime
 
         await System.IO.File.WriteAllTextAsync(Path.Combine(_componentsTempDir, "local-storage.yaml"), componentYaml);
 
-        using var dockerClientConfiguration = new DockerClientConfiguration();
-        _dockerClient = dockerClientConfiguration.CreateClient();
+        _dockerClient = new DockerClientBuilder().Build();
 
         // Convert Windows paths to Docker-compatible format
         var componentsHostPath = ConvertToDockerPath(_componentsTempDir);
@@ -97,16 +96,16 @@ public class DaprContainerFixture : IAsyncLifetime
 
         // Check if container is still running
         var inspect = await _dockerClient.Containers.InspectContainerAsync(_containerId);
-        if (!inspect.State.Running)
+        if (!inspect.State!.Running)
         {
             var logStream = await _dockerClient.Containers.GetContainerLogsAsync(_containerId,
-                false, new ContainerLogsParameters { ShowStdout = true, ShowStderr = true });
+                new ContainerLogsParameters { ShowStdout = true, ShowStderr = true }, CancellationToken.None);
             var (stdout, stderr) = await logStream.ReadOutputToEndAsync(CancellationToken.None);
             throw new Exception(
                 $"Container exited immediately. Exit code: {inspect.State.ExitCode}\nStdout: {stdout}\nStderr: {stderr}");
         }
 
-        var httpPort = int.Parse(inspect.NetworkSettings.Ports[$"{DaprHttpPort}/tcp"][0].HostPort);
+        var httpPort = int.Parse(inspect.NetworkSettings!.Ports[$"{DaprHttpPort}/tcp"][0].HostPort);
         var grpcPort = int.Parse(inspect.NetworkSettings.Ports[$"{DaprGrpcPort}/tcp"][0].HostPort);
 
         // Wait for Dapr to be fully ready by polling the health endpoint
@@ -198,7 +197,7 @@ public class DaprContainerFixture : IAsyncLifetime
                 $"Last error: {lastException?.Message}\n" +
                 $"Container logs:\n{logs}");
         var logStream = await _dockerClient.Containers.GetContainerLogsAsync(_containerId,
-            false, new ContainerLogsParameters { ShowStdout = true, ShowStderr = true });
+            new ContainerLogsParameters { ShowStdout = true, ShowStderr = true }, CancellationToken.None);
         var (stdout, stderr) = await logStream.ReadOutputToEndAsync(CancellationToken.None);
         logs = $"stdout: {stdout}\nstderr: {stderr}";
 
