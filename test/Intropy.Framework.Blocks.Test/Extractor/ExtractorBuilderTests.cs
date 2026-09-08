@@ -248,6 +248,43 @@ public class ExtractorBuilderTests
     }
 
     [Fact]
+    public void WithSenderFromServices_WhenSenderIsMissing_ThrowsException()
+    {
+        // Arrange
+        var serviceProvider = GetServiceCollection().BuildServiceProvider();
+        var builder = ExtractorBuilder<int, int, Context>.Create("Test", serviceProvider);
+
+        // Act & Assert
+        var exception = Assert.Throws<InvalidOperationException>(() => builder.WithSenderFromServices());
+        Assert.Contains("SendStep", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithSenderFromServices_WithRegisteredSender_ConfiguresSender()
+    {
+        // Arrange
+        var services = GetServiceCollection();
+        services.AddSingleton<SendStep<Context>>(_sender);
+        var builder = ExtractorBuilder<int, int, Context>.Create("Test", services.BuildServiceProvider());
+
+        builder
+            .WithDeserializer(_deserializer)
+            .WithIdempotency((_, _) => "test", (_, _) => DateTime.Now)
+            .WithValidator(_validator)
+            .WithTransformer(_transformer)
+            .WithSerializer(_serializer)
+            .WithSenderFromServices()
+            .WithBusinessIncidents(x => x.Metadata["TEST"],
+                x => x.Metadata["TEST2"]);
+
+        // Act
+        var result = builder.Build();
+
+        // Assert
+        Assert.IsType<Extractor<int, int, Context>>(result);
+    }
+
+    [Fact]
     public void WithDaprTopicPublisher_WhenDaprClientIsMissing_ThrowsException()
     {
         // Arrange

@@ -158,6 +158,42 @@ public class LoaderBuilderTests
         Assert.IsType<Loader<int, int, Context>>(result);
     }
 
+    [Fact]
+    public void WithSenderFromServices_WhenSenderIsMissing_ThrowsException()
+    {
+        // Arrange
+        var serviceProvider = GetServiceCollection().BuildServiceProvider();
+        var builder = LoaderBuilder<int, int, Context>.Create("Test", serviceProvider);
+
+        // Act & Assert
+        var exception = Assert.Throws<InvalidOperationException>(() => builder.WithSenderFromServices());
+        Assert.Contains("SendStep", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithSenderFromServices_WithRegisteredSender_ConfiguresSender()
+    {
+        // Arrange
+        var services = GetServiceCollection();
+        services.AddSingleton<SendStep<int, Context>>(_sender);
+        var builder = LoaderBuilder<int, int, Context>.Create("Test", services.BuildServiceProvider());
+
+        builder
+            .WithDeserializer(_deserializer)
+            .WithIdempotency()
+            .WithValidator(_validator)
+            .WithTransformer(_transformer)
+            .WithSenderFromServices()
+            .WithBusinessIncidents(x => x.Metadata["TEST"],
+                x => x.Metadata["TEST"]);
+
+        // Act
+        var result = builder.Build();
+
+        // Assert
+        Assert.IsType<Loader<int, int, Context>>(result);
+    }
+
     private static ServiceCollection GetServiceCollection()
     {
         var idempotencyServiceClient = Substitute.For<IIdempotencyServiceClient>();
