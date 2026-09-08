@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Hand-rolled fakes and delivery helpers for component integration tests against the Intropy.Framework pipeline framework.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;testing;fakes;cloudevents;dapr</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intropy.Framework.Adapters\Intropy.Framework.Adapters.csproj" />
+    <ProjectReference Include="..\Intropy.Framework.Blocks\Intropy.Framework.Blocks.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.Client" />
+    <PackageReference Include="Intropy.Contracts" />
+  </ItemGroup>
+
+</Project>
