@@ -1,131 +1,64 @@
 # Result Types
 
-> Every step returns a discriminated union result that separates success, cancellation, business failure, and technical failure.
+> Failure classification, logical cancellation, and execution abortion are separate outcomes.
 
-## How it works
+## Step results and pipeline results
+
+Business and technical steps return different result families so their `Failure` cases require different payloads. The pipeline converts them to one result family that can represent either failure domain:
 
 ```mermaid
 graph TD
-    SR["StepResult&lt;T&gt;"]
-    SR --> S["Success(T Value)"]
-    SR --> C["Cancelled"]
-    SR --> BF["BusinessFailure(BusinessIncident)"]
-    SR --> TF["TechnicalFailure(TechnicalFailure)"]
+    B["BusinessStepResult&lt;T&gt;.Failure(BusinessIncidentData)"] --> BF["StepResult&lt;T&gt;.BusinessFailure"]
+    T["TechnicalStepResult&lt;T&gt;.Failure(TechnicalFailure)"] --> TF["StepResult&lt;T&gt;.TechnicalFailure"]
+    S["Success / Cancelled / Aborted"] --> P["Same-named StepResult&lt;T&gt; cases"]
 ```
 
-`StepResult<T>` is the pipeline's universal result type. Every step in the pipeline produces a `StepResult<T>`, either directly (for `Step<TIn, TOut, TCtx>`) or through automatic conversion from the step-specific result types. The four variants force explicit handling of every outcome — you cannot accidentally ignore a failure.
+`StepResult<T>` has five nested cases: `Success`, `Cancelled`, `BusinessFailure`, `TechnicalFailure`, and `Aborted`. Each step-level family has four: `Success`, `Cancelled`, `Failure`, and `Aborted`. See [Results](../core/results.md) for declarations, payload construction, and pattern matching.
 
-## StepResult\<T\>
+A non-success result skips subsequent ordinary steps. Finalizers are selected separately and may change the result. The result records do not themselves publish incidents or schedule retries.
 
-The top-level result type that flows through the pipeline:
+## Why two failure domains?
 
-```csharp
-public abstract record StepResult<T>
-{
-    public sealed record Success(T Value) : StepResult<T>;
-    public sealed record Cancelled : StepResult<T>;
-    public sealed record BusinessFailure(BusinessIncident Value) : StepResult<T>;
-    public sealed record TechnicalFailure(Failures.TechnicalFailure Value) : StepResult<T>;
-}
-```
+A business failure represents a problem to surface through business-incident handling, such as an invalid order. A technical failure represents a problem to propagate to the caller or runtime, such as a failed queue publish.
 
-| Variant | Meaning | Pipeline behavior |
-|---------|---------|-------------------|
-| `Success` | Step completed with a value | Next step executes |
-| `Cancelled` | Already processed (idempotency) | Remaining steps are skipped |
-| `BusinessFailure` | Domain-level problem (bad data, validation failure) | Remaining steps are skipped |
-| `TechnicalFailure` | Infrastructure problem (network, database, timeout) | Remaining steps are skipped |
+The step's base class determines how ordinary uncaught exceptions are classified; the framework does not inspect an exception and infer whether retry would help. A network exception inside a business step therefore becomes a business failure. A deterministic transformation bug inside a technical step becomes a technical failure, even though retrying unchanged code and input may fail again.
 
-## BusinessStepResult\<T\>
+For named block steps, this classification is already chosen. In particular, Transactional Integration's `SendStep` is business, while Extractor's and Loader's `SendStep` are technical. Use the [block-specific matrix](step-types.md#block-step-abstractions), not the unqualified step name, to choose a return type. These are the implemented classifications; the source does not establish a universal design rationale for every assignment.
 
-The return type for `BusinessStep<TIn, TOut, TCtx>`. It has three variants — no `TechnicalFailure`:
+## Cancelled versus Aborted
 
-```csharp
-public abstract record BusinessStepResult<T>
-{
-    public sealed record Success(T Value) : BusinessStepResult<T>;
-    public sealed record Cancelled : BusinessStepResult<T>;
-    public sealed record Failure(BusinessIncident Value) : BusinessStepResult<T>;
-}
-```
+- **`Cancelled`** is a logical stop, used by idempotency checks for an already-processed message. It does not mean the cancellation token was signalled.
+- **`Aborted`** represents execution abortion. The pipeline wrappers produce it when the token is already signalled, or when an `OperationCanceledException` escapes while the token is signalled.
 
-The pipeline automatically converts this to `StepResult<T>` after execution. If an uncaught exception occurs in a `BusinessStep`, it is converted to a `BusinessIncident` — not a `TechnicalFailure`.
+Both skip subsequent ordinary steps. Finalizer selection uses `OnCancelled` and `OnAborted`, respectively. A signalled token prevents a finalizer body from running even if its trigger matches; see the [finalizer contract](../core/steps.md).
 
-## TechnicalStepResult\<T\>
+## Incident routing and broker retry
 
-The return type for `TechnicalStep<TIn, TOut, TCtx>`. It has three variants — no `BusinessFailure`:
+There are three separate decisions: the step classifies a failure, a configured finalizer handles the result, and the host decides how to acknowledge the message.
 
-```csharp
-public abstract record TechnicalStepResult<T>
-{
-    public sealed record Success(T Value) : TechnicalStepResult<T>;
-    public sealed record Cancelled : TechnicalStepResult<T>;
-    public sealed record Failure(TechnicalFailure Value) : TechnicalStepResult<T>;
-}
-```
+For the built-in business-incident router and **Transactional Integration job subscriber** at this documentation revision:
 
-Uncaught exceptions in a `TechnicalStep` become `TechnicalFailure`.
+1. A business step returns `Failure(BusinessIncidentData)`. The pipeline converts it to `StepResult<T>.BusinessFailure` and skips the remaining ordinary steps.
+2. If configured, `ExternalBusinessIncidentRouter` calls the Business Incident Service. Successful incident creation converts the result to `Success` with the router's default output value. This success means **handled**, not that the skipped delivery steps ran.
+3. A `BusinessIncidentServiceException` during routing produces `TechnicalFailure`. Other uncaught router exceptions are also classified as technical by the finalizer wrapper.
+4. The subscriber returns Dapr `Retry` for a final `TechnicalFailure` **or an unhandled `BusinessFailure`**. It returns Dapr `Success` for the other cases, including `Cancelled` and, currently, `Aborted`.
 
-## TechnicalFailure
+| Final result observed by this subscriber | Dapr response |
+|---|---|
+| `Success` (including a successfully routed incident) | `Success` |
+| `Cancelled` | `Success` |
+| `BusinessFailure` still present | `Retry` |
+| `TechnicalFailure` | `Retry` |
+| `Aborted` | `Success` |
 
-The payload for technical failures:
+An exception escaping message processing also requests retry. Actual redelivery depends on the broker/Dapr policy. This table describes the subscriber's implementation, not a recommended cancellation policy or a guarantee for every host.
 
-```csharp
-public record TechnicalFailure(
-    string Description,
-    string? ErrorMessage = null,
-    Exception? Exception = null,
-    params object?[]? ErrorMessageArgs);
-```
+Thus, “business failures consume the message; technical failures retry” is only a shorthand for a pipeline with **successful incident routing**. A raw `BusinessFailure` is not automatically acknowledged. Extractor and Loader callers, custom hosts, and the transactional receive loop have their own handling; the Core pipeline engine does not prescribe broker behavior.
 
-`ErrorMessage` is a structured message template (like `"Failed to connect to {host}"`), and `ErrorMessageArgs` provides the template parameters. The framework uses these for structured logging via `ILogger`.
+## Source and related reference
 
-## BusinessIncident
-
-`BusinessIncident` comes from the `Intropy.Libs.Contracts` package. It represents a domain-level problem that should be routed to the business incident service for visibility and resolution:
-
-```csharp
-public record BusinessIncident(
-    string Description,
-    DateTimeOffset OccurredAt,
-    Dictionary<string, string> Context);
-```
-
-## Why two failure types?
-
-The separation between business and technical failures drives different operational behaviors:
-
-- **Business failures** are expected. They represent bad data, validation failures, or domain rule violations. They should be visible to integration operators and may require manual intervention to resolve.
-- **Technical failures** are unexpected. They represent infrastructure problems like network errors, database unavailability, or timeouts. They typically trigger automatic retries and infrastructure alerts.
-
-The step type (`BusinessStep` vs `TechnicalStep`) determines which failure domain uncaught exceptions fall into. This means you cannot accidentally produce a technical failure from business logic or a business failure from infrastructure code.
-
-## Pattern matching results
-
-Use C# pattern matching to handle results:
-
-```csharp
-var (result, context) = await pipeline;
-
-var message = result switch
-{
-    StepResult<string>.Success s => $"Processed: {s.Value}",
-    StepResult<string>.Cancelled => "Already processed (idempotent)",
-    StepResult<string>.BusinessFailure bf => $"Business issue: {bf.Value.Description}",
-    StepResult<string>.TechnicalFailure tf => $"Technical error: {tf.Value.Description}",
-    _ => throw new InvalidOperationException("Unknown result type")
-};
-```
-
-## Practical implications
-
-- Return `BusinessStepResult<T>.Failure` for problems the business should know about (invalid orders, missing required fields, data format violations).
-- Return `TechnicalStepResult<T>.Failure` for problems the infrastructure team should know about (API timeouts, connection failures, serialization errors in infrastructure code).
-- Return `Cancelled` when idempotency checks detect a duplicate. The pipeline will skip all remaining steps.
-- You can let exceptions propagate — the step wrapper will catch them and convert them to the appropriate failure type based on the step class.
-
-## Related
-
-- [Step Types](step-types.md) — how step types determine the failure domain
-- [Pipeline Execution](pipeline-execution.md) — how results propagate through the pipeline
-- [Results](../core/results.md) — exact type signatures
+- [ExternalBusinessIncidentRouter.cs](../../src/Intropy.Framework.Blocks/Shared/Steps/External/ExternalBusinessIncidentRouter.cs)
+- [MessageSubscriber.cs](../../src/Intropy.Framework.Hosting/TransactionalIntegration/Job/Lifecycle/MessageSubscriber.cs)
+- [Step Types](step-types.md) — block-specific failure domains
+- [Results](../core/results.md) — exact case and payload reference
+- [Implementing pipeline steps](../implementing-pipeline-steps.md) — working example

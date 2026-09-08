@@ -4,84 +4,47 @@
 
 ## Overview
 
-Intropy Framework provides a structured way to build integration pipelines that move data between systems. Every pipeline is a chain of typed steps — deserialize, validate, transform, serialize, send — with built-in OpenTelemetry tracing and a result type system that enforces separation between business and technical failures.
-
-The framework ships as five packages. **Core** provides the pipeline engine and step abstractions you can use to build any pipeline from scratch. **Blocks** provides pre-composed pipeline templates for common integration patterns like Transactional Integration and Extractor. **Adapters** provides file adapters for SFTP, local file systems, and Azure Blob Storage via Dapr bindings. **Hosting** provides runtime orchestration for the Transactional Integration lifecycle (sidecar lifecycle, message subscription, idle timeout). **EventDispatcher** provides attribute-based routing of CloudEvents to typed handler classes.
+Start with the [repository introduction](../README.md) for package choices and a short example. This documentation describes the source at the same revision. For released NuGet packages, use the corresponding release tag or source commit; development-branch examples may target unpublished APIs.
 
 ## Installation
 
-```bash
-# Core pipeline engine (step abstractions, result types, pipeline execution)
-dotnet add package Intropy.Framework.Core
-
-# Blocks (Transactional Integration, Extractor, Loader — includes Core)
-dotnet add package Intropy.Framework.Blocks
-
-# File adapters (SFTP, local, Azure Blob Storage — via Dapr bindings)
-dotnet add package Intropy.Framework.Adapters
-
-# Hosting (TransactionalIntegrationRunner, Dapr sidecar lifecycle — includes Blocks)
-dotnet add package Intropy.Framework.Hosting
-
-# Event dispatcher (attribute-based CloudEvent routing to typed handlers)
-dotnet add package Intropy.Framework.EventDispatcher
-```
-
-For a full Transactional Integration worker, install **Hosting** — it transitively includes Blocks, Adapters, and Core.
+Use [Getting Started](getting-started.md#install-the-packages) for a TI job, or install only the package you need from the [package overview](../README.md#packages). Hosting includes Blocks, Adapters, and Core transitively.
 
 ## Quick example
 
-Register the framework and a send pipeline in your DI container:
-
-```csharp
-builder.Services.AddIntropyFramework(opts => opts.ComponentName = "order-processor");
-
-builder.Services.AddTransactionalIntegration(opts =>
-{
-    opts.DaprPubSubName = "pubsub";
-    opts.DaprTopicName = "orders";
-});
-
-builder.Services.AddSendPipeline<OrderMessage, InvoiceMessage, Context>("order-to-invoice",
-    (pipelineBuilder, sp) => pipelineBuilder
-        .WithDeserializer(new OrderDeserializer())
-        .WithValidator(new OrderValidator())
-        .WithIdempotency(
-            sp.GetRequiredService<IIdempotencyServiceClient>(),
-            idExtractor: order => order.OrderId,
-            dateExtractor: order => order.CreatedAt)
-        .WithTransformer(new OrderToInvoiceTransformer())
-        .WithSerializer(new InvoiceSerializer())
-        .WithSender(new InvoiceSender())
-        .WithBusinessIncidents(
-            sp.GetRequiredService<IBusinessIncidentServiceClient>(),
-            messageIdExtractor: ctx => ctx.Metadata["message_id"]));
-```
-
-Each step is a class you implement by overriding a single `ExecuteAsync` method. The framework handles failure propagation, tracing, and result type conversion.
+- [Implement a pipeline step](implementing-pipeline-steps.md) — complete validator and Core chain; no Dapr sidecar needed.
+- [Build a Transactional Integration](getting-started.md) — full application, source files, pub/sub, and an invoice API destination.
+- [Dispatch a CloudEvent](event-dispatcher/event-dispatcher.md#quick-example) — standalone console example.
 
 ## Key features
 
-- **Type-safe pipeline chains** — step input/output types are checked at compile time. [Learn more](concepts/pipeline-execution.md)
-- **Business vs. technical failure separation** — the result type system forces you to classify failures explicitly. [Learn more](concepts/result-types.md)
-- **Built-in OpenTelemetry tracing** — every step and pipeline gets an Activity span with result tags. [Learn more](concepts/observability.md)
-- **Block pipelines** — pre-composed Transactional Integration and Extractor patterns with DI registration. [Learn more](blocks/transactional-integration.md)
-- **Idempotency and business incident routing** — built-in cross-cutting concerns via builder configuration. [Learn more](core/builders.md)
-- **File adapters** — SFTP, local file, and Azure Blob Storage access through Dapr bindings. [Learn more](adapters/file-adapters.md)
-- **Event dispatcher** — attribute-based routing of CloudEvents to typed handler classes. [Learn more](event-dispatcher/event-dispatcher.md)
+Learn the model before choosing a block:
+
+1. [Pipeline execution](concepts/pipeline-execution.md) — chaining, skipped steps, finalizers, cancellation.
+2. [Result types](concepts/result-types.md) — business versus technical failures, incident handling, and broker responses.
+3. [Step types](concepts/step-types.md) — the block-qualified matrix; identically named steps can differ.
+4. [Observability](concepts/observability.md) — Activity sources, statuses, and exception-path caveats.
 
 ## Documentation
 
-| Section | Description |
-|---------|-------------|
-| [Getting Started](getting-started.md) | Build a complete Transactional Integration from scratch |
-| [Concepts](concepts/pipeline-execution.md) | How the pipeline engine, result types, and step types work |
-| [Core](core/pipeline.md) | Pipeline engine, builders, step types, and result types |
-| [Blocks](blocks/transactional-integration.md) | Pre-composed pipeline blocks (Transactional Integration, Extractor, Loader) |
-| [Adapters](adapters/file-adapters.md) | File adapters (SFTP, local, Azure Blob) via Dapr bindings |
-| [Event Dispatcher](event-dispatcher/event-dispatcher.md) | Attribute-based routing of CloudEvents to typed handlers |
+| Need | Canonical reference |
+|---|---|
+| Implement a step or mutate context | [Steps](core/steps.md), [implementation guide](implementing-pipeline-steps.md) |
+| Construct and inspect outcomes | [Results](core/results.md) |
+| Compose a Core chain | [Pipeline API](core/pipeline.md) |
+| Configure framework identity | [FrameworkOptions](core/pipeline.md#frameworkoptions) |
+| Configure block builders | [Builders](core/builders.md) |
+| Run a file-to-queue-to-destination job | [Transactional Integration](blocks/transactional-integration.md) |
+| Configure Hosting or investigate shutdown | [TI lifecycle and options](blocks/transactional-integration.md#lifecycle) |
+| Publish canonical CloudEvents | [Extractor](blocks/extractor.md) |
+| Process a CloudEvent at a destination | [Loader](blocks/loader.md) |
+| Read/write files through Dapr | [File adapters](adapters/file-adapters.md) |
+| Route events to handlers | [Event Dispatcher](event-dispatcher/event-dispatcher.md) |
+
+Tutorials show complete tasks; references own exact contracts; concept pages explain consequences. Package READMEs summarize installation and link here rather than maintaining parallel walkthroughs.
 
 ## Requirements
 
-- .NET 10 or later
-- Dapr sidecar (for Blocks and Adapters)
+- .NET 10 or later; repository SDK selection is in [global.json](../global.json).
+- Dapr for Hosting, built-in file adapters, and Dapr-backed steps. Core and EventDispatcher do not require a sidecar.
+- Real external client implementations when opting into built-in idempotency or business incident services.

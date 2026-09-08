@@ -13,8 +13,8 @@ dotnet add package Intropy.Framework.Core
 ## Concepts
 
 - **Steps** — `Step<TIn, TOut, TCtx>`, `BusinessStep<...>`, `TechnicalStep<...>`, and `Finalizer<...>` express different failure semantics.
-- **Results** — `StepResult<T>` is one of `Success`, `Cancelled`, `BusinessFailure`, or `TechnicalFailure`. Failures short-circuit subsequent steps; finalizers run conditionally based on `FinalizerTrigger` flags.
-- **Context** — a typed `Context` flows through every step in the pipeline.
+- **Results** — `StepResult<T>` is one of `Success`, `Cancelled`, `BusinessFailure`, `TechnicalFailure`, or `Aborted`. Failures short-circuit subsequent steps; finalizers run conditionally based on `FinalizerTrigger` flags.
+- **Context** — Core accepts any `TCtx`; the shared `Context` record belongs to Blocks. Core chains carry `(Result, Context, CancellationToken)`, while overrides and tracing return pairs.
 
 ## Companion packages
 
@@ -22,6 +22,14 @@ dotnet add package Intropy.Framework.Core
 - `Intropy.Framework.Adapters` — file adapters (SFTP, local, Azure Blob)
 - `Intropy.Framework.Hosting` — runtime orchestration with Dapr
 - `Intropy.Framework.EventDispatcher` — CloudEvent routing to typed handlers
+
+## Documentation
+
+- [Pipeline and configuration](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/core/pipeline.md)
+- [Step contracts](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/core/steps.md)
+- [Results](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/core/results.md)
+
+Links point to development-branch docs. For a released package, select its corresponding tag/commit in GitHub before following examples.
 
 ## License
 

@@ -1,108 +1,113 @@
 # Results
 
-> Discriminated union result types for pipeline steps.
+> Result records returned by steps and pipelines, with their failure payloads.
 
 **Namespace:** `Intropy.Framework.Core.Pipeline.Abstractions.Results`
+
 **Assembly:** `Intropy.Framework.Core`
+
+These declarations describe the source at this documentation revision. Use the documentation from the tag or commit corresponding to your installed framework packages, not an unrelated branch. Start with [Implementing pipeline steps](../implementing-pipeline-steps.md) for a working example.
+
+## Result families
+
+| Returned by | Result type | Nested cases | Failure payload |
+|---|---|---|---|
+| `BusinessStep<TIn, TOut, TCtx>` | `BusinessStepResult<TOut>` | `Success`, `Cancelled`, `Failure`, `Aborted` | `BusinessIncidentData` |
+| `TechnicalStep<TIn, TOut, TCtx>` | `TechnicalStepResult<TOut>` | `Success`, `Cancelled`, `Failure`, `Aborted` | `TechnicalFailure` |
+| `Step<TIn, TOut, TCtx>`, finalizers, pipelines | `StepResult<T>` | `Success`, `Cancelled`, `BusinessFailure`, `TechnicalFailure`, `Aborted` | The corresponding payload below |
+
+The nested cases are sealed records on an abstract generic record. Construct a case, not the abstract base. A business step returns `BusinessStepResult<T>.Failure`, not `StepResult<T>.BusinessFailure`.
 
 ## StepResult\<T\>
 
-The universal result type that flows through the pipeline.
+Public outcome declarations:
 
 ```csharp
 public abstract record StepResult<T>
 {
     public sealed record Success(T Value) : StepResult<T>;
     public sealed record Cancelled : StepResult<T>;
-    public sealed record BusinessFailure(BusinessIncident Value) : StepResult<T>;
-    public sealed record TechnicalFailure(Failures.TechnicalFailure Value) : StepResult<T>;
+    public sealed record BusinessFailure(
+        Intropy.Contracts.BusinessIncidentService.BusinessIncidentData Value) : StepResult<T>;
+    public sealed record TechnicalFailure(
+        Intropy.Framework.Core.Pipeline.Abstractions.Failures.TechnicalFailure Value) : StepResult<T>;
+    public sealed record Aborted : StepResult<T>;
 }
 ```
 
-| Variant | Payload | Pipeline behavior |
-|---------|---------|-------------------|
-| `Success(T Value)` | The step's output value | Next step executes |
-| `Cancelled` | None | Remaining steps skipped |
-| `BusinessFailure(BusinessIncident Value)` | Business incident details | Remaining steps skipped |
-| `TechnicalFailure(TechnicalFailure Value)` | Technical failure details | Remaining steps skipped |
+| Case | Meaning | Effect on subsequent ordinary steps |
+|---|---|---|
+| `Success(T Value)` | Completed with an output value | Execute the next step |
+| `Cancelled` | Logical stop, such as an idempotency duplicate | Skip |
+| `BusinessFailure(BusinessIncidentData Value)` | Business-domain failure | Skip |
+| `TechnicalFailure(TechnicalFailure Value)` | Technical-domain failure | Skip |
+| `Aborted` | Execution aborted, normally by cancellation-token signalling | Skip |
 
-**Creating results:**
-
-```csharp
-// In a Step<TIn, TOut, TCtx>
-return (new StepResult<Order>.Success(order), context);
-return (new StepResult<Order>.Cancelled(), context);
-return (new StepResult<Order>.BusinessFailure(incident), context);
-return (new StepResult<Order>.TechnicalFailure(failure), context);
-```
-
-**Pattern matching:**
-
-```csharp
-switch (result)
-{
-    case StepResult<string>.Success s:
-        Console.WriteLine($"Value: {s.Value}");
-        break;
-    case StepResult<string>.Cancelled:
-        Console.WriteLine("Already processed");
-        break;
-    case StepResult<string>.BusinessFailure bf:
-        Console.WriteLine($"Business issue: {bf.Value.Description}");
-        break;
-    case StepResult<string>.TechnicalFailure tf:
-        Console.WriteLine($"Technical error: {tf.Value.Description}");
-        break;
-}
-```
-
----
+Finalizers are evaluated separately using their [trigger flags](steps.md#finalizertrigger). They can replace the current result. Failure classification alone does not route an incident or acknowledge a broker message; see [routing and retry](../concepts/result-types.md#incident-routing-and-broker-retry).
 
 ## BusinessStepResult\<T\>
 
-Result type for `BusinessStep<TIn, TOut, TCtx>`. Three variants — no `TechnicalFailure`.
+Public outcome declarations:
 
 ```csharp
 public abstract record BusinessStepResult<T>
 {
     public sealed record Success(T Value) : BusinessStepResult<T>;
     public sealed record Cancelled : BusinessStepResult<T>;
-    public sealed record Failure(BusinessIncident Value) : BusinessStepResult<T>;
+    public sealed record Failure(
+        Intropy.Contracts.BusinessIncidentService.BusinessIncidentData Value) : BusinessStepResult<T>;
+    public sealed record Aborted : BusinessStepResult<T>;
 }
 ```
 
-Automatically converted to `StepResult<T>` by the pipeline engine after execution.
-
----
+The pipeline engine converts `Success`, `Cancelled`, and `Aborted` to the same-named `StepResult<T>` cases; `Failure` becomes `StepResult<T>.BusinessFailure` with the same payload. `BusinessStepResult<T>.ToStepResult()` is **internal**, not a consumer API.
 
 ## TechnicalStepResult\<T\>
 
-Result type for `TechnicalStep<TIn, TOut, TCtx>`. Three variants — no `BusinessFailure`.
+Public outcome declarations:
 
 ```csharp
 public abstract record TechnicalStepResult<T>
 {
     public sealed record Success(T Value) : TechnicalStepResult<T>;
     public sealed record Cancelled : TechnicalStepResult<T>;
-    public sealed record Failure(TechnicalFailure Value) : TechnicalStepResult<T>;
+    public sealed record Failure(
+        Intropy.Framework.Core.Pipeline.Abstractions.Failures.TechnicalFailure Value) : TechnicalStepResult<T>;
+    public sealed record Aborted : TechnicalStepResult<T>;
 }
 ```
 
-### ToStepResult
+This type also exposes `public StepResult<T> ToStepResult()`. The pipeline calls it automatically: `Failure` becomes `StepResult<T>.TechnicalFailure`; the other cases retain their names. Step implementations normally do not need to call it.
+
+## BusinessIncidentData
+
+**Namespace:** `Intropy.Contracts.BusinessIncidentService`
+
+**Package:** `Intropy.Contracts` (the version is pinned in [Directory.Packages.props](../../Directory.Packages.props))
+
+Construct the business failure payload with an object initializer, not the old `BusinessIncident(description, occurredAt, context)` constructor:
 
 ```csharp
-public StepResult<T> ToStepResult()
+using Intropy.Contracts.BusinessIncidentService;
+using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+
+BusinessStepResult<string> result = new BusinessStepResult<string>.Failure(
+    new BusinessIncidentData
+    {
+        Description = "Order ID is required",
+        Context = new Dictionary<string, string> { ["field"] = "orderId" }
+    });
 ```
 
-Converts to the equivalent `StepResult<T>` variant. Called automatically by the pipeline engine.
-
----
+`Description` describes the problem; `Context` carries diagnostic fields for the incident. This payload dictionary is distinct from the pipeline's `Context.Metadata` unless you deliberately share it.
 
 ## TechnicalFailure
 
 **Namespace:** `Intropy.Framework.Core.Pipeline.Abstractions.Failures`
 
-Payload for technical failures. Represents infrastructure or system-level issues.
+**Assembly:** `Intropy.Framework.Core`
+
+Constructor signature (attributes omitted):
 
 ```csharp
 public record TechnicalFailure(
@@ -112,50 +117,47 @@ public record TechnicalFailure(
     params object?[]? ErrorMessageArgs);
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `Description` | `string` | Short description of the failure |
-| `ErrorMessage` | `string?` | Structured message template (e.g., `"Failed to connect to {host}"`) |
-| `Exception` | `Exception?` | The exception that caused the failure |
-| `ErrorMessageArgs` | `object?[]?` | Arguments for the structured message template |
-
-**Example:**
+| Parameter | Meaning |
+|---|---|
+| `Description` | Short description of the failure |
+| `ErrorMessage` | Structured logging template, e.g. `"Could not connect to {host}"` |
+| `Exception` | Optional underlying exception |
+| `ErrorMessageArgs` | Arguments for the structured logging template |
 
 ```csharp
-var failure = new TechnicalFailure(
-    Description: "Database connection failed",
-    ErrorMessage: "Could not connect to {database} at {host}",
-    Exception: ex,
-    ErrorMessageArgs: ["orders_db", "db.example.com"]);
+using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
+using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 
-return (new TechnicalStepResult<Order>.Failure(failure), context);
+TechnicalStepResult<string> result = new TechnicalStepResult<string>.Failure(
+    new TechnicalFailure(
+        Description: "Destination unavailable",
+        ErrorMessage: "Could not connect to {host}",
+        ErrorMessageArgs: ["orders.example.com"]));
 ```
 
-The framework uses `ErrorMessage` and `ErrorMessageArgs` for structured logging via `ILogger.LogError`.
-
----
-
-## BusinessIncident
-
-**Namespace:** `Intropy.Libs.Contracts.BusinessIncidentService`
-**Assembly:** `Intropy.Libs.Contracts`
-
-Payload for business failures. Defined in the external `Intropy.Libs.Contracts` package.
+## Handling every pipeline outcome
 
 ```csharp
-public record BusinessIncident(
-    string Description,
-    DateTimeOffset OccurredAt,
-    Dictionary<string, string> Context);
+using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+
+static string Describe(StepResult<string> result) => result switch
+{
+    StepResult<string>.Success s => $"Processed: {s.Value}",
+    StepResult<string>.Cancelled => "Skipped (for example, a duplicate)",
+    StepResult<string>.BusinessFailure bf => $"Business issue: {bf.Value.Description}",
+    StepResult<string>.TechnicalFailure tf => $"Technical error: {tf.Value.Description}",
+    StepResult<string>.Aborted => "Execution aborted",
+    _ => throw new InvalidOperationException("Unknown result type")
+};
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `Description` | `string` | Human-readable description of the issue |
-| `OccurredAt` | `DateTimeOffset` | When the incident occurred |
-| `Context` | `Dictionary<string, string>` | Additional context (message IDs, field values, etc.) |
+`Cancelled` and `Aborted` are parameterless: construct them with `new StepResult<T>.Cancelled()` and `new StepResult<T>.Aborted()`. The same applies to the step-level families.
 
-## See also
+## Source and related reference
 
-- [Result Types](../concepts/result-types.md) — design rationale
-- [Steps](steps.md) — which step types produce which results
+- [StepResult.cs](../../src/Intropy.Framework.Core/Pipeline/Abstractions/Results/StepResult.cs)
+- [BusinessStepResult.cs](../../src/Intropy.Framework.Core/Pipeline/Abstractions/Results/BusinessStepResult.cs)
+- [TechnicalStepResult.cs](../../src/Intropy.Framework.Core/Pipeline/Abstractions/Results/TechnicalStepResult.cs)
+- [TechnicalFailure.cs](../../src/Intropy.Framework.Core/Pipeline/Abstractions/Failures/TechnicalFailure.cs)
+- [Steps](steps.md) — override signatures and context semantics
+- [Result Types](../concepts/result-types.md) — cancellation, incident routing, and retry

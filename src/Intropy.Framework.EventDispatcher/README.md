@@ -12,18 +12,15 @@ dotnet add package Intropy.Framework.EventDispatcher
 
 ## Usage
 
-```csharp
-services.AddCloudEventDispatcher(options =>
-    options.AddHandlersFromAssembly(typeof(Program).Assembly));
-```
+Register handlers with `services.AddCloudEventHandlers(typeof(OrderCreatedHandler).Assembly)` (namespace `Intropy.Framework.EventDispatcher.DependencyInjection`). Implement `ICloudEventHandler<TData>` with a public `HandleAsync(TData data, CloudEvent cloudEvent, CancellationToken ct = default)` method and add `[CloudEventType("...")]`.
 
-```csharp
-[CloudEventType("com.example.order.created")]
-public sealed class OrderCreatedHandler : ICloudEventHandler<OrderCreated>
-{
-    public Task HandleAsync(OrderCreated data, CancellationToken ct) => /* ... */;
-}
-```
+The dispatcher and handlers are scoped. Decode the CloudEvent in your transport, then resolve `CloudEventDispatcher` in a scope and call `DispatchAsync`. Data must be a `JsonElement` or an exactly matching typed object, not a JSON string. No Dapr sidecar is needed for dispatch itself.
+
+## Documentation
+
+- [Complete example and API contracts](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/event-dispatcher/event-dispatcher.md)
+
+Links point to development-branch docs. For a released package, select its corresponding tag/commit in GitHub before following examples.
 
 ## License
 

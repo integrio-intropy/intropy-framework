@@ -14,16 +14,18 @@ graph LR
     B -->|Failure| F
 ```
 
-A pipeline starts with `Pipeline.Start(value, context)`, which wraps the initial value as a `StepResult<T>.Success`. Each subsequent call to `.AddStep(step)` is an extension method on `Task<(StepResult<T> Result, TCtx Context)>`. The compiler enforces that the output type of one step matches the input type of the next.
+A pipeline starts with `Pipeline.Start(value, context)`, which wraps the initial value as a `StepResult<T>.Success`. Each subsequent call to `.AddStep(step)` is an extension method on `Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)>`. The compiler enforces that the output type of one step matches the input type of the next.
 
-Steps only execute when the previous result is `Success`. If any step returns `Cancelled`, `BusinessFailure`, or `TechnicalFailure`, the failure propagates through all remaining steps unchanged — they are skipped without execution. Finalizers are the exception: they run conditionally based on their `FinalizerTrigger` flags.
+Steps only execute when the previous result is `Success`. If any step returns `Cancelled`, `BusinessFailure`, `TechnicalFailure`, or `Aborted`, the failure propagates through all remaining steps unchanged — they are skipped without execution. Finalizers are the exception: they run conditionally based on their `FinalizerTrigger` flags.
 
 ## Building a pipeline
+
+The following composition snippets are illustrative: step classes and input variables belong to your application. For a complete runnable example, see [Implementing pipeline steps](../implementing-pipeline-steps.md).
 
 The pipeline API is a chain of extension methods. There is no configuration object or runtime pipeline builder — the pipeline shape is determined at compile time:
 
 ```csharp
-var (result, context) = await Pipeline.Start(inputValue, myContext)
+var (result, context, _) = await Pipeline.Start(inputValue, myContext)
     .AddStep(new DeserializeStep())
     .AddStep(new ValidateStep())
     .AddStep(new TransformStep())
@@ -56,7 +58,7 @@ var extractors = new List<BusinessStep<Order, Order, Context>>
     new EnrichWithPricingData()
 };
 
-var (result, context) = await Pipeline.Start(order, myContext)
+var (result, context, _) = await Pipeline.Start(order, myContext)
     .AddSteps(extractors)  // executes in order, short-circuits on failure
     .AddStep(new TransformStep());
 ```
@@ -76,7 +78,7 @@ public class NotificationFinalizer : Finalizer<string, Context>
         FinalizerTrigger.OnSuccess | FinalizerTrigger.OnBusinessFailure;
 
     public override Task<(StepResult<string> Result, Context Context)> ExecuteAsync(
-        StepResult<string> result, Context context)
+        StepResult<string> result, Context context, CancellationToken ct)
     {
         // Runs on success AND business failure, but not on cancelled or technical failure
         return Task.FromResult((result, context));
@@ -92,11 +94,11 @@ The available triggers are flags that can be combined:
 | `FinalizerTrigger.OnCancelled` | Pipeline was cancelled (idempotency) |
 | `FinalizerTrigger.OnBusinessFailure` | A business step returned a failure |
 | `FinalizerTrigger.OnTechnicalFailure` | A technical failure occurred |
+| `FinalizerTrigger.OnAborted` | Execution was aborted |
 
-!!! info "Business failure preservation"
-    If a finalizer produces a new `BusinessFailure`, the pipeline preserves the
-    **first** business failure that occurred. This prevents finalizers from
-    accidentally overwriting the original failure reason.
+A finalizer can replace both the result and context, including turning a handled failure into success. The engine does not preserve an earlier business failure if the finalizer returns a different result.
+
+Trigger selection is not a cleanup guarantee: an already-signalled cancellation token prevents a finalizer body from running, including `OnAborted`. See [Steps](../core/steps.md#finalizertrigger).
 
 ## Tracing
 
@@ -115,12 +117,12 @@ This creates a parent Activity span for the entire pipeline. Each step also crea
 
 ## Practical implications
 
-- You don't need to add null checks or failure guards between steps — the pipeline engine handles propagation.
-- If you need a step to run regardless of the previous result, make it a `Finalizer` with the appropriate trigger flags.
-- Steps are stateless: they receive input and context, and return a result and (potentially modified) context. State sharing happens through the `Context.Metadata` dictionary.
+- You do not need failure guards between steps — the engine handles propagation. Your step still owns input validation.
+- Use finalizers to handle selected outcomes, subject to the cancellation contract above.
+- Design steps to be safe for reuse: the framework does not enforce statelessness. TI DI registrations are singletons; avoid mutable per-message instance fields and use an isolated context per message.
 
 ## Related
 
-- [Result Types](result-types.md) — the four result variants and when to use each
+- [Result Types](result-types.md) — the five result variants and when to use each
 - [Step Types](step-types.md) — choosing between Step, BusinessStep, TechnicalStep, and Finalizer
 - [Pipeline API Reference](../core/pipeline.md) — exact method signatures

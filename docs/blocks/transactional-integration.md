@@ -1,204 +1,134 @@
 # Transactional Integration
 
-> A two-pipeline system that reads source items, publishes them to Dapr pub/sub, and processes them through a send pipeline.
+> Two pipelines connected by Dapr pub/sub: receive source items, then process their payloads at the destination.
+
+The pipelines live in **Blocks**. The job lifecycle, options, and runner live in **Hosting**, under `Intropy.Framework.Hosting.TransactionalIntegration.Job`. This page describes the current source; use the corresponding release docs for installed packages.
 
 ## How it works
 
 ```mermaid
 graph LR
-    subgraph Receive Pipeline
-        SL[Source Lister] --> R[Receive]
-        R --> E[Enqueue]
-        E --> C[Complete]
-    end
-
-    E -->|Dapr pub/sub| D[(Topic)]
-
-    subgraph Send Pipeline
-        D --> DS[Deserialize]
-        DS --> EX[Extract]
-        EX --> IC[Idempotency Check]
-        IC --> V[Validate]
-        V --> T[Transform]
-        T --> S[Serialize]
-        S --> SD[Send]
-        SD --> IR[Idempotency Record]
-    end
+    L[Source lister] --> R[Receive]
+    R --> E[Enqueue]
+    E --> C[Complete]
+    E --> Q[(Dapr topic)]
+    Q --> D[Deserialize]
+    D --> X["Extract(s), optional"]
+    X --> I["Idempotency check, optional"]
+    I --> V[Validate]
+    V --> T[Transform]
+    T --> S[Serialize]
+    S --> O[Send]
+    O --> IR["Idempotency record, optional"]
 ```
 
-The Transactional Integration (TI) follows a classic reliable messaging pattern: receive a message from the source, publish it to an internal queue, then process it from that queue. The queue acts as a safety net — if processing fails, the message stays on the queue and can be retried without having to re-fetch it from the source system.
+Receive and send can each have an optional business-incident finalizer. The receive pipeline's completion step runs after successful enqueue, **not** after destination delivery.
 
-This matters because source systems are often unreliable or have side effects on read (e.g., SFTP servers where you delete the file after reading, APIs with pagination cursors that expire). By immediately enqueuing the raw data and completing the source transaction (deleting the file, acknowledging the read), you decouple the reliability of receiving from the reliability of processing. The source is only touched once, and all retries happen against the internal queue.
-
-In practice, this means the TI has two pipelines connected by Dapr pub/sub:
-
-- The **receive pipeline** reads items from the source, publishes each one to a Dapr topic, then cleans up the source (e.g., deletes the file).
-- The **send pipeline** subscribes to the topic and processes each message through deserialization, validation, transformation, serialization, and sending to the destination.
-
-If the send pipeline fails for a message, the message remains on the topic for automatic retry. The source system is not involved in retries.
+This decouples source access from downstream processing, but is not an atomic transaction or an exactly-once guarantee. A crash between enqueue and cleanup can republish a source item; a destination write followed by a failed idempotency record can repeat a side effect. Source cleanup, destination deduplication, and broker retention/redelivery policies remain application concerns.
 
 ## Lifecycle
 
-The `TransactionalIntegrationRunner` orchestrates the full lifecycle:
+`TransactionalIntegrationRunner.RunAsync()`:
 
-1. Waits for the Dapr sidecar to be ready
-2. Starts the receive pipeline (publisher) and send pipeline (subscriber) concurrently
-3. The publisher lists source items via `ISourceLister`, processes each through the receive pipeline
-4. The subscriber subscribes to the Dapr topic, processes messages through the send pipeline
-5. After the publisher finishes and an idle timeout elapses, the subscriber shuts down
-6. The Dapr sidecar is shut down
+1. Waits for the Dapr sidecar, bounded by `SidecarTimeoutSeconds`.
+2. Starts publishing and subscribing concurrently.
+3. Lists source items once and runs the receive pipeline sequentially for each item.
+4. Processes subscribed messages through the send pipeline.
+5. Starts idle monitoring only after publishing completes. Once idle, waits up to the grace period for in-flight handlers before disposing the subscription.
+6. Attempts to shut down the sidecar after lifecycle execution, even if the lifecycle throws. A failure while initially waiting for the sidecar returns before this shutdown block.
 
-```csharp
-var runner = app.Services.GetRequiredService<TransactionalIntegrationRunner>();
-var exitCode = await runner.RunAsync(); // returns 0 on success, 1 on failure
-```
+`RunAsync()` returns `1` for sidecar-wait failures or exceptions escaping the lifecycle, otherwise `0`. **A zero exit code does not prove every item was delivered:** returned receive failures are logged and the loop continues; per-message send failures are handled through broker responses. Monitor those outcomes separately.
+
+The runner does not take a cancellation token. It owns sidecar shutdown, so use it for a dedicated job sidecar rather than one shared by unrelated workloads.
 
 ## Configuration
 
-`TransactionalIntegrationOptions` controls the lifecycle behavior:
+**Namespace:** `Intropy.Framework.Hosting.TransactionalIntegration.Job`
+
+**Assembly:** `Intropy.Framework.Hosting`
+
+Registration fragment (the complete host is in [Getting Started](../getting-started.md)):
 
 ```csharp
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    opts.DaprPubSubName = "pubsub";          // required
-    opts.DaprTopicName = "orders";           // required
-    opts.IdleTimeoutSeconds = 5;             // default: 5
-    opts.PostIdleGracePeriodSeconds = 45;    // default: 45
-    opts.MaxMessageProcessingTimeSeconds = 40; // default: 40
-    opts.SidecarTimeoutSeconds = 30;         // default: 30
+    opts.DaprPubSubName = "pubsub";
+    opts.DaprTopicName = "orders";
 });
 ```
 
-| Option | Description |
-|--------|-------------|
-| `DaprPubSubName` | Name of the Dapr pub/sub component |
-| `DaprTopicName` | Topic to publish/subscribe to |
-| `IdleTimeoutSeconds` | Seconds of inactivity before the subscriber considers itself idle |
-| `PostIdleGracePeriodSeconds` | Seconds to wait after idle before shutting down |
-| `MaxMessageProcessingTimeSeconds` | Maximum time a single message can take before timeout |
-| `SidecarTimeoutSeconds` | Maximum time to wait for the Dapr sidecar to become ready |
+| Option | Default | Meaning |
+|---|---|---|
+| `DaprPubSubName` | `""` | Pub/sub component name; non-empty required |
+| `DaprTopicName` | `""` | Subscription topic; non-empty required |
+| `IdleTimeoutSeconds` | `5` | Inactivity threshold, monitored after publishing completes |
+| `PostIdleGracePeriodSeconds` | `45` | Maximum wait for in-flight messages after idle, not an unconditional delay |
+| `MaxMessageProcessingTimeSeconds` | `40` | Processing timeout passed to the Dapr subscription; cancellation is cooperative |
+| `SidecarTimeoutSeconds` | `30` | Maximum initial sidecar wait |
+
+Options have mutable properties and both a parameterless constructor and `TransactionalIntegrationOptions(string daprPubSubName, string daprTopicName)`. Registration immediately checks the two required names; it does not validate numeric ranges. Keep processing timeout below the grace period and choose positive values appropriate to the workload.
+
+`AddTransactionalIntegration` registers options, `ITopicSubscriber`, `TransactionalIntegrationLifecycle`, and `TransactionalIntegrationRunner`. The lifecycle constructs its internal subscriber/idle machinery; these are not all separately registered services.
+
+You must supply `ILoggerFactory`, `FrameworkOptions`, `DaprClient`, `DaprPublishSubscribeClient`, `ISourceLister`, `IReceivePipeline<Context>`, and `ISendPipeline<Context>`. The built-in host uses **exactly `Context`**; registering pipelines only for a derived context does not satisfy it. See [builder registration](../core/builders.md) for pipeline singleton lifetimes.
 
 ## Receive pipeline
 
-The receive pipeline has three steps:
+Three required steps execute in order: Receive → Enqueue → Complete. Incident routing is optional. Follow the [walkthrough](../getting-started.md#implement-the-receive-pipeline) for complete implementations; exact overrides are in the [block step matrix](../concepts/step-types.md#transactional-integration--receive-pipeline).
 
 ### ISourceLister
 
-Lists available source items. This is an interface — not a step — that you implement:
-
-```csharp
-public class FileSourceLister(IFileAdapter fileAdapter) : ISourceLister
-{
-    public async Task<List<SourceItemInfo>> ListSourceItemsAsync()
-    {
-        var files = await fileAdapter.ListAsync();
-        return files.Select(f => new SourceItemInfo(f.FileName)).ToList();
-    }
-}
-```
-
-`SourceItemInfo` is a record with a single `Id` property that identifies the source item.
+`ISourceLister.ListItemsAsync(CancellationToken cancellationToken = default)` returns `Task<IReadOnlyList<SourceItemInfo>>`. It is not a pipeline step. `SourceItemInfo` contains the string `Id`. The current lifecycle calls it without a cancellation token.
 
 ### ReceiveStep
 
-Reads the content for a source item. Extends `BusinessStep<SourceItemInfo, SourceItem, TCtx>`:
-
-```csharp
-public class FileReceiver(IFileAdapter fileAdapter) : ReceiveStep<Context>
-{
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItemInfo input, Context context)
-    {
-        var content = await fileAdapter.GetContentAsync(input.Id);
-        return (new BusinessStepResult<SourceItem>.Success(new SourceItem(input.Id, content)), context);
-    }
-}
-```
-
-`SourceItem` contains the `Id` and the raw `byte[]` data.
+Business step: `SourceItemInfo` → `SourceItem`. `SourceItem` holds a string `Id` and raw `byte[] Data`. The host starts each item with fresh metadata containing `sourceItemId`.
 
 ### EnqueueStep
 
-Publishes the source item to the Dapr topic as a cloud event. Extends `TechnicalStep<SourceItem, SourceItem, TCtx>`. The base class `ExecuteAsync` is **sealed** — it automatically adds `Context.Metadata` and the current W3C trace parent to the cloud event. You implement the overload that receives `cloudEvent`:
+Technical step with a `FrameworkOptions` constructor dependency. Its ordinary override is sealed: it wraps the source bytes in a structured CloudEvent, adds serialized metadata and trace extensions, and calls your four-parameter overload with the encoded bytes. Publish **those bytes**, with content type `application/cloudevents+json`, rather than republishing `input.Data`.
 
-```csharp
-public class DaprEnqueuer(DaprClient daprClient, FrameworkOptions options) : EnqueueStep<Context>(options)
-{
-    public override async Task<(TechnicalStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItem input, ReadOnlyMemory<byte> cloudEvent, TCtx context)
-    {
-        await daprClient.PublishByteEventAsync(
-            pubsubName: options.DaprPubSubName,
-            topicName: options.DaprTopicName,
-            data: cloudEvent,
-            dataContentType: "application/cloudevents+json" 
-                
-        return (new TechnicalStepResult<SourceItem>.Success(input), context);
-    }
-}
-```
+The envelope has a newly generated ID and type `transactional-integration.received`. Do not assume it supplies the Subject/Time contract used by Loader; TI sends raw payload bytes to its own send pipeline.
 
 ### CompleteStep
 
-Handles cleanup after successful enqueue. Extends `BusinessStep<SourceItem, SourceItem, TCtx>`:
-
-```csharp
-public class FileCompleter(IFileAdapter fileAdapter) : CompleteStep<Context>
-{
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItem input, Context context)
-    {
-        await fileAdapter.DeleteAsync(input.Id);
-        return (new BusinessStepResult<SourceItem>.Success(input), context);
-    }
-}
-```
+Business step: `SourceItem` → `SourceItem`. Delete or archive the source only after successful enqueue. Failure or interruption can leave the item available for the next job; make republishing safe.
 
 ### Registration
 
-```csharp
-builder.Services.AddReceivePipeline<Context>("order-receive",
-    (pipelineBuilder, sp) => pipelineBuilder
-        .WithReceiver(new FileReceiver(sp.GetRequiredService<IFileAdapter>()))
-        .WithEnqueuer(new DaprEnqueuer(sp.GetRequiredService<DaprClient>()))
-        .WithCompleter(new FileCompleter(sp.GetRequiredService<IFileAdapter>()))
-        .WithBusinessIncidents(
-            sp.GetRequiredService<IBusinessIncidentServiceClient>(),
-            ctx => ctx.Metadata["message_id"]));
-```
+See [receive registration in Getting Started](../getting-started.md#register-the-receive-pipeline). Receiver, enqueuer, and completer are required. External or custom business incident routing is optional. Receive-side incident extractors must work with `sourceItemId`; the initial receive context does not contain `message_id`.
 
 ## Send pipeline
 
-The send pipeline has six required steps plus optional extractors. See [Getting Started](../getting-started.md) for a complete example.
+Five required steps: deserialize, validate, transform, serialize, and send. Extractors, idempotency check/record, and incident routing are optional.
 
-Pipeline flow: `ReadOnlyMemory<byte>` → Deserialize → Extract(s) → Idempotency Check → Validate → Transform → Serialize → Send → Idempotency Record → Business Incident Route
+Execution order is fixed, independent of builder call order:
+
+`ReadOnlyMemory<byte>` → Deserialize → Extract(s) → Idempotency Check → Validate → Transform → Serialize → Send → Idempotency Record → Business Incident Route
+
+The idempotency recorder is an ordinary success-only step, not a finalizer. TI's `SendStep` is **business**, unlike Extractor/Loader senders. See [failure domains](../concepts/step-types.md).
 
 ### Registration
 
-```csharp
-builder.Services.AddSendPipeline<Order, Invoice, Context>("order-send",
-    (pipelineBuilder, sp) => pipelineBuilder
-        .WithDeserializer(new OrderDeserializer())
-        .WithExtractor(new EnrichWithCustomerData())  // optional, can call multiple times
-        .WithValidator(new OrderValidator())
-        .WithIdempotency(
-            sp.GetRequiredService<IIdempotencyServiceClient>(),
-            order => order.OrderId,
-            order => order.CreatedAt)
-        .WithTransformer(new OrderToInvoiceTransformer())
-        .WithSerializer(new InvoiceSerializer())
-        .WithSender(new InvoiceApiSender())
-        .WithBusinessIncidents(
-            sp.GetRequiredService<IBusinessIncidentServiceClient>(),
-            ctx => ctx.Metadata["message_id"]));
-```
+See [send registration in Getting Started](../getting-started.md#register-the-send-pipeline) and the [builder reference](../core/builders.md). Pipelines are built on service resolution; omitted required steps fail there, not necessarily when registration is called.
 
 ## Context propagation
 
-The TI automatically propagates `Context.Metadata` and W3C trace context through Dapr CloudEvent extensions. When the send pipeline receives a message, the metadata and trace parent from the receive pipeline are restored automatically. This means the send pipeline's trace is linked to the receive pipeline's trace, and any metadata you set in the receive pipeline (like file names or batch IDs) is available in the send pipeline.
+Enqueue serializes `Context.Metadata` into the CloudEvent `metadata` extension and propagates W3C trace information. The subscriber restores the metadata into a fresh context and adds `ContextKeys.MessageId` (`message_id`) from the envelope ID if not already present. `IsRetry` is true when a `retrycount` extension exists, not based on a numeric comparison.
+
+Each message needs its own mutable metadata dictionary. A source-file retry creates a new envelope ID unless the application carries a stable message ID in metadata. Choose incident/idempotency identifiers deliberately.
+
+## Results and redelivery
+
+The subscriber requests retry for final technical failures **and unhandled business failures**. Successfully routed business incidents become success; `Cancelled` and, currently, `Aborted` are acknowledged as success too. Exceptions escaping processing request retry. Actual redelivery depends on Dapr and the broker.
+
+Use the canonical [incident routing and broker retry table](../concepts/result-types.md#incident-routing-and-broker-retry). Do not interpret a handled incident as successful destination delivery, or rely on execution abortion to request retry.
 
 ## Related
 
-- [Getting Started](../getting-started.md) — complete working example
-- [Builders API Reference](../core/builders.md) — exact builder method signatures
-- [File Adapters](../adapters/file-adapters.md) — SFTP, local, and Azure Blob Storage adapters
+- [Getting Started](../getting-started.md) — complete application walkthrough
+- [Builders API Reference](../core/builders.md) — required/optional slots and callback signatures
+- [File Adapters](../adapters/file-adapters.md) — Dapr-backed source/destination access
+- [Lifecycle source](../../src/Intropy.Framework.Hosting/TransactionalIntegration/Job/Lifecycle/TransactionalIntegrationLifecycle.cs)
+- [Runner source](../../src/Intropy.Framework.Hosting/TransactionalIntegration/Job/TransactionalIntegrationRunner.cs)
+- [Options source](../../src/Intropy.Framework.Hosting/TransactionalIntegration/Job/TransactionalIntegrationOptions.cs)
