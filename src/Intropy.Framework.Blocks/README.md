@@ -8,15 +8,24 @@ Each block is a ready-made pipeline shape for a common integration pattern:
 |-------|---------------|----------|
 | **Extractor** | `string` → `CloudEvent` | System-to-queue: extract data, transform, publish as CloudEvent |
 | **Loader** | `CloudEvent` → `TOutput` | Queue-to-system: consume CloudEvent, transform, send |
-| **TransactionalIntegration** | File-based | Receive files → enqueue → process → send, with idempotency |
+| **TransactionalIntegration** | File-based | Receive → enqueue → complete; process messages with optional idempotency |
 
-Each block exposes a fluent builder and wires up deserialization, validation, transformation, idempotency, and finalizers in the right order.
+Each block has a fluent builder and fixed execution order. Extractor/Loader builders require idempotency and incident routing; TI makes these optional. Blocks does not supply a subscriber: use Hosting for a TI job, or your own caller for Extractor/Loader.
 
 ## Install
 
 ```bash
 dotnet add package Intropy.Framework.Blocks
 ```
+
+## Documentation
+
+- [Builders](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/core/builders.md)
+- [Extractor](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/blocks/extractor.md)
+- [Loader](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/blocks/loader.md)
+- [Transactional Integration](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/blocks/transactional-integration.md)
+
+Links point to development-branch docs. For a released package, select its corresponding tag/commit in GitHub before following examples.
 
 ## License
 

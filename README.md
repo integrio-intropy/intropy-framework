@@ -20,54 +20,47 @@ Intropy.Framework packages the structure: declare your steps, compose them with 
 | [Intropy.Framework.Hosting](https://www.nuget.org/packages/Intropy.Framework.Hosting) | Runtime orchestration (Dapr sidecar lifecycle, message subscription, idle timeout) |
 | [Intropy.Framework.EventDispatcher](https://www.nuget.org/packages/Intropy.Framework.EventDispatcher) | Attribute-based CloudEvent routing to typed handlers |
 
-For a full Transactional Integration worker, install **Blocks** and **Hosting**.
+For a full Transactional Integration job, install **Hosting** — it transitively includes Blocks, Adapters, and Core.
 
 ## Quick start
 
 ```bash
-dotnet add package Intropy.Framework.Blocks
 dotnet add package Intropy.Framework.Hosting
 ```
 
-```csharp
-builder.Services.AddIntropyFramework(opts => opts.ComponentName = "order-processor");
+Composition fragment, using the application step classes and service registrations from the walkthrough:
 
-builder.Services.AddTransactionalIntegration(opts =>
+```csharp
+builder.Services.AddIntropyFramework(opts =>
 {
-    opts.DaprPubSubName = "pubsub";
-    opts.DaprTopicName = "orders";
+    opts.ComponentName = "order-processor";
+    opts.ServiceNamespace = "example";
 });
 
-builder.Services.AddSendPipeline<Order, Invoice, Context>("order-to-invoice",
-    (pb, sp) => pb
-        .WithDeserializer(new OrderDeserializer())
-        .WithValidator(new OrderValidator())
-        .WithIdempotency(
-            sp.GetRequiredService<IIdempotencyServiceClient>(),
-            order => order.OrderId,
-            order => order.CreatedAt)
-        .WithTransformer(new OrderToInvoiceTransformer())
-        .WithSerializer(new InvoiceSerializer())
-        .WithSender(sp.GetRequiredService<InvoiceApiSender>())
-        .WithBusinessIncidents(
-            sp.GetRequiredService<IBusinessIncidentServiceClient>(),
-            ctx => ctx.Metadata["message_id"]));
-
-var runner = app.Services.GetRequiredService<TransactionalIntegrationRunner>();
-return await runner.RunAsync();
+builder.Services.AddSendPipeline<Order, Invoice, Context>("order-send", (pb, sp) => pb
+    .WithDeserializer(new OrderDeserializer())
+    .WithValidator(new OrderValidator())
+    .WithTransformer(new OrderToInvoiceTransformer())
+    .WithSerializer(new InvoiceSerializer())
+    .WithSender(sp.GetRequiredService<InvoiceApiSender>()));
 ```
+
+TI idempotency and incident routing are opt-in; omitting them does not provide deduplication or automatic incident creation.
 
 See the [Getting Started guide](docs/getting-started.md) for the full walkthrough.
 
 ## Requirements
 
 - .NET 10 or later
-- Dapr sidecar (for the Blocks, Adapters, and Hosting packages)
+- Dapr sidecar for Hosting, built-in file adapters, and Dapr-backed steps; Core and EventDispatcher can run without it
 
 ## Documentation
 
-Full documentation lives in [`docs/`](docs/index.md):
+Full documentation lives in [`docs/`](docs/index.md). It describes the source at the same revision; use the tag/commit matching your installed package.
 
+Start here:
+
+- [Implementing pipeline steps](docs/implementing-pipeline-steps.md) — context, result cases, block-specific step signatures, and file writes
 - [Getting Started](docs/getting-started.md) — build a complete Transactional Integration from scratch
 - [Concepts](docs/concepts/pipeline-execution.md) — pipeline execution, result types, step types, observability
 - [Core](docs/core/pipeline.md) — pipeline engine, builders, step types, and result types

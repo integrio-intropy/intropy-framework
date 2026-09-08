@@ -12,7 +12,16 @@ dotnet add package Intropy.Framework.Hosting
 
 ## Requirements
 
-A Dapr sidecar. Used together with `Intropy.Framework.Blocks` to run TransactionalIntegration and similar long-running pipelines.
+A dedicated Dapr sidecar with streaming pub/sub, a source lister, receive/send pipelines using `Context`, and registered Dapr clients. Hosting transitively includes Blocks, Adapters, and Core. It implements the TI job lifecycle, not a general-purpose host for every block.
+
+Set both framework identity fields (`ComponentName` and `ServiceNamespace`). The runner attempts sidecar shutdown after lifecycle execution; exit code zero alone does not guarantee delivery of every item.
+
+## Documentation
+
+- [Complete TI walkthrough](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/getting-started.md)
+- [Lifecycle and options](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/blocks/transactional-integration.md)
+
+Links point to development-branch docs. For a released package, select its corresponding tag/commit in GitHub before following examples.
 
 ## License
 

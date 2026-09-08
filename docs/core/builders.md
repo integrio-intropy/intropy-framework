@@ -1,6 +1,8 @@
 # Builders
 
-> Fluent builder APIs for configuring Block pipelines.
+> Fluent builder APIs for configuring Block pipelines. Signatures describe this source revision.
+
+All builders require `TCtx : Context`. Their method call order configures slots; the block implementation fixes execution order. See the block pages for the sequence. TI differs from Extractor/Loader: its idempotency and business incident routing are optional.
 
 ## SendPipelineBuilder\<TInput, TOutput, TCtx\>
 
@@ -74,19 +76,19 @@ Configures sending (`string` to `string`). **Required.**
 ```csharp
 public SendPipelineBuilder<TInput, TOutput, TCtx> WithIdempotency(
     IIdempotencyServiceClient client,
-    Func<TInput, string> idExtractor,
-    Func<TInput, DateTime> dateExtractor,
+    Func<TInput, TCtx, string> idExtractor,
+    Func<TInput, TCtx, DateTimeOffset> dateExtractor,
     Func<TInput, string>? hashGenerator = null)
 ```
 
-Configures automatic idempotency using the external idempotency service. Sets up both the check step (before validation) and the record step (after sending). **Required** (or use `WithCustomIdempotency`).
+Configures automatic idempotency using the external idempotency service. Sets up both the check step (before validation) and the record step (after sending). **Optional**; omit both check and record, or use `WithCustomIdempotency` instead.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `client` | `IIdempotencyServiceClient` | Client for the idempotency service |
-| `idExtractor` | `Func<TInput, string>` | Extracts the unique ID from the deserialized input |
-| `dateExtractor` | `Func<TInput, DateTime>` | Extracts the event date from the deserialized input |
-| `hashGenerator` | `Func<TInput, string>?` | Optional custom hash function. Default: JSON + SHA256 |
+| `idExtractor` | `Func<TInput, TCtx, string>` | Extracts the unique ID from the deserialized input |
+| `dateExtractor` | `Func<TInput, TCtx, DateTimeOffset>` | Extracts the event date from the deserialized input |
+| `hashGenerator` | `Func<TInput, string>?` | Optional custom hash function. Default: JSON + SHA256 + Base64, or `IHashable`; see [hash rules](../blocks/loader.md#hash-generation) |
 
 ### WithCustomIdempotency
 
@@ -103,15 +105,17 @@ Uses custom idempotency implementations instead of the built-in external service
 ```csharp
 public SendPipelineBuilder<TInput, TOutput, TCtx> WithBusinessIncidents(
     IBusinessIncidentServiceClient client,
-    Func<TCtx, string> messageIdExtractor)
+    Func<TCtx, string> messageIdExtractor,
+    Func<TCtx, string> subjectExtractor)
 ```
 
-Configures automatic business incident routing. On business failure, routes the incident to the service. On success with retry, resolves previous incidents. **Required** (or use `WithCustomBusinessIncidents`).
+Configures automatic business incident routing. On business failure, routes the incident to the service. On success with retry, resolves previous incidents. **Optional**; omit routing, or use `WithCustomBusinessIncidents` instead.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `client` | `IBusinessIncidentServiceClient` | Client for the business incident service |
 | `messageIdExtractor` | `Func<TCtx, string>` | Extracts a message ID from context, consistent across retries |
+| `subjectExtractor` | `Func<TCtx, string>` | Extracts a business-facing subject ID, available even on failure |
 
 ### WithCustomBusinessIncidents
 
@@ -128,7 +132,7 @@ Uses a custom business incident router instead of the built-in external service.
 public SendPipeline<TInput, TOutput, TCtx> Build()
 ```
 
-Builds the pipeline. Throws `InvalidOperationException` if any required step is missing.
+Builds the pipeline. Throws `InvalidOperationException` if any of the five required steps (deserialize, validate, transform, serialize, send) is missing. Extractors, idempotency, and business incident routing are optional.
 
 ### DI Registration
 
@@ -188,10 +192,11 @@ Configures the complete step for cleanup after enqueue. **Required.**
 ```csharp
 public ReceivePipelineBuilder<TCtx> WithBusinessIncidents(
     IBusinessIncidentServiceClient client,
-    Func<TCtx, string> messageIdExtractor)
+    Func<TCtx, string> messageIdExtractor,
+    Func<TCtx, string> subjectExtractor)
 ```
 
-Configures automatic business incident routing. **Required** (or use `WithCustomBusinessIncidents`).
+Configures automatic business incident routing. **Optional**; omit routing, or use `WithCustomBusinessIncidents` instead.
 
 ### WithCustomBusinessIncidents
 
@@ -200,7 +205,7 @@ public ReceivePipelineBuilder<TCtx> WithCustomBusinessIncidents(
     BusinessIncidentRouteStep<SourceItem, TCtx> businessIncidentRouteStep)
 ```
 
-Uses a custom business incident router.
+Uses a custom business incident router. It is optional for TI receive pipelines. On receive, the host initially supplies `sourceItemId`, not `message_id`; choose extractors that work before deserialization or enqueue.
 
 ### Build
 
@@ -217,7 +222,7 @@ services.AddReceivePipeline<TContext>(
         ReceivePipelineBuilder<TContext>> configurePipeline)
 ```
 
-Registers `IReceivePipeline<TContext>` as a singleton.
+Registers `IReceivePipeline<TContext>` as a singleton. Configuration and `Build()` run when the service is first resolved; receiver, enqueuer, and completer are the three required steps. The host resolves pipelines using `Context`, not a custom context type.
 
 ---
 
@@ -246,8 +251,9 @@ public ExtractorBuilder<TInput, TOutput, TCtx> WithDeserializer(DeserializeStep<
 
 Configures deserialization from `string` to `TInput`. **Required.**
 
-!!! note "Different from SendPipeline"
-    The Extractor's `DeserializeStep` takes `string` input, while the Send pipeline's takes `ReadOnlyMemory<byte>`. They are different types in different namespaces.
+> [!NOTE]
+> **Different from SendPipeline**
+> The Extractor's `DeserializeStep` takes `string` input, while the Send pipeline's takes `ReadOnlyMemory<byte>`. They are different types in different namespaces.
 
 ### WithValidator
 
@@ -314,14 +320,16 @@ Configures sending CloudEvents to a Dapr pub/sub topic. Resolves `DaprClient` fr
 public ExtractorBuilder<TInput, TOutput, TCtx> WithDaprServiceInvoker(
     string appId,
     Uri source,
-    string type)
+    string type,
+    Func<IServiceProvider, HttpClient> httpClientFactory)
 ```
 
-Configures sending CloudEvents to a Dapr service via service invocation. Invokes the target service's `"ingest"` endpoint.
+Configures sending CloudEvents to a Dapr service via service invocation. Builds a POST to the target service's `"ingest"` endpoint and sends it using the supplied HTTP client. The caller owns that client's lifetime. The current implementation does not call `EnsureSuccessStatusCode`; HTTP error statuses alone are not converted to failures. See [service invoker](../blocks/extractor.md#dapr-service-invoker).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `appId` | `string` | Dapr app ID of the target service |
+| `httpClientFactory` | `Func<IServiceProvider, HttpClient>` | Returns a caller-managed HTTP client |
 | `source` | `Uri` | CloudEvent source URI |
 | `type` | `string` | CloudEvent type |
 
@@ -329,8 +337,8 @@ Configures sending CloudEvents to a Dapr service via service invocation. Invokes
 
 ```csharp
 public ExtractorBuilder<TInput, TOutput, TCtx> WithIdempotency(
-    Func<TInput, string> idExtractor,
-    Func<TInput, DateTime> dateExtractor,
+    Func<TInput, TCtx, string> idExtractor,
+    Func<TInput, TCtx, DateTimeOffset> dateExtractor,
     Func<TInput, string>? hashGenerator = null)
 ```
 
@@ -340,7 +348,8 @@ Configures idempotency. Resolves `IIdempotencyServiceClient` from the service pr
 
 ```csharp
 public ExtractorBuilder<TInput, TOutput, TCtx> WithBusinessIncidents(
-    Func<TCtx, string> messageIdExtractor)
+    Func<TCtx, string> messageIdExtractor,
+    Func<TCtx, string> subjectExtractor)
 ```
 
 Configures business incident routing. Resolves `IBusinessIncidentServiceClient` from the service provider. **Required.**
@@ -353,36 +362,38 @@ public Extractor<TInput, TOutput, TCtx> Build()
 
 ---
 
+## LoaderBuilder<TInput, TOutput, TCtx>
+
+**Namespace:** `Intropy.Framework.Blocks.Loader`
+
+`Create(string pipelineName, IServiceProvider serviceProvider)` resolves `FrameworkOptions` and `ILoggerFactory`, like Extractor. Required slots: deserializer, validator, transformer, sender, idempotency, and business incident router. Extractors and the receipt sender are optional.
+
+| Method | Argument / behavior |
+|---|---|
+| `WithDeserializer` | Loader `DeserializeStep<TInput, TCtx>`; implement protected `DeserializeAsync` |
+| `WithExtractor` | Loader `ExtractStep<TInput, TCtx>`; repeatable |
+| `WithValidator` | Loader `ValidateStep<TInput, TCtx>` |
+| `WithTransformer` | Loader `TransformStep<TInput, TOutput, TCtx>` |
+| `WithSender` | Loader `SendStep<TOutput, TCtx>` |
+| `WithReceiptSender` | Loader `SendStep<TOutput, TCtx>`; runs after the idempotency record |
+| `WithIdempotency` | Optional `Func<TInput, string>? hashGenerator = null`; reads ID/date from CloudEvent context and resolves `IIdempotencyServiceClient` |
+| `WithBusinessIncidents` | `Func<TCtx, string> messageIdExtractor`, `Func<TCtx, string> subjectExtractor`; resolves `IBusinessIncidentServiceClient` |
+| `Build` | Returns `Loader<TInput, TOutput, TCtx>`; throws for missing required slots |
+
+All `With...` methods return this builder. There is no separate Loader serializer slot or TI-style custom-idempotency/custom-incident builder method. See [Loader](../blocks/loader.md) for composition and metadata rules.
+
 ## TransactionalIntegrationOptions
 
-**Namespace:** `Intropy.Framework.Blocks.TransactionalIntegration`
-
-```csharp
-public class TransactionalIntegrationOptions
-{
-    public string DaprPubSubName { get; set; }
-    public string DaprTopicName { get; set; }
-    public int IdleTimeoutSeconds { get; set; } = 5;
-    public int PostIdleGracePeriodSeconds { get; set; } = 45;
-    public int MaxMessageProcessingTimeSeconds { get; set; } = 40;
-    public int SidecarTimeoutSeconds { get; set; } = 30;
-}
-```
+These options belong to **Hosting**, in `Intropy.Framework.Hosting.TransactionalIntegration.Job`, not Blocks. Their canonical reference is [TI configuration](../blocks/transactional-integration.md#configuration).
 
 ### DI Registration
 
-```csharp
-services.AddTransactionalIntegration(opts =>
-{
-    opts.DaprPubSubName = "pubsub";   // required
-    opts.DaprTopicName = "orders";    // required
-});
-```
-
-Registers `TransactionalIntegrationOptions`, `ITopicSubscriber`, `TransactionalIntegrationLifecycle`, and `TransactionalIntegrationRunner`.
+`AddTransactionalIntegration` is also in Hosting. It registers options, `ITopicSubscriber`, the lifecycle, and runner; it does not register your pipelines, source lister, or Dapr clients. See [Getting Started](../getting-started.md#register-framework-services) for complete wiring.
 
 ## See also
 
 - [Transactional Integration](../blocks/transactional-integration.md) — lifecycle and architecture
 - [Steps](steps.md) — step base classes
 - [Getting Started](../getting-started.md) — complete example
+
+Source: [SendPipelineBuilder.cs](../../src/Intropy.Framework.Blocks/TransactionalIntegration/Send/SendPipelineBuilder.cs), [ReceivePipelineBuilder.cs](../../src/Intropy.Framework.Blocks/TransactionalIntegration/Receive/ReceivePipelineBuilder.cs), [ExtractorBuilder.cs](../../src/Intropy.Framework.Blocks/Extractor/ExtractorBuilder.cs), [LoaderBuilder.cs](../../src/Intropy.Framework.Blocks/Loader/LoaderBuilder.cs).

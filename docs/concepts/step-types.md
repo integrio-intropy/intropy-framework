@@ -1,194 +1,119 @@
 # Step Types
 
-> The framework provides four step base classes, each with a different failure domain and execution model.
+> A step's base class fixes its result family and the failure domain of ordinary uncaught exceptions.
 
-## How it works
+## Choosing a core step type
 
-```mermaid
-classDiagram
-    class Step~TIn, TOut, TCtx~ {
-        <<abstract>>
-        +StepName string
-        +ExecuteAsync(TIn, TCtx) Task
-    }
-    class BusinessStep~TIn, TOut, TCtx~ {
-        <<abstract>>
-        +StepName string
-        +ExecuteAsync(TIn, TCtx) Task
-    }
-    class TechnicalStep~TIn, TOut, TCtx~ {
-        <<abstract>>
-        +StepName string
-        +ExecuteAsync(TIn, TCtx) Task
-    }
-    class Finalizer~T, TCtx~ {
-        <<abstract>>
-        +FinalizerName string
-        +Triggers FinalizerTrigger
-        +ExecuteAsync(StepResult T, TCtx) Task
-    }
-```
+| Base class | Return family | Ordinary uncaught exception becomes |
+|---|---|---|
+| `BusinessStep<TIn, TOut, TCtx>` | `BusinessStepResult<TOut>` | `Failure(BusinessIncidentData)` |
+| `TechnicalStep<TIn, TOut, TCtx>` | `TechnicalStepResult<TOut>` | `Failure(TechnicalFailure)` |
+| `Step<TIn, TOut, TCtx>` | `StepResult<TOut>` | `TechnicalFailure` |
+| `Finalizer<T, TCtx>` | `StepResult<T>` | `TechnicalFailure` |
 
-Every step has a `StepName` (or `FinalizerName`) property for tracing and logging. The framework wraps every `ExecuteAsync` call with OpenTelemetry span creation and exception handling — you implement the abstract method, and the framework handles the rest.
+Use a business step for logic whose failures should enter business-incident handling. Use a technical step for logic whose failures should propagate as technical problems to the caller/runtime. Use the generic `Step` when a single step must explicitly return either failure domain.
 
-## Step\<TIn, TOut, TCtx\>
+A finalizer receives the full current result and runs according to its trigger flags; ordinary steps receive only a successful value. Add finalizers with `.AddFinalizer()`, not `.AddStep()`. Finalizers can replace the result, including converting a handled business failure to success.
 
-The generic step with no predefined failure domain. You return `StepResult<TOut>` directly, giving you full control over which result variant to use. Uncaught exceptions become `TechnicalFailure`.
-
-```csharp
-public class MyStep : Step<string, Order, Context>
-{
-    public override string StepName => "MyStep";
-
-    public override Task<(StepResult<Order> Result, Context Context)> ExecuteAsync(
-        string input, Context context)
-    {
-        var order = JsonSerializer.Deserialize<Order>(input)!;
-        return Task.FromResult<(StepResult<Order>, Context)>(
-            (new StepResult<Order>.Success(order), context));
-    }
-}
-```
-
-Use `Step<TIn, TOut, TCtx>` when your logic doesn't fit neatly into the business or technical domain, or when you need to return any of the four result variants directly.
-
-## BusinessStep\<TIn, TOut, TCtx\>
-
-A step whose failure domain is "business." You return `BusinessStepResult<TOut>` — which only has `Success`, `Cancelled`, and `Failure(BusinessIncident)`. If an uncaught exception escapes your `ExecuteAsync`, the framework catches it and creates a `BusinessIncident` automatically.
-
-```csharp
-public class OrderValidator : BusinessStep<Order, Order, Context>
-{
-    public override string StepName => "ValidateOrder";
-
-    public override Task<(BusinessStepResult<Order> Result, Context Context)> ExecuteAsync(
-        Order input, Context context)
-    {
-        if (input.Amount <= 0)
-        {
-            var incident = new BusinessIncident(
-                "Invalid order amount",
-                DateTimeOffset.UtcNow,
-                new Dictionary<string, string> { ["orderId"] = input.OrderId });
-
-            return Task.FromResult<(BusinessStepResult<Order>, Context)>(
-                (new BusinessStepResult<Order>.Failure(incident), context));
-        }
-
-        return Task.FromResult<(BusinessStepResult<Order>, Context)>(
-            (new BusinessStepResult<Order>.Success(input), context));
-    }
-}
-```
-
-Use `BusinessStep` for domain logic: validation, data enrichment, business rule checks, sending to external systems where failure represents a business problem.
-
-## TechnicalStep\<TIn, TOut, TCtx\>
-
-A step whose failure domain is "technical." You return `TechnicalStepResult<TOut>` — which only has `Success`, `Cancelled`, and `Failure(TechnicalFailure)`. Uncaught exceptions become `TechnicalFailure`.
-
-```csharp
-public class OrderTransformer : TechnicalStep<Order, Invoice, Context>
-{
-    public override string StepName => "TransformOrder";
-
-    public override Task<(TechnicalStepResult<Invoice> Result, Context Context)> ExecuteAsync(
-        Order input, Context context)
-    {
-        var invoice = new Invoice(
-            InvoiceNumber: $"INV-{input.OrderId}",
-            CustomerName: input.CustomerName,
-            Total: input.Amount * 1.25m,
-            IssuedDate: DateTime.UtcNow);
-
-        return Task.FromResult<(TechnicalStepResult<Invoice>, Context)>(
-            (new TechnicalStepResult<Invoice>.Success(invoice), context));
-    }
-}
-```
-
-Use `TechnicalStep` for infrastructure operations: data transformation, serialization, file I/O, idempotency checks.
-
-## Finalizer\<T, TCtx\>
-
-A step that runs conditionally based on the pipeline result. Unlike other steps, it receives the full `StepResult<T>` — not just the success value. The `Triggers` property determines when it executes.
-
-```csharp
-public class LoggingFinalizer : Finalizer<string, Context>
-{
-    public override string FinalizerName => "LogResult";
-
-    public override FinalizerTrigger Triggers =>
-        FinalizerTrigger.OnSuccess | FinalizerTrigger.OnBusinessFailure | FinalizerTrigger.OnTechnicalFailure;
-
-    public override Task<(StepResult<string> Result, Context Context)> ExecuteAsync(
-        StepResult<string> result, Context context)
-    {
-        // Log the result, send notifications, clean up resources
-        return Task.FromResult((result, context));
-    }
-}
-```
-
-Finalizers are added to the pipeline with `.AddFinalizer()` instead of `.AddStep()`.
-
-!!! tip "Returning results from finalizers"
-    Finalizers can modify the result — for example, converting a `BusinessFailure`
-    to `Success` after handling it. But if a finalizer produces a new
-    `BusinessFailure`, the pipeline preserves the first one to prevent accidental
-    overwriting.
+Exception conversion and tracing are provided by the pipeline wrapper, not by a direct call to your override. Cancellation-token signalling is handled separately as `Aborted`. See [Steps](../core/steps.md) for the exact override and cancellation contracts.
 
 ## Block step abstractions
 
-The Blocks package provides pre-named step abstractions for common integration patterns. These extend the core step types with fixed `StepName` values and constrain `TCtx : Context`:
+The Blocks package provides named abstractions with fixed `StepName` values and `TCtx : Context`. Derive from the abstraction for **your block**, then return its prescribed result family. Do not choose a family from the name `Send`, `Deserialize`, or `Serialize` alone.
 
-### Send pipeline steps
+In the tables below, **business** means `BusinessStepResult<TOut>` and **technical** means `TechnicalStepResult<TOut>`. Every table uses types in the stated namespace; `Context` lives in `Intropy.Framework.Blocks.Shared`.
 
-| Abstract class | Base class | Input → Output |
+### Transactional Integration — send pipeline
+
+**Namespace:** `Intropy.Framework.Blocks.TransactionalIntegration.Send.Steps`
+
+[Source](../../src/Intropy.Framework.Blocks/TransactionalIntegration/Send/Steps/)
+
+| Abstract class | Domain | Input → Output |
 |---|---|---|
-| `DeserializeStep<TInput, TCtx>` | `BusinessStep<ReadOnlyMemory<byte>, TInput, TCtx>` | Raw bytes → typed object |
-| `ExtractStep<TInput, TCtx>` | `BusinessStep<TInput, TInput, TCtx>` | Enrichment (same type in/out) |
-| `ValidateStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Validation (same type in/out) |
-| `TransformStep<TInput, TOutput, TCtx>` | `TechnicalStep<TInput, TOutput, TCtx>` | Type conversion |
-| `SerializeStep<T, TCtx>` | `TechnicalStep<T, string, TCtx>` | Typed object → string |
-| `SendStep<TCtx>` | `BusinessStep<string, string, TCtx>` | Send to destination |
+| `DeserializeStep<TInput, TCtx>` | Business | `ReadOnlyMemory<byte>` → `TInput` |
+| `ExtractStep<TInput, TCtx>` | Business | `TInput` → `TInput` |
+| `ValidateStep<T, TCtx>` | Business | `T` → `T` |
+| `TransformStep<TInput, TOutput, TCtx>` | Technical | `TInput` → `TOutput` |
+| `SerializeStep<T, TCtx>` | Technical | `T` → `string` |
+| `SendStep<TCtx>` | **Business** | `string` → `string` |
 
-### Receive pipeline steps
+These steps use `public override Task<(ResultFamily<TOut> Result, TCtx Context)> ExecuteAsync(TIn input, TCtx context, CancellationToken ct)`, substituting the result family and types from the table.
 
-| Abstract class | Base class | Input → Output |
+### Transactional Integration — receive pipeline
+
+**Namespace:** `Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps`
+
+[Source](../../src/Intropy.Framework.Blocks/TransactionalIntegration/Receive/Steps/)
+
+| Abstract class | Domain | Input → Output |
 |---|---|---|
-| `ReceiveStep<TCtx>` | `BusinessStep<SourceItemInfo, SourceItem, TCtx>` | Read source item content |
-| `EnqueueStep<TCtx>` | `TechnicalStep<SourceItem, SourceItem, TCtx>` | Publish to message queue |
-| `CompleteStep<TCtx>` | `BusinessStep<SourceItem, SourceItem, TCtx>` | Cleanup after enqueue |
+| `ReceiveStep<TCtx>` | Business | `SourceItemInfo` → `SourceItem` |
+| `EnqueueStep<TCtx>` | Technical | `SourceItem` → `SourceItem` |
+| `CompleteStep<TCtx>` | Business | `SourceItem` → `SourceItem` |
 
-### Extractor steps
+`SourceItemInfo` and `SourceItem` live in `Intropy.Framework.Blocks.TransactionalIntegration.Receive`. Receive and Complete use the ordinary three-parameter override.
 
-| Abstract class | Base class | Input → Output |
+**Enqueue is an exception:** its constructor takes `FrameworkOptions` (`Intropy.Framework.Core.Configuration`). Its three-parameter `ExecuteAsync` is sealed and builds a CloudEvent from the source item and context. Implement this four-parameter overload instead:
+
+```csharp
+public abstract Task<(TechnicalStepResult<SourceItem> Result, TCtx Context)> ExecuteAsync(
+    SourceItem input, ReadOnlyMemory<byte> cloudEvent, TCtx context, CancellationToken ct);
+```
+
+The `cloudEvent` argument is the encoded structured-mode CloudEvent to publish, not just the source payload.
+
+### Extractor
+
+**Namespace:** `Intropy.Framework.Blocks.Extractor.Steps`
+
+[Source](../../src/Intropy.Framework.Blocks/Extractor/Steps/)
+
+| Abstract class | Domain | Input → Output |
 |---|---|---|
-| `DeserializeStep<TInput, TCtx>` | `BusinessStep<string, TInput, TCtx>` | String → typed object |
-| `ExtractStep<TInput, TCtx>` | `BusinessStep<TInput, TInput, TCtx>` | Enrichment (same type in/out) |
-| `ValidateStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Validation (same type in/out) |
-| `TransformStep<TInput, TOutput, TCtx>` | `TechnicalStep<TInput, TOutput, TCtx>` | Type conversion |
-| `SerializeStep<T, TCtx>` | `TechnicalStep<T, CloudEvent, TCtx>` | Typed object → CloudEvent |
-| `SendStep<TCtx>` | `TechnicalStep<CloudEvent, CloudEvent, TCtx>` | Publish CloudEvent |
+| `DeserializeStep<TInput, TCtx>` | Business | `string` → `TInput` |
+| `ExtractStep<TInput, TCtx>` | Business | `TInput` → `TInput` |
+| `ValidateStep<T, TCtx>` | Business | `T` → `T` |
+| `TransformStep<TInput, TOutput, TCtx>` | Technical | `TInput` → `TOutput` |
+| `SerializeStep<T, TCtx>` | Technical | `T` → `CloudEvent` |
+| `SendStep<TCtx>` | **Technical** | `CloudEvent` → `CloudEvent` |
 
-!!! warning "Namespace differences"
-    The Send pipeline and Extractor have separate step abstractions in different
-    namespaces. `DeserializeStep` in the Send pipeline takes `ReadOnlyMemory<byte>`,
-    while in the Extractor it takes `string`. Import the correct namespace for your
-    block type.
+These steps use the ordinary three-parameter `ExecuteAsync` override. `CloudEvent` lives in `CloudNative.CloudEvents`. The built-in send implementations publish to Dapr pub/sub or invoke a Dapr service.
 
-## Choosing a step type
+### Loader
 
-| Use this | When |
-|----------|------|
-| `BusinessStep` | Your logic validates data, applies business rules, or sends to external systems where failures represent business problems |
-| `TechnicalStep` | Your logic transforms data, serializes/deserializes, or performs infrastructure operations |
-| `Step` | You need full control over the result type (rare — prefer BusinessStep or TechnicalStep) |
-| `Finalizer` | Your logic should run regardless of the pipeline result (cleanup, notifications, incident routing) |
+**Namespace:** `Intropy.Framework.Blocks.Loader.Steps`
+
+[Source](../../src/Intropy.Framework.Blocks/Loader/Steps/)
+
+| Abstract class | Domain | Input → Output |
+|---|---|---|
+| `DeserializeStep<TInput, TCtx>` | Business | `CloudEvent` → `TInput` |
+| `ExtractStep<TInput, TCtx>` | Business | `TInput` → `TInput` |
+| `ValidateStep<T, TCtx>` | Business | `T` → `T` |
+| `TransformStep<TInput, TOutput, TCtx>` | Technical | `TInput` → `TOutput` |
+| `SendStep<T, TCtx>` | **Technical** | `T` → `T` |
+
+There is no separate Loader `SerializeStep` in this source revision.
+
+**Loader deserialization is another exception:** the three-parameter `ExecuteAsync` is sealed. It copies CloudEvent metadata into `Context.Metadata` before calling this protected override, which has **no cancellation-token parameter**:
+
+```csharp
+protected abstract Task<(BusinessStepResult<TInput> Result, TCtx Context)> DeserializeAsync(
+    CloudEvent cloudEvent, TCtx context);
+```
+
+The other Loader steps use the ordinary three-parameter `ExecuteAsync` override.
+
+## Consequences of the chosen domain
+
+The base class, not the exception type or the fact that a step performs I/O, is authoritative. A destination-adapter exception in Transactional Integration's `SendStep` becomes a business failure; an outbound exception in Extractor's or Loader's `SendStep` becomes a technical failure.
+
+This assignment determines the result the next layer sees. Whether it becomes an incident, a retry, or an acknowledged message depends on finalizers and hosting. See [incident routing and broker retry](result-types.md#incident-routing-and-broker-retry) before assuming all business failures consume messages or all technical failures are retried automatically.
 
 ## Related
 
-- [Result Types](result-types.md) — the result types each step produces
-- [Pipeline Execution](pipeline-execution.md) — how steps chain together
-- [Steps](../core/steps.md) — exact signatures
+- [Implementing pipeline steps](../implementing-pipeline-steps.md) — a complete validator and pipeline call
+- [Steps](../core/steps.md) — signatures, context mutation, and finalizer triggers
+- [Results](../core/results.md) — nested cases and failure payload construction
+- [Result Types](result-types.md) — operational meaning and cancellation
