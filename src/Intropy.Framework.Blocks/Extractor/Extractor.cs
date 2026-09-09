@@ -55,9 +55,10 @@ public class Extractor<TInput, TOutput, TCtx>(
     /// </summary>
     /// <param name="input">The input data to use</param>
     /// <param name="context">The pipeline context</param>
+    /// <param name="detachTrace">Indicate whether to detach the trace or continue</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution</param>
     /// <returns></returns>
-    public async Task<(StepResult<CloudEvent> Result, TCtx Context)> Execute(string input, TCtx context,
+    public async Task<(StepResult<CloudEvent> Result, TCtx Context)> Execute(string input, TCtx context, bool detachTrace = true,
         CancellationToken ct = default)
     {
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline
@@ -74,7 +75,7 @@ public class Extractor<TInput, TOutput, TCtx>(
             pipelineName: pipelineName,
             logger: logger,
             configureActivity: _ => { },
-            detachTrace: true
+            detachTrace: detachTrace
         );
     }
 }
