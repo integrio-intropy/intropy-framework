@@ -56,9 +56,10 @@ public class Loader<TInput, TOutput, TCtx>(
     /// <param name="input">The CloudEvent to process</param>
     /// <param name="context">The pipeline context</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution</param>
+    /// <param name="detachTrace">Indicate whether to detach the trace or continue</param>
     /// <returns>The result of the pipeline execution and the final context</returns>
     public async Task<(StepResult<TOutput> Result, TCtx Context)> Execute(CloudEvent input, TCtx context,
-        CancellationToken ct = default)
+        bool detachTrace = true, CancellationToken ct = default)
     {
         return await PipelineTracing.ExecuteWithTracing(async () =>
             {
@@ -80,7 +81,7 @@ public class Loader<TInput, TOutput, TCtx>(
             pipelineName: pipelineName,
             logger: logger,
             configureActivity: _ => { },
-            detachTrace: true
+            detachTrace: detachTrace
         );
     }
 }
