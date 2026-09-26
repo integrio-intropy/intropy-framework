@@ -209,6 +209,13 @@ awaited to the end. The full contract, including the on-demand accessors, is in 
 [Cancellation section](../Intropy.Framework.Adapters/README.md#cancellation) of the
 `Intropy.Framework.Adapters` README.
 
+A Transactional Integration never acknowledges an interrupted message: a send pipeline that
+returns `Aborted` (or throws a cancellation) returns the message for redelivery. When the host
+is stopping, the message is not counted, just like an interrupted file. When it was interrupted
+without the host stopping (for example by `MaxMessageProcessingTime`), it counts as failed and
+its span is an error. Messages still in flight when the grace period ends count as failed only
+when the run ended on its idle timeout, not when the host stopped it.
+
 ## License
 
 MIT. See the [repository](https://github.com/integrio-intropy/intropy-framework) for source and documentation.

@@ -41,6 +41,10 @@ internal class MessageSubscriber<TCtx>(
     /// message's span.</summary>
     private ActivityContext _run;
 
+    /// <summary>The host's cancellation. A message interrupted because the host is stopping is
+    /// retried but not counted, the way the sweep treats an interrupted file.</summary>
+    private CancellationToken _hostCancellation;
+
     /// <summary>
     /// Starts the message subscription and waits for completion.
     /// This method will block until the idle timeout is reached and graceful shutdown completes.
@@ -51,12 +55,14 @@ internal class MessageSubscriber<TCtx>(
     /// <returns>The messages this run consumed, by their last outcome: acknowledged as
     /// <c>Processed</c>, idempotent duplicates as <c>Skipped</c>, and messages left for
     /// redelivery — returned for retry, or still in flight when the grace period ended — as
-    /// <c>Failed</c>.</returns>
+    /// <c>Failed</c>. A message interrupted because the host is stopping is left for redelivery
+    /// but not counted: host cancellation is not a failure.</returns>
     public async Task<JobRunSummary> ExecuteAsync(Task publishingCompleteSignal, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(publishingCompleteSignal);
         using var shutdownSignal = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _run = Activity.Current?.Context ?? default;
+        _hostCancellation = ct;
         var unfinished = 0;
 
         var subscription = await topicSubscriber.SubscribeAsync(
@@ -101,7 +107,7 @@ internal class MessageSubscriber<TCtx>(
             await subscription.DisposeAsync();
         }
 
-        return Summarize(unfinished);
+        return Summarize(ct.IsCancellationRequested ? 0 : unfinished);
     }
 
     private JobRunSummary Summarize(int unfinished)
@@ -140,9 +146,16 @@ internal class MessageSubscriber<TCtx>(
                     return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
                 case StepResult<string>.Cancelled:
                     return Record(message, MessageOutcome.Skipped, TopicResponseAction.Success);
+                case StepResult<string>.Aborted:
+                    // Never acknowledge an interrupted message: it was not processed.
+                    return Interrupted(message, activity);
                 default:
                     return Record(message, MessageOutcome.Processed, TopicResponseAction.Success);
             }
+        }
+        catch (OperationCanceledException) when (_hostCancellation.IsCancellationRequested)
+        {
+            return Interrupted(message, activity);
         }
         catch (Exception ex)
         {
@@ -151,6 +164,24 @@ internal class MessageSubscriber<TCtx>(
             Fail(activity, ex.GetType().FullName!, ex.Message);
             return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
         }
+    }
+
+    /// <summary>Leaves an interrupted message for redelivery. Interrupted because the host is
+    /// stopping, it is not counted and its span is not an error; interrupted otherwise (such as
+    /// by the processing timeout), it is a failure.</summary>
+    private TopicResponseAction Interrupted(TopicMessage message, Activity? activity)
+    {
+        if (_hostCancellation.IsCancellationRequested)
+        {
+            logger.LogInformation("Processing message {MessageId} was interrupted by the host stopping; it is left for redelivery",
+                message.Id);
+            return TopicResponseAction.Retry;
+        }
+
+        logger.LogWarning("Processing message {MessageId} was aborted without the host stopping; it is left for redelivery",
+            message.Id);
+        Fail(activity, "aborted", "Processing was aborted without the host stopping");
+        return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
     }
 
     private static void Fail(Activity? activity, string errorType, string description)

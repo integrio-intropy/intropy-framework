@@ -7,6 +7,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+using Intropy.Framework.Hosting.RunToCompletion;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Intropy.Framework.Hosting.TransactionalIntegration.Lifecycle;
 using Microsoft.Extensions.Logging;
@@ -432,6 +433,93 @@ public class MessageSubscriberTests
 
         Assert.NotNull(consumer);
         Assert.Equal("technical_failure", consumer.GetTagItem("error.type"));
+    }
+
+    [Fact]
+    public async Task HandleMessage_RetriesAndCountsAsFailed_WhenThePipelineAbortsWithoutTheHostStopping()
+    {
+        // For example the processing timeout: the message was not processed, so it must not be
+        // acknowledged (which would drop it), and the run must not look clean
+        using var listener = ListenTo(null);
+
+        var (response, summary, consumer) = await RunWithOneMessageAsync(_ => new StepResult<string>.Aborted());
+
+        Assert.Equal(TopicResponseAction.Retry, response);
+        Assert.Equal(1, summary.Failed);
+        Assert.Equal(0, summary.Processed);
+        Assert.NotNull(consumer);
+        Assert.Equal(ActivityStatusCode.Error, consumer.Status);
+        Assert.Equal("aborted", consumer.GetTagItem("error.type"));
+    }
+
+    [Fact]
+    public async Task HandleMessage_RetriesWithoutCountingIt_WhenThePipelineAbortsBecauseTheHostIsStopping()
+    {
+        // Host cancellation is not a failure (the runner exits 0), but the message still goes back
+        // for redelivery
+        using var listener = ListenTo(null);
+
+        var (response, summary, consumer) = await RunWithOneMessageAsync(host =>
+        {
+            host.Cancel();
+            return new StepResult<string>.Aborted();
+        });
+
+        Assert.Equal(TopicResponseAction.Retry, response);
+        Assert.Equal(JobRunSummary.Empty, summary);
+        Assert.NotNull(consumer);
+        Assert.Equal(ActivityStatusCode.Unset, consumer.Status);
+    }
+
+    [Fact]
+    public async Task HandleMessage_RetriesWithoutCountingIt_WhenThePipelineThrowsACancellationBecauseTheHostIsStopping()
+    {
+        using var listener = ListenTo(null);
+
+        var (response, summary, consumer) = await RunWithOneMessageAsync(host =>
+        {
+            host.Cancel();
+            throw new OperationCanceledException(host.Token);
+        });
+
+        Assert.Equal(TopicResponseAction.Retry, response);
+        Assert.Equal(JobRunSummary.Empty, summary);
+        Assert.NotNull(consumer);
+        Assert.Equal(ActivityStatusCode.Unset, consumer.Status);
+    }
+
+    /// <summary>Runs a subscriber whose publisher has finished, delivers one message whose send
+    /// pipeline returns <paramref name="result"/> (given the host's cancellation source), and
+    /// returns the response to Dapr, the run's summary, and the consumer span.</summary>
+    private async Task<(TopicResponseAction Response, JobRunSummary Summary, Activity? Consumer)> RunWithOneMessageAsync(
+        Func<CancellationTokenSource, StepResult<string>> result)
+    {
+        using var host = new CancellationTokenSource();
+        TopicMessageHandler? handler = null;
+        var topicSubscriber = Substitute.For<ITopicSubscriber>();
+        topicSubscriber.SubscribeAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(),
+                Arg.Do((Action<TopicMessageHandler>)(h => handler = h)), Arg.Any<CancellationToken>())
+            .Returns(Substitute.For<IAsyncDisposable>());
+        Activity? consumer = null;
+        _messageHandler.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+            .Returns(_ =>
+            {
+                consumer = Activity.Current;
+                return (result(host), new Context(new Dictionary<string, string>()));
+            });
+        var subscriber = new MessageSubscriber<Context>(topicSubscriber, _messageHandler, _options, "test-integration",
+            (metadata, isRetry) => new Context(metadata, isRetry), _logger);
+        // The publisher never finishes on its own: the run ends on the idle timeout, or when the
+        // pipeline cancels the host.
+        var publishing = new TaskCompletionSource();
+
+        var run = subscriber.ExecuteAsync(publishing.Task, host.Token);
+        for (var i = 0; i < 20 && handler is null; i++)
+            await Task.Delay(50);
+        var response = await handler!(CreateTopicMessage("msg-1", "data"u8.ToArray()), CancellationToken.None);
+        publishing.TrySetResult();
+
+        return (response, await run.WaitAsync(TimeSpan.FromSeconds(10)), consumer);
     }
 
     /// <summary>Delivers <paramref name="message"/> and returns the span current while the send
