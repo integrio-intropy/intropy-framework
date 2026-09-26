@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Intropy.Contracts.BusinessIncidentService;
 using Dapr.Messaging.PublishSubscribe;
 using Google.Protobuf.WellKnownTypes;
 using Intropy.Framework.Blocks.Shared;
@@ -242,6 +244,74 @@ public class MessageSubscriberTests
         Assert.Equal("orders.csv", received.Metadata[SourceContextKeys.FileName]);
         Assert.Equal("msg-1", received.Metadata[ContextKeys.MessageId]);
         Assert.True(received.IsRetry);
+    }
+
+    public static TheoryData<StepResult<string>, string> FailedResults => new()
+    {
+        { new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed")), "send failed" },
+        { new StepResult<string>.BusinessFailure(new BusinessIncidentData { Description = "order rejected", Context = [] }), "order rejected" }
+    };
+
+    [Theory]
+    [MemberData(nameof(FailedResults))]
+    public async Task HandleMessage_MarksTheConsumerSpanAsAnError_WhenThePipelineFails(StepResult<string> failure,
+        string description)
+    {
+        // A retried message was not processed, whatever kind of failure caused it.
+        _messageHandler.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+            .Returns(Task.FromResult((failure, new Context(new Dictionary<string, string>()))));
+
+        var span = await CaptureConsumerSpanAsync();
+
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Equal(description, span.StatusDescription);
+    }
+
+    [Fact]
+    public async Task HandleMessage_RecordsTheExceptionOnTheConsumerSpan_WhenThePipelineThrows()
+    {
+        _messageHandler.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+            .Returns(Task.FromException<(StepResult<string>, Context)>(
+                new InvalidOperationException("Processing failed")));
+
+        var span = await CaptureConsumerSpanAsync();
+
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Contains(span.Events, e => e.Name == "exception");
+    }
+
+    [Fact]
+    public async Task HandleMessage_LeavesTheConsumerSpanUnset_WhenThePipelineSucceeds()
+    {
+        _messageHandler.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+            .Returns(Task.FromResult(((StepResult<string>)new StepResult<string>.Success(""),
+                new Context(new Dictionary<string, string>()))));
+
+        var span = await CaptureConsumerSpanAsync();
+
+        Assert.Equal(ActivityStatusCode.Unset, span.Status);
+    }
+
+    /// <summary>Delivers a message carrying a fresh trace parent and returns the consumer span in
+    /// that trace only, so spans from tests running in parallel are ignored.</summary>
+    private async Task<Activity> CaptureConsumerSpanAsync()
+    {
+        var traceId = ActivityTraceId.CreateRandom();
+        var traceParent = $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01";
+        var stopped = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Intropy.Framework.Hosting",
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (stopped) stopped.Add(activity); }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        await InvokeMessageHandler(_topicSubscriber, CreateTopicMessage("test-id", "data"u8.ToArray(),
+            new Dictionary<string, Value> { ["traceparent"] = Value.ForString(traceParent) }));
+
+        lock (stopped)
+            return Assert.Single(stopped, a => a.DisplayName == "MessageReceived" && a.TraceId == traceId);
     }
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);

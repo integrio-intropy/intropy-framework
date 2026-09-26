@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dapr.Client;
 using Intropy.Framework.Hosting.RunToCompletion;
 using Microsoft.Extensions.Logging;
@@ -258,6 +259,69 @@ public class RunToCompletionRunnerTests
         var result = await runner.RunAsync();
 
         Assert.Equal(RunToCompletionExitCodes.Success, result);
+    }
+
+    [Fact]
+    public async Task RunAsync_MarksTheJobSpanAsAnError_WhenJobReportsFailedItems()
+    {
+        // The exit code says the run failed; the trace must say so too.
+        _job.ExecuteAsync(Arg.Any<CancellationToken>())
+            .Returns(new JobRunSummary(Processed: 10, Failed: 2, Skipped: 0));
+
+        var span = await CaptureJobSpanAsync(CreateRunner());
+
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Equal("2 item(s) failed", span.StatusDescription);
+    }
+
+    [Fact]
+    public async Task RunAsync_LeavesTheJobSpanUnset_WhenNoItemFailed()
+    {
+        _job.ExecuteAsync(Arg.Any<CancellationToken>())
+            .Returns(new JobRunSummary(Processed: 10, Failed: 0, Skipped: 2));
+
+        var span = await CaptureJobSpanAsync(CreateRunner());
+
+        Assert.Equal(ActivityStatusCode.Unset, span.Status);
+    }
+
+    [Fact]
+    public async Task RunAsync_RecordsTheExceptionOnTheJobSpan_WhenJobThrows()
+    {
+        _job.ExecuteAsync(Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("job failed"));
+
+        var span = await CaptureJobSpanAsync(CreateRunner());
+
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        var exception = Assert.Single(span.Events, e => e.Name == "exception");
+        Assert.Contains(exception.Tags, t => t.Key == "exception.type" &&
+            (string?)t.Value == typeof(InvalidOperationException).FullName);
+    }
+
+    /// <summary>Runs the job under a test-owned root span and returns the runner's job span in its
+    /// trace only, so spans from tests running in parallel are ignored.</summary>
+    private async Task<Activity> CaptureJobSpanAsync(RunToCompletionRunner runner)
+    {
+        using var testSource = new ActivitySource($"runner-tracing-test-{Guid.NewGuid()}");
+        var stopped = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == testSource || source.Name == "Intropy.Framework.Hosting",
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (stopped) stopped.Add(activity); }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        ActivityTraceId traceId;
+        using (var root = testSource.StartActivity("test")!)
+        {
+            traceId = root.TraceId;
+            await runner.RunAsync();
+        }
+
+        lock (stopped)
+            return Assert.Single(stopped, a => a.DisplayName == _options.JobName && a.TraceId == traceId);
     }
 
     private RunToCompletionRunner CreateRunner() =>

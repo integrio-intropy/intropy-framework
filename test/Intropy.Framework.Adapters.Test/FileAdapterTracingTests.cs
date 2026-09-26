@@ -1,0 +1,82 @@
+using System.Diagnostics;
+using Dapr.Client;
+using Intropy.Framework.Adapters.File;
+using NSubstitute;
+
+namespace Intropy.Framework.Adapters.Test;
+
+public class FileAdapterTracingTests
+{
+    private const string AdapterActivitySource = "Intropy.Framework.Adapters";
+
+    [Theory]
+    [InlineData("Local")]
+    [InlineData("Sftp")]
+    [InlineData("AzureBlob")]
+    public async Task FailedOperations_MarkTheirSpansAsErrorsWithTheException(string kind)
+    {
+        using var client = Substitute.For<DaprClient>();
+        client.InvokeBindingAsync(Arg.Any<BindingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<BindingResponse>(new IOException("binding unavailable")));
+        var adapter = FileAdapterRequestTests.Create(kind, client, new FileAdapterOptions("source"));
+
+        var spans = await CaptureAdapterSpansAsync(async () =>
+        {
+            await Assert.ThrowsAsync<IOException>(() => adapter.ListAsync());
+            await Assert.ThrowsAsync<IOException>(() => adapter.GetContentAsync("order.json"));
+            await Assert.ThrowsAsync<IOException>(() => adapter.WriteAsync("order.json", new byte[] { 1 }));
+            await Assert.ThrowsAsync<IOException>(() => adapter.DeleteAsync("order.json"));
+        });
+
+        Assert.Equal(4, spans.Count);
+        Assert.All(spans, span =>
+        {
+            Assert.Equal(ActivityStatusCode.Error, span.Status);
+            Assert.Equal("binding unavailable", span.StatusDescription);
+            Assert.Contains(span.Events, e => e.Name == "exception");
+        });
+    }
+
+    [Fact]
+    public async Task RequestedCancellation_DoesNotMarkTheSpanAsAnError()
+    {
+        using var client = Substitute.For<DaprClient>();
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        client.InvokeBindingAsync(Arg.Any<BindingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call => Task.FromCanceled<BindingResponse>(call.Arg<CancellationToken>()));
+        var adapter = FileAdapterRequestTests.Create("Local", client, new FileAdapterOptions("source"));
+
+        var spans = await CaptureAdapterSpansAsync(() =>
+            Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.ListAsync(cts.Token)));
+
+        var span = Assert.Single(spans);
+        Assert.Equal(ActivityStatusCode.Unset, span.Status);
+        Assert.DoesNotContain(span.Events, e => e.Name == "exception");
+    }
+
+    /// <summary>Runs <paramref name="act"/> under a test-owned root span and returns the adapter
+    /// spans in its trace only, so spans from tests running in parallel are ignored.</summary>
+    private static async Task<List<Activity>> CaptureAdapterSpansAsync(Func<Task> act)
+    {
+        using var testSource = new ActivitySource($"adapter-tracing-test-{Guid.NewGuid()}");
+        var stopped = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == testSource || source.Name == AdapterActivitySource,
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (stopped) stopped.Add(activity); }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        ActivityTraceId traceId;
+        using (var root = testSource.StartActivity("test")!)
+        {
+            traceId = root.TraceId;
+            await act();
+        }
+
+        lock (stopped)
+            return stopped.Where(a => a.Source.Name == AdapterActivitySource && a.TraceId == traceId).ToList();
+    }
+}

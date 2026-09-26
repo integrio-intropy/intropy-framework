@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dapr.Messaging.PublishSubscribe;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
@@ -97,16 +98,24 @@ internal class MessageSubscriber<TCtx>(
             var initialContext = ContextCreation.Create(contextFactory, metadata, isRetry, componentName, message.Id);
             var (result, _) = await sendPipeline.Execute(message.Data, initialContext, cancellationToken);
 
-            return result switch
+            // A retried message was not processed: the consumer span is an error either way.
+            switch (result)
             {
-                StepResult<string>.TechnicalFailure => TopicResponseAction.Retry,
-                StepResult<string>.BusinessFailure => TopicResponseAction.Retry,
-                _ => TopicResponseAction.Success
-            };
+                case StepResult<string>.TechnicalFailure failure:
+                    activity?.SetStatus(ActivityStatusCode.Error, failure.Value.Description);
+                    return TopicResponseAction.Retry;
+                case StepResult<string>.BusinessFailure failure:
+                    activity?.SetStatus(ActivityStatusCode.Error, failure.Value.Description);
+                    return TopicResponseAction.Retry;
+                default:
+                    return TopicResponseAction.Success;
+            }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Error processing message");
+            activity?.AddException(ex);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return TopicResponseAction.Retry;
         }
     }

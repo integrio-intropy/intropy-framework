@@ -80,9 +80,12 @@ public class RunToCompletionRunner
             activity?.SetTag("job.failed", summary.Failed);
             activity?.SetTag("job.skipped", summary.Skipped);
 
-            return summary.Failed > 0
-                ? RunToCompletionExitCodes.JobFailure
-                : RunToCompletionExitCodes.Success;
+            if (summary.Failed == 0)
+                return RunToCompletionExitCodes.Success;
+
+            // Failed items exit 1 without an exception; the span must agree with the exit code.
+            activity?.SetStatus(ActivityStatusCode.Error, $"{summary.Failed} item(s) failed");
+            return RunToCompletionExitCodes.JobFailure;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -95,6 +98,7 @@ public class RunToCompletionRunner
         catch (Exception e)
         {
             _logger.LogError(e, "Job {JobName} failed", _options.JobName);
+            activity?.AddException(e);
             activity?.SetStatus(ActivityStatusCode.Error, e.Message);
             return RunToCompletionExitCodes.JobFailure;
         }

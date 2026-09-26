@@ -89,7 +89,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         }
         catch (Exception e)
         {
-            activity?.AddException(e);
+            RecordFailure(activity, e, ct);
             throw;
         }
     }
@@ -110,7 +110,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         }
         catch (Exception e)
         {
-            activity?.AddException(e);
+            RecordFailure(activity, e, ct);
             throw;
         }
     }
@@ -144,7 +144,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         }
         catch (Exception e)
         {
-            activity?.AddException(e);
+            RecordFailure(activity, e, ct);
             throw;
         }
     }
@@ -176,7 +176,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         }
         catch (Exception e)
         {
-            activity?.AddException(e);
+            RecordFailure(activity, e, ct);
             throw;
         }
     }
@@ -184,6 +184,17 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
     private BindingRequest BuildPathRequest(string operation, string basePath, string fileName) =>
         new(_options.DaprBindingName, operation)
             { Metadata = { [FileNameMetadataKey] = CombinePath(basePath, fileName) } };
+
+    /// <summary>Marks the operation's span as failed. A cancellation the caller requested is a
+    /// clean stop, not a failure of the operation, and leaves the span as it is.</summary>
+    private static void RecordFailure(Activity? activity, Exception e, CancellationToken ct)
+    {
+        if (activity is null || (e is OperationCanceledException && ct.IsCancellationRequested))
+            return;
+
+        activity.AddException(e);
+        activity.SetStatus(ActivityStatusCode.Error, e.Message);
+    }
 
     private static List<string> FilterFiles(List<string> fileNames, Regex regex) =>
         fileNames.Where(fileName => regex.IsMatch(fileName)).ToList();
