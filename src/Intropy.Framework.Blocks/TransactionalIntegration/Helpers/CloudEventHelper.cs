@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
 using CloudNative.CloudEvents;
+using Intropy.Framework.Blocks.Common;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Core.Configuration;
@@ -22,7 +23,7 @@ internal static class CloudEventHelper
         };
 
         
-        cloudEvent = ActivityHelper.Propagate(activity, cloudEvent);
+        cloudEvent = MessagingTelemetry.Propagate(activity, cloudEvent);
         var attr = CloudEventAttribute.CreateExtension("metadata", CloudEventAttributeType.String);
         cloudEvent[attr] = JsonSerializer.Serialize(context.Metadata);
 

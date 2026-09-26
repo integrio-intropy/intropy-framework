@@ -42,7 +42,7 @@ The pipeline executes in this order:
 8. **Idempotency Record** — Record that this data was processed (finalizer)
 9. **Business Incident Route** — Route any business incidents (finalizer)
 
-Each pipeline execution creates a detached OpenTelemetry trace (a new root span linked to the parent) via `PipelineTracing.ExecuteWithTracing`.
+Each pipeline execution creates a detached OpenTelemetry trace (a new root span linked to the parent) via `PipelineTracing.ExecuteWithTracing`. `WithDaprTopicPublisher` publishes under a `send {topic}` producer span and puts that span's W3C trace context on the CloudEvent (`traceparent`, `tracestate`), so the consumer can continue the extractor's trace.
 
 ## Implementing steps
 

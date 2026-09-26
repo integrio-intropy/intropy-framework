@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using CloudNative.CloudEvents;
 using Dapr.Client;
+using Intropy.Framework.Blocks.Common;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 
@@ -10,6 +12,11 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 /// This step sets the source and type on the CloudEvent from the configured values,
 /// then serializes the event and publishes it to the specified topic.
 /// </summary>
+/// <remarks>
+/// It publishes under a <c>send {topic}</c> producer span (the OpenTelemetry messaging
+/// conventions) and puts that span's W3C trace context on the event (<c>traceparent</c>,
+/// <c>tracestate</c>), so the consumer can continue the trace.
+/// </remarks>
 /// <typeparam name="TCtx">The type of the context.</typeparam>
 /// <param name="daprClient">The Dapr client used for pub/sub publishing.</param>
 /// <param name="pubSubName">The name of the Dapr pub/sub component.</param>
@@ -42,12 +49,24 @@ public class DaprTopicPublisher<TCtx>(
         input.Source = source;
         input.Type = type;
 
+        using var activity = MessagingTelemetry.StartSendActivity(topicName, "dapr");
+        activity?.SetTag("messaging.message.id", input.Id);
+        MessagingTelemetry.Propagate(activity ?? Activity.Current, input);
+
         // Serialize CloudEvent to JSON bytes
         var bytes = CloudEventSerializer.Formatter.EncodeStructuredModeMessage(input, out _);
 
         // Publish to Dapr pub/sub topic
-        await daprClient.PublishByteEventAsync(pubSubName, topicName, bytes, "application/cloudevents+json",
-            cancellationToken: ct);
+        try
+        {
+            await daprClient.PublishByteEventAsync(pubSubName, topicName, bytes, "application/cloudevents+json",
+                cancellationToken: ct);
+        }
+        catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            MessagingTelemetry.Fail(activity, e);
+            throw;
+        }
 
         return (new TechnicalStepResult<CloudEvent>.Success(input), context);
     }

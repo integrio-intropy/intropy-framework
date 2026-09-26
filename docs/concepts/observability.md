@@ -108,7 +108,9 @@ builder.Services.AddOpenTelemetry()
 
 ### Messaging spans
 
-A Transactional Integration traces its queue hop with the OpenTelemetry messaging conventions.
+A Transactional Integration traces its queue hop with the OpenTelemetry messaging conventions. An
+Extractor's `WithDaprTopicPublisher` publishes the same way, under a `send {topic}` producer span
+whose context the CloudEvent carries.
 The receive side publishes each file under a `send {topic}` span (kind `Producer`), and that span's
 context travels with the message. The send side processes each message under a `process {topic}`
 span (kind `Consumer`) that continues it. When a message carries no trace context, its consumer

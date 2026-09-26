@@ -36,7 +36,7 @@ public abstract class EnqueueStep<TCtx>(FrameworkOptions options) : TechnicalSte
 
         // The send span is the one the message carries, so the consumer's span continues it,
         // following the OpenTelemetry messaging conventions.
-        using var activity = StartSendActivity();
+        using var activity = MessagingTelemetry.StartSendActivity(DestinationName, MessagingSystem);
         var cloudEvent = CloudEventHelper.Create(input, context, activity ?? Activity.Current, options);
         activity?.SetTag("messaging.message.id", cloudEvent.Id);
         var formatter = new JsonEventFormatter();
@@ -46,37 +46,14 @@ public abstract class EnqueueStep<TCtx>(FrameworkOptions options) : TechnicalSte
         {
             var result = await ExecuteAsync(input, bytes, context, ct);
             if (result.Result is TechnicalStepResult<SourceItem>.Failure failure)
-                Fail(activity, "technical_failure", failure.Value.Description);
+                MessagingTelemetry.Fail(activity, "technical_failure", failure.Value.Description);
             return result;
         }
         catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            activity?.AddException(e);
-            Fail(activity, e.GetType().FullName!, e.Message);
+            MessagingTelemetry.Fail(activity, e);
             throw;
         }
-    }
-
-    private Activity? StartSendActivity()
-    {
-        var activity = ActivitySourceProvider.ActivitySource.StartActivity(
-            DestinationName is { } destination ? $"send {destination}" : "send", ActivityKind.Producer);
-        if (activity is null)
-            return null;
-
-        activity.SetTag("messaging.operation.type", "send");
-        activity.SetTag("messaging.operation.name", "send");
-        if (MessagingSystem is { } system)
-            activity.SetTag("messaging.system", system);
-        if (DestinationName is { } name)
-            activity.SetTag("messaging.destination.name", name);
-        return activity;
-    }
-
-    private static void Fail(Activity? activity, string errorType, string description)
-    {
-        activity?.SetTag("error.type", errorType);
-        activity?.SetStatus(ActivityStatusCode.Error, description);
     }
 
     /// <summary>
