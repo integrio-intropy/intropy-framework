@@ -3,6 +3,7 @@ using CloudNative.CloudEvents;
 using CloudNative.CloudEvents.SystemTextJson;
 using Dapr.Client;
 using Intropy.Framework.Blocks.Shared;
+using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 
 namespace Intropy.Framework.Blocks.Extractor.Steps;
@@ -17,6 +18,10 @@ internal static class CloudEventSerializer
 /// This step sets the source and type on the CloudEvent from the configured values,
 /// then serializes and invokes the target service's "ingest" endpoint with the CloudEvent as the request body.
 /// </summary>
+/// <remarks>
+/// Only a success status code (2xx) counts as delivered. Any other status is a technical failure,
+/// so the item is not completed and is retried; the idempotency check makes the retry safe.
+/// </remarks>
 /// <typeparam name="TCtx">The type of the context.</typeparam>
 /// <param name="daprClient">The Dapr client used to build the service invocation request.</param>
 /// <param name="httpClient">The HTTP client used to send the request through the Dapr sidecar (typically created via <see cref="DaprClient.CreateInvokeHttpClient(string, string?, string?)"/>).</param>
@@ -55,11 +60,19 @@ public class DaprServiceInvoker<TCtx>(
         var bytes = CloudEventSerializer.Formatter.EncodeStructuredModeMessage(input, out var contentType);
 
         // Build and send the service invocation request through the Dapr sidecar
-        var request = daprClient.CreateInvokeMethodRequest(HttpMethod.Post, appId, MethodName);
+        using var request = daprClient.CreateInvokeMethodRequest(HttpMethod.Post, appId, MethodName);
         request.Content = new ByteArrayContent(bytes.ToArray());
         request.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType.MediaType);
 
-        await httpClient.SendAsync(request, ct);
+        using var response = await httpClient.SendAsync(request, ct);
+
+        // A rejected or failed invocation was not delivered: never report it as sent.
+        if (!response.IsSuccessStatusCode)
+        {
+            var description = $"The service '{appId}' answered {(int)response.StatusCode} {response.ReasonPhrase}";
+            return (new TechnicalStepResult<CloudEvent>.Failure(new TechnicalFailure(description,
+                Exception: new HttpRequestException(description, null, response.StatusCode))), context);
+        }
 
         return (new TechnicalStepResult<CloudEvent>.Success(input), context);
     }
