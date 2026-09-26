@@ -14,7 +14,7 @@ This guide walks you through building a complete Transactional Integration with 
 dotnet add package Intropy.Framework.Hosting
 ```
 
-The Hosting package provides `TransactionalIntegrationRunner` and `AddTransactionalIntegration` and transitively brings in Blocks, Adapters, and Core. If you only need the pipeline engine without the TI lifecycle, install `Intropy.Framework.Blocks` (or just `Intropy.Framework.Core`) instead.
+The Hosting package provides `AddTransactionalIntegration` and the `RunToCompletionRunner` that hosts it, and transitively brings in Blocks, Adapters, and Core. If you only need the pipeline engine without the TI lifecycle, install `Intropy.Framework.Blocks` (or just `Intropy.Framework.Core`) instead.
 
 ## Register framework services
 
@@ -32,7 +32,7 @@ builder.Services.AddTransactionalIntegration(opts =>
 
 `AddIntropyFramework` registers `FrameworkOptions` and validates the component name. You can also set the `INTROPY_COMPONENT_NAME` environment variable and call `AddIntropyFramework()` without a delegate.
 
-`AddTransactionalIntegration` registers the lifecycle services: `TransactionalIntegrationRunner`, message subscriber, and idle timeout monitor. Both `DaprPubSubName` and `DaprTopicName` are required.
+`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `RunToCompletionRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are required.
 
 ## Define your data models
 
@@ -42,90 +42,21 @@ public record Order(string OrderId, DateTime CreatedAt, string CustomerName, dec
 public record Invoice(string InvoiceNumber, string CustomerName, decimal Total, DateTime IssuedDate);
 ```
 
-## Implement the receive pipeline
+## The receive side
 
-The receive pipeline reads source items and publishes them to Dapr pub/sub.
-
-### Source lister
-
-Implement `ISourceLister` to tell the framework what items are available:
-
-```csharp
-public class OrderSourceLister(IFileAdapter fileAdapter) : ISourceLister
-{
-    public async Task<List<SourceItemInfo>> ListSourceItemsAsync()
-    {
-        var files = await fileAdapter.ListAsync();
-        return files.Select(f => new SourceItemInfo(f.FileName)).ToList();
-    }
-}
-```
-
-### Receive step
-
-`ReceiveStep<TCtx>` extends `BusinessStep<SourceItemInfo, SourceItem, TCtx>`. It reads the content for a source item:
+The framework owns the receive side. It sweeps the source for you: it lists the keyed
+`IFileAdapter`, reads each file, publishes it to the integration's own topic
+(`DaprPubSubName` / `DaprTopicName`) as a CloudEvent carrying the context metadata and trace
+parent, and deletes the file (or archives it) only after it is on the queue. You only register the
+source port, with its adapter configured under `Ports:order-source`:
 
 ```csharp
-public class OrderReceiver(IFileAdapter fileAdapter) : ReceiveStep<Context>
-{
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItemInfo input, Context context)
-    {
-        var content = await fileAdapter.GetContentAsync(input.Id);
-        var sourceItem = new SourceItem(input.Id, content);
-        return (new BusinessStepResult<SourceItem>.Success(sourceItem), context);
-    }
-}
+builder.Services.AddSourcePort("order-source", builder.Configuration);
+// or, to archive handled files: AddSourcePort("order-source", builder.Configuration, SweepCompletion.Archive("archive"))
 ```
 
-### Enqueue step
-
-`EnqueueStep<TCtx>` extends `TechnicalStep<SourceItem, SourceItem, TCtx>`. Its `ExecuteAsync` is sealed — it propagates context metadata and trace information automatically. You implement the overload that receives a `messageMetadata` dictionary:
-
-```csharp
-public class OrderEnqueuer(DaprClient daprClient) : EnqueueStep<Context>
-{
-    public override async Task<(TechnicalStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItem input, Context context, Dictionary<string, string> messageMetadata)
-    {
-        await daprClient.PublishByteEventAsync(
-            "pubsub", "orders", input.Data, messageMetadata);
-
-        return (new TechnicalStepResult<SourceItem>.Success(input), context);
-    }
-}
-```
-
-### Complete step
-
-`CompleteStep<TCtx>` extends `BusinessStep<SourceItem, SourceItem, TCtx>`. It handles cleanup after successful enqueue (e.g., deleting or archiving the source file):
-
-```csharp
-public class OrderCompleter(IFileAdapter fileAdapter) : CompleteStep<Context>
-{
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItem input, Context context)
-    {
-        await fileAdapter.DeleteAsync(input.Id);
-        return (new BusinessStepResult<SourceItem>.Success(input), context);
-    }
-}
-```
-
-### Register the receive pipeline
-
-```csharp
-builder.Services.AddSingleton<ISourceLister, OrderSourceLister>();
-
-builder.Services.AddReceivePipeline<Context>("order-receive",
-    (pipelineBuilder, sp) => pipelineBuilder
-        .WithReceiver(sp.GetRequiredService<OrderReceiver>())
-        .WithEnqueuer(sp.GetRequiredService<OrderEnqueuer>())
-        .WithCompleter(sp.GetRequiredService<OrderCompleter>())
-        .WithBusinessIncidents(
-            sp.GetRequiredService<IBusinessIncidentServiceClient>(),
-            ctx => ctx.Metadata["message_id"]));
-```
+To replace the publisher, register your own `EnqueueStep<Context>`; to replace the whole receive
+pipeline, register an `IReceivePipeline<Context>` (for example with `AddReceivePipeline`).
 
 ## Implement the send pipeline
 
@@ -256,15 +187,15 @@ All builder methods are required. The builder throws `InvalidOperationException`
 
 ## Run it
 
-The `TransactionalIntegrationRunner` orchestrates the lifecycle. Resolve and run it:
+The `RunToCompletionRunner` hosts the lifecycle. Resolve and run it:
 
 ```csharp
-var runner = app.Services.GetRequiredService<TransactionalIntegrationRunner>();
+var runner = app.Services.GetRequiredService<RunToCompletionRunner>();
 var exitCode = await runner.RunAsync();
 return exitCode;
 ```
 
-`RunAsync()` waits for the Dapr sidecar, runs the receive pipeline to discover and enqueue source items, subscribes to the pub/sub topic to trigger the send pipeline for each message, and shuts down after an idle timeout. It returns `0` on success and `1` on failure.
+`RunAsync()` waits for the Dapr sidecar, runs the receive pipeline to discover and enqueue source items, subscribes to the pub/sub topic to trigger the send pipeline for each message, and shuts down after an idle timeout. It returns `0` on success (or when the host cancels), `1` on failure or when source files were left in place, and `2` when the sidecar never became available.
 
 ## Handle results
 

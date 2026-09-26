@@ -159,14 +159,6 @@ public static ReceivePipelineBuilder<TCtx> Create(
     ILoggerFactory loggerFactory)
 ```
 
-### WithReceiver
-
-```csharp
-public ReceivePipelineBuilder<TCtx> WithReceiver(ReceiveStep<TCtx> receiver)
-```
-
-Configures the receive step that reads content from the source. **Required.**
-
 ### WithEnqueuer
 
 ```csharp
@@ -174,14 +166,6 @@ public ReceivePipelineBuilder<TCtx> WithEnqueuer(EnqueueStep<TCtx> enqueuer)
 ```
 
 Configures the enqueue step that publishes content to the Dapr topic. **Required.**
-
-### WithCompleter
-
-```csharp
-public ReceivePipelineBuilder<TCtx> WithCompleter(CompleteStep<TCtx> completer)
-```
-
-Configures the complete step for cleanup after enqueue. **Required.**
 
 ### WithBusinessIncidents
 
@@ -217,7 +201,7 @@ services.AddReceivePipeline<TContext>(
         ReceivePipelineBuilder<TContext>> configurePipeline)
 ```
 
-Registers `IReceivePipeline<TContext>` as a singleton.
+Registers `IReceivePipeline<TContext>` as a singleton. `AddTransactionalIntegration` already registers a receive pipeline that publishes with `DaprTopicEnqueuer<TContext>`; use this only to replace it.
 
 ---
 
@@ -362,10 +346,9 @@ public class TransactionalIntegrationOptions
 {
     public string DaprPubSubName { get; set; }
     public string DaprTopicName { get; set; }
-    public int IdleTimeoutSeconds { get; set; } = 5;
-    public int PostIdleGracePeriodSeconds { get; set; } = 45;
-    public int MaxMessageProcessingTimeSeconds { get; set; } = 40;
-    public int SidecarTimeoutSeconds { get; set; } = 30;
+    public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan PostIdleGracePeriod { get; set; } = TimeSpan.FromSeconds(45);
+    public TimeSpan MaxMessageProcessingTime { get; set; } = TimeSpan.FromSeconds(40);
 }
 ```
 
@@ -379,7 +362,7 @@ services.AddTransactionalIntegration(opts =>
 });
 ```
 
-Registers `TransactionalIntegrationOptions`, `ITopicSubscriber`, `TransactionalIntegrationLifecycle`, and `TransactionalIntegrationRunner`.
+Registers `TransactionalIntegrationOptions`, `ITopicSubscriber`, and `TransactionalIntegrationLifecycle` as the `IRunToCompletionJob` hosted by `RunToCompletionRunner`. An optional second delegate configures the runner's `RunToCompletionOptions` (job name, sidecar timeouts).
 
 ## See also
 

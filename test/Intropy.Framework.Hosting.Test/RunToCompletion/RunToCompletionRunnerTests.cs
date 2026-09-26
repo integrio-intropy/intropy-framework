@@ -15,8 +15,8 @@ public class RunToCompletionRunnerTests
     private readonly RunToCompletionOptions _options = new()
     {
         JobName = "test-job",
-        SidecarTimeoutSeconds = 1,
-        SidecarShutdownTimeoutSeconds = 1
+        SidecarTimeout = TimeSpan.FromSeconds(1),
+        SidecarShutdownTimeout = TimeSpan.FromSeconds(1)
     };
 
     public RunToCompletionRunnerTests()
@@ -28,7 +28,7 @@ public class RunToCompletionRunnerTests
     public async Task RunAsync_ShouldReturnSuccess_WhenJobCompletesWithNoFailures()
     {
         _job.ExecuteAsync(Arg.Any<CancellationToken>())
-            .Returns(new JobRunSummary(Processed: 10, Failed: 0, Cancelled: 2));
+            .Returns(new JobRunSummary(Processed: 10, Failed: 0, Skipped: 2));
 
         var runner = CreateRunner();
 
@@ -78,7 +78,7 @@ public class RunToCompletionRunnerTests
     public async Task RunAsync_ShouldReturnJobFailure_WhenJobReportsFailedItems()
     {
         _job.ExecuteAsync(Arg.Any<CancellationToken>())
-            .Returns(new JobRunSummary(Processed: 10, Failed: 1, Cancelled: 0));
+            .Returns(new JobRunSummary(Processed: 10, Failed: 1, Skipped: 0));
 
         var runner = CreateRunner();
 
@@ -101,10 +101,28 @@ public class RunToCompletionRunnerTests
     }
 
     [Fact]
-    public async Task RunAsync_ShouldReturnSuccess_WhenJobIsCancelled()
+    public async Task RunAsync_ShouldReturnSuccess_WhenHostCancelsTheJob()
     {
-        // Cancellation is success by design: the job is idempotent and decided it
-        // does not need to process (e.g. duplicates detected).
+        // Host cancellation is success by design: the job is idempotent.
+        using var cts = new CancellationTokenSource();
+        _job.ExecuteAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<JobRunSummary>>(async _ =>
+            {
+                await cts.CancelAsync();
+                throw new OperationCanceledException(cts.Token);
+            });
+
+        var runner = CreateRunner();
+
+        var result = await runner.RunAsync(cts.Token);
+
+        Assert.Equal(RunToCompletionExitCodes.Success, result);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldReturnJobFailure_WhenJobThrowsCancellationTheHostDidNotRequest()
+    {
+        // A stray OperationCanceledException (e.g. an HTTP timeout) must not report success.
         _job.ExecuteAsync(Arg.Any<CancellationToken>())
             .ThrowsAsync(new OperationCanceledException());
 
@@ -112,7 +130,7 @@ public class RunToCompletionRunnerTests
 
         var result = await runner.RunAsync();
 
-        Assert.Equal(RunToCompletionExitCodes.Success, result);
+        Assert.Equal(RunToCompletionExitCodes.JobFailure, result);
     }
 
     [Fact]
@@ -190,12 +208,17 @@ public class RunToCompletionRunnerTests
     [Fact]
     public async Task RunAsync_ShouldShutdownSidecar_WhenJobIsCancelled()
     {
+        using var cts = new CancellationTokenSource();
         _job.ExecuteAsync(Arg.Any<CancellationToken>())
-            .ThrowsAsync(new OperationCanceledException());
+            .Returns<Task<JobRunSummary>>(async _ =>
+            {
+                await cts.CancelAsync();
+                throw new OperationCanceledException(cts.Token);
+            });
 
         var runner = CreateRunner();
 
-        await runner.RunAsync();
+        await runner.RunAsync(cts.Token);
 
         await _daprClient.Received(1).ShutdownSidecarAsync(Arg.Any<CancellationToken>());
     }
@@ -206,7 +229,7 @@ public class RunToCompletionRunnerTests
         // A wedged sidecar must not hang the job — the scheduler would record a
         // failed run despite a successful execution.
         _job.ExecuteAsync(Arg.Any<CancellationToken>())
-            .Returns(new JobRunSummary(Processed: 5, Failed: 0, Cancelled: 0));
+            .Returns(new JobRunSummary(Processed: 5, Failed: 0, Skipped: 0));
         _daprClient.ShutdownSidecarAsync(Arg.Any<CancellationToken>())
             .Returns(async callInfo =>
             {

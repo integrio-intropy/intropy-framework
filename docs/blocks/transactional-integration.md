@@ -6,10 +6,9 @@
 
 ```mermaid
 graph LR
-    subgraph Receive Pipeline
-        SL[Source Lister] --> R[Receive]
-        R --> E[Enqueue]
-        E --> C[Complete]
+    subgraph Receive side
+        SW[Sweep: list + read] --> E[Enqueue]
+        E --> C[Delete / archive]
     end
 
     E -->|Dapr pub/sub| D[(Topic)]
@@ -32,40 +31,49 @@ This matters because source systems are often unreliable or have side effects on
 
 In practice, this means the TI has two pipelines connected by Dapr pub/sub:
 
-- The **receive pipeline** reads items from the source, publishes each one to a Dapr topic, then cleans up the source (e.g., deletes the file).
+- The **receive side** is owned by the framework: it sweeps the source, publishes each file to a Dapr topic, then cleans up the source (e.g., deletes the file).
 - The **send pipeline** subscribes to the topic and processes each message through deserialization, validation, transformation, serialization, and sending to the destination.
 
 If the send pipeline fails for a message, the message remains on the topic for automatic retry. The source system is not involved in retries.
 
 ## Lifecycle
 
-The `TransactionalIntegrationRunner` orchestrates the full lifecycle:
+The lifecycle is a run-to-completion job, hosted by the same `RunToCompletionRunner` as the extractor:
 
 1. Waits for the Dapr sidecar to be ready
 2. Starts the receive pipeline (publisher) and send pipeline (subscriber) concurrently
-3. The publisher lists source items via `ISourceLister`, processes each through the receive pipeline
+3. The publisher sweeps the source (`FileSweep`): each file is read, published through the receive pipeline, and only then deleted or archived
 4. The subscriber subscribes to the Dapr topic, processes messages through the send pipeline
-5. After the publisher finishes and an idle timeout elapses, the subscriber shuts down
+5. After the publisher finishes and an idle timeout elapses — or the host cancels — the subscriber drains in-flight messages and shuts down
 6. The Dapr sidecar is shut down
 
 ```csharp
-var runner = app.Services.GetRequiredService<TransactionalIntegrationRunner>();
-var exitCode = await runner.RunAsync(); // returns 0 on success, 1 on failure
+var runner = app.Services.GetRequiredService<RunToCompletionRunner>();
+var exitCode = await runner.RunAsync(ct); // 0 success or host cancellation; 1 failure or files left in place; 2 sidecar unavailable
 ```
 
 ## Configuration
 
 `TransactionalIntegrationOptions` controls the lifecycle behavior:
 
+The swept port is registered on its own, with its file adapter configured under `Ports:<port>`:
+
+```csharp
+builder.Services.AddSourcePort("order-source", builder.Configuration); // optional third argument: SweepCompletion.Archive("archive")
+```
+
 ```csharp
 builder.Services.AddTransactionalIntegration(opts =>
 {
     opts.DaprPubSubName = "pubsub";          // required
     opts.DaprTopicName = "orders";           // required
-    opts.IdleTimeoutSeconds = 5;             // default: 5
-    opts.PostIdleGracePeriodSeconds = 45;    // default: 45
-    opts.MaxMessageProcessingTimeSeconds = 40; // default: 40
-    opts.SidecarTimeoutSeconds = 30;         // default: 30
+    opts.IdleTimeout = TimeSpan.FromSeconds(5);      // default: 5 seconds
+    opts.PostIdleGracePeriod = TimeSpan.FromSeconds(45); // default: 45 seconds
+    opts.MaxMessageProcessingTime = TimeSpan.FromSeconds(40); // default: 40 seconds
+}, job =>
+{
+    job.JobName = "order-processor";         // default: the component name (the trace activity name)
+    job.SidecarTimeout = TimeSpan.FromSeconds(30);   // default: 30 seconds
 });
 ```
 
@@ -73,98 +81,48 @@ builder.Services.AddTransactionalIntegration(opts =>
 |--------|-------------|
 | `DaprPubSubName` | Name of the Dapr pub/sub component |
 | `DaprTopicName` | Topic to publish/subscribe to |
-| `IdleTimeoutSeconds` | Seconds of inactivity before the subscriber considers itself idle |
-| `PostIdleGracePeriodSeconds` | Seconds to wait after idle before shutting down |
-| `MaxMessageProcessingTimeSeconds` | Maximum time a single message can take before timeout |
-| `SidecarTimeoutSeconds` | Maximum time to wait for the Dapr sidecar to become ready |
+| `IdleTimeout` | Time of inactivity before the subscriber considers itself idle |
+| `PostIdleGracePeriod` | Time to wait after idle before shutting down |
+| `MaxMessageProcessingTime` | Maximum time a single message can take before timeout |
 
-## Receive pipeline
+The optional second delegate configures the shared `RunToCompletionOptions`: `JobName`, `SidecarTimeout`, and `SidecarShutdownTimeout`.
 
-The receive pipeline has three steps:
-
-### ISourceLister
-
-Lists available source items. This is an interface — not a step — that you implement:
+Pipelines use the base `Context` by default. To use your own context type in both pipelines, pass a
+`ContextFactory<TCtx>`, the same factory shape extractors use:
 
 ```csharp
-public class FileSourceLister(IFileAdapter fileAdapter) : ISourceLister
-{
-    public async Task<List<SourceItemInfo>> ListSourceItemsAsync()
-    {
-        var files = await fileAdapter.ListAsync();
-        return files.Select(f => new SourceItemInfo(f.FileName)).ToList();
-    }
-}
+builder.Services.AddTransactionalIntegration<OrderContext>(
+    (metadata, isRetry) => new OrderContext(metadata, isRetry),
+    opts => { /* as above */ });
 ```
 
-`SourceItemInfo` is a record with a single `Id` property that identifies the source item.
+The factory is called once per source file (metadata holds `file_name`) and once per message
+(metadata holds what the receive side propagated, plus the message id; `isRetry` is set on
+redelivery). Register `ISendPipeline<OrderContext>`; the receive side is registered for you.
 
-### ReceiveStep
+## Receive side
 
-Reads the content for a source item. Extends `BusinessStep<SourceItemInfo, SourceItem, TCtx>`:
+The receive side needs no component code. The lifecycle sweeps the source with `FileSweep` (from
+`Intropy.Framework.Adapters`): it lists the keyed `IFileAdapter`, reads each file into a
+`SourceItem` (`Id` plus raw `byte[]` data), runs the receive pipeline in the file's own scope, and
+completes the file only after the pipeline succeeded. A file that cannot be read or published stays
+for the next run and fails the run (exit 1). Each file gets a fresh `Context` with the file name in
+its metadata under `SourceContextKeys.FileName` (`"file_name"`).
 
-```csharp
-public class FileReceiver(IFileAdapter fileAdapter) : ReceiveStep<Context>
-{
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItemInfo input, Context context)
-    {
-        var content = await fileAdapter.GetContentAsync(input.Id);
-        return (new BusinessStepResult<SourceItem>.Success(new SourceItem(input.Id, content)), context);
-    }
-}
-```
+`AddTransactionalIntegration` registers the receive pipeline. Its one step is a
+`DaprTopicEnqueuer<TCtx>`, which publishes each item to `DaprPubSubName` / `DaprTopicName` as a
+structured CloudEvent (`application/cloudevents+json`). The envelope carries `Context.Metadata` and
+the current W3C trace parent, so the send pipeline's context and trace continue from the file.
 
-`SourceItem` contains the `Id` and the raw `byte[]` data.
-
-### EnqueueStep
-
-Publishes the source item to the Dapr topic as a cloud event. Extends `TechnicalStep<SourceItem, SourceItem, TCtx>`. The base class `ExecuteAsync` is **sealed** — it automatically adds `Context.Metadata` and the current W3C trace parent to the cloud event. You implement the overload that receives `cloudEvent`:
+Both are registered only when absent:
 
 ```csharp
-public class DaprEnqueuer(DaprClient daprClient, FrameworkOptions options) : EnqueueStep<Context>(options)
-{
-    public override async Task<(TechnicalStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItem input, ReadOnlyMemory<byte> cloudEvent, TCtx context)
-    {
-        await daprClient.PublishByteEventAsync(
-            pubsubName: options.DaprPubSubName,
-            topicName: options.DaprTopicName,
-            data: cloudEvent,
-            dataContentType: "application/cloudevents+json" 
-                
-        return (new TechnicalStepResult<SourceItem>.Success(input), context);
-    }
-}
-```
+// Replace the publisher, e.g. with the testing fake:
+services.AddSingleton<EnqueueStep<Context>>(new FakeEnqueueStep<Context>(frameworkOptions));
 
-### CompleteStep
-
-Handles cleanup after successful enqueue. Extends `BusinessStep<SourceItem, SourceItem, TCtx>`:
-
-```csharp
-public class FileCompleter(IFileAdapter fileAdapter) : CompleteStep<Context>
-{
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItem input, Context context)
-    {
-        await fileAdapter.DeleteAsync(input.Id);
-        return (new BusinessStepResult<SourceItem>.Success(input), context);
-    }
-}
-```
-
-### Registration
-
-```csharp
-builder.Services.AddReceivePipeline<Context>("order-receive",
-    (pipelineBuilder, sp) => pipelineBuilder
-        .WithReceiver(new FileReceiver(sp.GetRequiredService<IFileAdapter>()))
-        .WithEnqueuer(new DaprEnqueuer(sp.GetRequiredService<DaprClient>()))
-        .WithCompleter(new FileCompleter(sp.GetRequiredService<IFileAdapter>()))
-        .WithBusinessIncidents(
-            sp.GetRequiredService<IBusinessIncidentServiceClient>(),
-            ctx => ctx.Metadata["message_id"]));
+// Or replace the whole receive pipeline:
+services.AddReceivePipeline<Context>("order-receive",
+    (pipelineBuilder, sp) => pipelineBuilder.WithEnqueuer(sp.GetRequiredService<EnqueueStep<Context>>()));
 ```
 
 ## Send pipeline

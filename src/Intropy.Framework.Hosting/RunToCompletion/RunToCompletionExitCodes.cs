@@ -6,10 +6,9 @@ namespace Intropy.Framework.Hosting.RunToCompletion;
 public static class RunToCompletionExitCodes
 {
     /// <summary>
-    /// The job succeeded, had nothing to do, or was cancelled. Cancellation is a
-    /// success by design: the integration is idempotent and decided it does not
-    /// need to process (e.g. duplicates detected), and must not be retried by the
-    /// scheduler.
+    /// The job succeeded, had nothing to do, or the host cancelled it. Host
+    /// cancellation is a success by design: the integration is idempotent, and the
+    /// next scheduled run picks up whatever was left.
     /// </summary>
     public const int Success = 0;
 
@@ -21,7 +20,7 @@ public static class RunToCompletionExitCodes
 
     /// <summary>
     /// The infrastructure failed before the job could run: the Dapr sidecar did
-    /// not become available within <see cref="RunToCompletionOptions.SidecarTimeoutSeconds"/>.
+    /// not become available within <see cref="RunToCompletionOptions.SidecarTimeout"/>.
     /// </summary>
     public const int InfrastructureFailure = 2;
 }

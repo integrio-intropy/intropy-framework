@@ -1,6 +1,5 @@
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
-using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Core.Pipeline.Core;
@@ -88,11 +87,10 @@ public class FakeEnqueueStepTests
     }
 
     [Fact]
-    public async Task SendException_InReceivePipeline_SkipsCompleter_LeavingSourceFile()
+    public async Task SendException_InReceivePipeline_SurfacesAsTechnicalFailure()
     {
-        // The full receive-pipeline fault path: a dead broker is a technical failure, so the
-        // completer never runs and the source file is left for the next run.
-        var completerRan = false;
+        // The full receive-pipeline fault path: a dead broker is a technical failure, so the file
+        // sweep that runs the pipeline leaves the source file for the next run.
         var fake = new FakeEnqueueStep<Context>(Options)
         {
             SendException = new HttpRequestException("broker is dead"),
@@ -100,40 +98,14 @@ public class FakeEnqueueStepTests
 
         var pipeline = ReceivePipelineBuilder<Context>
             .Create("TestReceivePipeline", Options, NullLoggerFactory.Instance)
-            .WithReceiver(new StaticReceiver())
             .WithEnqueuer(fake)
-            .WithCompleter(new TrackingCompleter(() => completerRan = true))
             .Build();
 
         var (result, _) = await pipeline.Execute(
-            new SourceItemInfo("file-1.txt"), new Context(new Dictionary<string, string>()));
+            new SourceItem("file-1.txt", "content"u8.ToArray()), new Context(new Dictionary<string, string>()));
 
         Assert.IsType<StepResult<SourceItem>.TechnicalFailure>(result);
-        Assert.False(completerRan);
         Assert.Empty(fake.Captured);
-    }
-
-    [Fact]
-    public async Task CompleteFailure_EnqueueAlreadyCaptured_ItemIdentitySurvives()
-    {
-        // Enqueue succeeds, delete fails: the duplicate is on the queue (capture survives) while the
-        // pipeline result is a business failure — send-side idempotency must absorb the redelivery.
-        var fake = new FakeEnqueueStep<Context>(Options);
-
-        var pipeline = ReceivePipelineBuilder<Context>
-            .Create("TestReceivePipeline", Options, NullLoggerFactory.Instance)
-            .WithReceiver(new StaticReceiver())
-            .WithEnqueuer(fake)
-            .WithCompleter(new FailingCompleter())
-            .Build();
-
-        var (result, _) = await pipeline.Execute(
-            new SourceItemInfo("file-1.txt"), new Context(new Dictionary<string, string>()));
-
-        Assert.IsType<StepResult<SourceItem>.BusinessFailure>(result);
-        var captured = Assert.Single(fake.Captured);
-        Assert.Equal("file-1.txt", captured.Item.Id);
-        Assert.Equal("transactional-integration.received", captured.DecodeCloudEvent().Type);
     }
 
     [Fact]
@@ -153,36 +125,5 @@ public class FakeEnqueueStepTests
 
         await fake.ExecuteAsync(item, context, CancellationToken.None);
         Assert.Equal(1, fake.Count);
-    }
-
-    private sealed class StaticReceiver : ReceiveStep<Context>
-    {
-        public override Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-            SourceItemInfo input, Context context, CancellationToken ct)
-        {
-            var item = new SourceItem(input.Id, "content"u8.ToArray());
-            return Task.FromResult<(BusinessStepResult<SourceItem>, Context)>(
-                (new BusinessStepResult<SourceItem>.Success(item), context));
-        }
-    }
-
-    private sealed class TrackingCompleter(Action onRun) : CompleteStep<Context>
-    {
-        public override Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-            SourceItem input, Context context, CancellationToken ct)
-        {
-            onRun();
-            return Task.FromResult<(BusinessStepResult<SourceItem>, Context)>(
-                (new BusinessStepResult<SourceItem>.Success(input), context));
-        }
-    }
-
-    private sealed class FailingCompleter : CompleteStep<Context>
-    {
-        public override Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-            SourceItem input, Context context, CancellationToken ct)
-        {
-            throw new IOException($"Failed to delete: {input.Id}");
-        }
     }
 }

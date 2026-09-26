@@ -15,9 +15,7 @@ public class ReceivePipelineBuilderTests
         Substitute.For<IBusinessIncidentServiceClient>();
     private static readonly FrameworkOptions FrameworkOptions = new() { ComponentName = "Test", ServiceNamespace = "Org" };
 
-    private readonly ReceiveStep<ReceiveContext> _receiver = Substitute.For<ReceiveStep<ReceiveContext>>();
     private readonly EnqueueStep<ReceiveContext> _enqueuer = Substitute.For<EnqueueStep<ReceiveContext>>(FrameworkOptions);
-    private readonly CompleteStep<ReceiveContext> _completer = Substitute.For<CompleteStep<ReceiveContext>>();
 
     [Fact]
     public void Create_WithNullPipelineName_ThrowsException()
@@ -59,26 +57,22 @@ public class ReceivePipelineBuilderTests
         Assert.IsType<ReceivePipelineBuilder<ReceiveContext>>(result);
     }
 
-    [Theory]
-    [InlineData(typeof(ReceiveStep<>))]
-    [InlineData(typeof(EnqueueStep<>))]
-    [InlineData(typeof(CompleteStep<>))]
-    public void Build_WhenDependencyMissing_ThrowsInvalidOperationException(Type missingDependency)
+    [Fact]
+    public void Build_WithoutEnqueuer_ThrowsInvalidOperationException()
     {
-        var builder = ConfigureAllDependenciesExcept(missingDependency);
-        var exceptionMessageMatch = missingDependency.Name.Split('`').First();
+        var builder = GetBuilder()
+            .WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata["sourceItemId"],
+                ctx => ctx.Metadata["sourceItemId"]);
 
         var exception = Assert.Throws<InvalidOperationException>(() => builder.Build());
-        Assert.Contains(exceptionMessageMatch, exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("EnqueueStep", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void Build_WithAllDependencies_CreatesPipeline()
     {
         var builder = GetBuilder()
-            .WithReceiver(_receiver)
             .WithEnqueuer(_enqueuer)
-            .WithCompleter(_completer)
             .WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata["sourceItemId"],
                 ctx => ctx.Metadata["sourceItemId"]);
 
@@ -91,32 +85,11 @@ public class ReceivePipelineBuilderTests
     public void Build_WithoutBusinessIncidents_Succeeds()
     {
         var builder = GetBuilder()
-            .WithReceiver(_receiver)
-            .WithEnqueuer(_enqueuer)
-            .WithCompleter(_completer);
+            .WithEnqueuer(_enqueuer);
 
         var result = builder.Build();
 
         Assert.IsType<ReceivePipeline<ReceiveContext>>(result);
-    }
-
-    private ReceivePipelineBuilder<ReceiveContext> ConfigureAllDependenciesExcept(Type skip)
-    {
-        var builder = GetBuilder();
-
-        if (skip != typeof(ReceiveStep<>))
-            builder.WithReceiver(_receiver);
-
-        if (skip != typeof(EnqueueStep<>))
-            builder.WithEnqueuer(_enqueuer);
-
-        if (skip != typeof(CompleteStep<>))
-            builder.WithCompleter(_completer);
-
-        builder.WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata["sourceItemId"],
-            ctx => ctx.Metadata["sourceItemId"]);
-
-        return builder;
     }
 
     private ReceivePipelineBuilder<ReceiveContext> GetBuilder()

@@ -1,6 +1,6 @@
 using System.Text;
+using Intropy.Framework.Adapters.Common;
 using Intropy.Framework.Adapters.File;
-using FileInfo = Intropy.Framework.Adapters.Common.FileInfo;
 
 namespace Intropy.Framework.Testing.Adapters;
 
@@ -211,8 +211,9 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     /// only files under it, by file name with the base path stripped — mirroring
     /// <c>LocalFileAdapter</c>, which lists its configured base path and strips full paths to the
     /// file name.</remarks>
-    public Task<List<FileInfo>> ListAsync()
+    public Task<List<FileEntry>> ListAsync(CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         ThrowIfSet(_readException);
 
         lock (_lock)
@@ -220,32 +221,35 @@ public sealed class InMemoryFileAdapter : IFileAdapter
             var prefix = _basePath is null ? null : _basePath + "/";
             return Task.FromResult(_files.Keys
                 .Where(key => prefix is null || key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                .Select(key => new FileInfo(prefix is null ? key : key[prefix.Length..]))
+                .Select(key => new FileEntry(prefix is null ? key : key[prefix.Length..]))
                 .ToList());
         }
     }
 
     /// <inheritdoc/>
     /// <exception cref="FileNotFoundException">Thrown when the file does not exist, matching the Dapr binding.</exception>
-    public Task<byte[]> GetContentAsync(string fileName)
+    public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         ThrowIfSet(_readException);
         return Task.FromResult(Read(fileName));
     }
 
     /// <inheritdoc/>
     /// <exception cref="FileNotFoundException">Thrown when the file does not exist, matching the Dapr binding.</exception>
-    public async Task<string?> GetContentAsync(string fileName, Encoding encoding)
+    public async Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(encoding);
-        var data = await GetContentAsync(fileName);
+        ct.ThrowIfCancellationRequested();
+        var data = await GetContentAsync(fileName, ct);
         return encoding.GetString(data);
     }
 
     /// <inheritdoc/>
-    public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null)
+    public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(content);
+        ct.ThrowIfCancellationRequested();
         ThrowIfSet(_writeException);
 
         lock (_lock)
@@ -257,19 +261,21 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     }
 
     /// <inheritdoc/>
-    public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null)
+    public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(encoding);
-        return WriteAsync(fileName, encoding.GetBytes(content), basePathOverride);
+        ct.ThrowIfCancellationRequested();
+        return WriteAsync(fileName, encoding.GetBytes(content), basePathOverride, ct);
     }
 
     /// <inheritdoc/>
     /// <remarks>Deleting a missing file no-ops, matching the idempotent Dapr binding delete. Throws
     /// <see cref="DeleteException"/> when set, or a per-file exception configured via
     /// <see cref="SetDeleteException"/>; the file is left in the store, as in production.</remarks>
-    public Task DeleteAsync(string fileName)
+    public Task DeleteAsync(string fileName, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         ThrowIfSet(_deleteException);
 
         lock (_lock)

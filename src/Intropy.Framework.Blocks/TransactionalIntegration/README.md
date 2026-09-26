@@ -6,7 +6,8 @@ A framework for building file-based integration flows using Dapr PubSub, designe
 
 This block provides a complete lifecycle for processing files through a message queue. It uses two pipelines:
 
-1. **ReceivePipeline** - Reads files from storage and publishes them to a queue
+1. **ReceivePipeline** - Publishes each source file to a queue. Registered by the hosting lifecycle:
+   the file sweep (`FileSweep`) reads the file before it and deletes or archives it only after it succeeds
 2. **SendPipeline** - Consumes messages from the queue and processes them
 
 ## Integration Flow
@@ -16,16 +17,12 @@ This block provides a complete lifecycle for processing files through a message 
 │                     Transactional Integration Lifecycle                     │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  ISourceLister.ListItemsAsync()                                             │
-│         │                                                                   │
-│         ▼                                                                   │
+│  FileSweep (Hosting): list the source, then for each file:                  │
+│    read content ─▶ ReceivePipeline ─▶ delete/archive only on success        │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                        ReceivePipeline                              │    │
-│  │  For each item:                                                     │    │
-│  │    ReceiveStep    → Read content from source (file adapter)         │    │
-│  │    EnqueueStep    → Publish to message queue                        │    │
-│  │    CompleteStep   → Delete/archive source file                      │    │
-│  │    (BusinessIncidentRouter finalizer)                               │    │
+│  │    DaprTopicEnqueuer → Publish to message queue (built in)          │    │
+│  │                                                                     │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │         │                                                                   │
 │         ▼                                                                   │
@@ -80,66 +77,7 @@ public record OrderContext() : Context(new Dictionary<string, string>())
 }
 ```
 
-### 2. Implement ReceivePipeline Steps
-
-```csharp
-// Reads file content using a file adapter
-public class FileReceiver : ReceiveStep<Context>
-{
-    private readonly IFileAdapter _fileAdapter;
-
-    public FileReceiver(IFileAdapter fileAdapter)
-    {
-        _fileAdapter = fileAdapter;
-    }
-
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)>
-        ExecuteAsync(SourceItemInfo input, Context context)
-    {
-        var content = await _fileAdapter.GetContentAsync(input.Id);
-        var sourceItem = new SourceItem(input.Id, content);
-        return (new BusinessStepResult<SourceItem>.Success(sourceItem), context);
-    }
-}
-
-// Publishes to message queue using Dapr
-public class DaprEnqueuer : EnqueueStep<Context>
-{
-    private readonly IMessagePublisher _messagePublisher;
-
-    public DaprEnqueuer(IMessagePublisher messagePublisher)
-    {
-        _messagePublisher = messagePublisher;
-    }
-
-    public override async Task<(TechnicalStepResult<SourceItem> Result, Context Context)>
-        ExecuteAsync(SourceItem input, Context context, Dictionary<string, string> messageContext)
-    {
-        await _messagePublisher.PublishAsync(input.Data, messageContext);
-        return (new TechnicalStepResult<SourceItem>.Success(input), context);
-    }
-}
-
-// Deletes the source file after successful publish
-public class DeleteCompleter : CompleteStep<Context>
-{
-    private readonly IFileAdapter _fileAdapter;
-
-    public DeleteCompleter(IFileAdapter fileAdapter)
-    {
-        _fileAdapter = fileAdapter;
-    }
-
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)>
-        ExecuteAsync(SourceItem input, Context context)
-    {
-        await _fileAdapter.DeleteAsync(input.Id);
-        return (new BusinessStepResult<SourceItem>.Success(input), context);
-    }
-}
-```
-
-### 3. Implement SendPipeline Steps
+### 2. Implement SendPipeline Steps
 
 ```csharp
 public class JsonOrderDeserializer : DeserializeStep<OrderInput, Context>
@@ -236,7 +174,7 @@ public class PassThroughExtractor : ExtractStep<OrderInput, Context>
 }
 ```
 
-### 4. Configure in Program.cs
+### 3. Configure in Program.cs
 
 ```csharp
 using Intropy.Libs.Framework.Blocks.TransactionalIntegration;
@@ -252,37 +190,21 @@ builder.Services.AddIntropyFramework();
 builder.Services.AddDaprClient();
 builder.Services.AddDaprPubSubClient();
 
-// Add your file adapter implementation
-builder.Services.AddSingleton<IFileAdapter, SftpAdapter>();
-
-// Add source lister (uses file adapter to list files)
-builder.Services.AddSingleton<ISourceLister, FileSourceLister>();
-
-// Add message publisher (uses Dapr)
-builder.Services.AddSingleton<IMessagePublisher, DaprMessagePublisher>();
+// The port the file sweep reads; its adapter is configured under Ports:order-source
+builder.Services.AddSourcePort("order-source", builder.Configuration); // or SweepCompletion.Archive("archive")
 
 // Add HTTP client for the sender
 builder.Services.AddHttpClient();
 
-// Configure the lifecycle
+// Configure the lifecycle, including the receive side (sweep + publish to the topic)
 builder.Services.AddTransactionalIntegration(options =>
 {
     options.DaprPubSubName = "order-pubsub";
     options.DaprTopicName = "order-processing";
-    options.IdleTimeoutSeconds = 5;
-    options.PostIdleGracePeriodSeconds = 45;
-    options.MaxMessageProcessingTimeSeconds = 40;
+    options.IdleTimeout = TimeSpan.FromSeconds(5);
+    options.PostIdleGracePeriod = TimeSpan.FromSeconds(45);
+    options.MaxMessageProcessingTime = TimeSpan.FromSeconds(40);
 });
-
-// Register the ReceivePipeline
-builder.Services.AddReceivePipeline("OrderReceivePipeline",
-    (builder, sp) => builder
-        .WithReceiver(new FileReceiver(sp.GetRequiredService<IFileAdapter>()))
-        .WithEnqueuer(new DaprEnqueuer(sp.GetRequiredService<IMessagePublisher>()))
-        .WithCompleter(new DeleteCompleter(sp.GetRequiredService<IFileAdapter>()))
-        .WithBusinessIncidents(
-            sp.GetRequiredService<IBusinessIncidentServiceClient>(),
-            ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown")));
 
 // Register the SendPipeline
 builder.Services.AddSendPipeline<OrderInput, OrderOutput, Context>("OrderSendPipeline",
@@ -303,9 +225,9 @@ builder.Services.AddSendPipeline<OrderInput, OrderOutput, Context>("OrderSendPip
 
 var host = builder.Build();
 
-// Start the lifecycle
-var lifecycle = host.Services.GetRequiredService<TransactionalIntegrationLifecycle>();
-await lifecycle.Start();
+// Run the lifecycle to completion (sidecar wait, sweep + subscription, sidecar shutdown)
+var runner = host.Services.GetRequiredService<RunToCompletionRunner>();
+return await runner.RunAsync();
 ```
 
 ## Configuration Options
@@ -316,25 +238,22 @@ await lifecycle.Start();
 |----------|---------|-------------|
 | `DaprPubSubName` | *required* | Name of the Dapr PubSub component |
 | `DaprTopicName` | *required* | Name of the topic to publish/subscribe |
-| `IdleTimeoutSeconds` | 5 | Time to wait after no new messages before shutdown |
-| `PostIdleGracePeriodSeconds` | 45 | Grace period for in-flight messages to complete |
-| `MaxMessageProcessingTimeSeconds` | 40 | Maximum time allowed for processing a single message |
+| `IdleTimeout` | 5 seconds | Time to wait after no new messages before shutdown |
+| `PostIdleGracePeriod` | 45 seconds | Grace period for in-flight messages to complete |
+| `MaxMessageProcessingTime` | 40 seconds | Maximum time allowed for processing a single message |
 
 ## ReceivePipeline Steps
 
-The ReceivePipeline processes source items in this order:
+The ReceivePipeline runs once per source file, inside the file sweep. `AddTransactionalIntegration`
+registers it with one step:
 
-| Step | Base Class | Description |
+| Step | Class | Description |
 |------|------------|-------------|
-| **Receive** | `ReceiveStep<TCtx>` | Reads content from the source (BusinessStep) |
-| **Enqueue** | `EnqueueStep<TCtx>` | Publishes to message queue (TechnicalStep) |
-| **Complete** | `CompleteStep<TCtx>` | Cleanup after publish - delete/archive (BusinessStep) |
-| **Route Incidents** | Finalizer | Routes any business failures to incident service |
+| **Enqueue** | `DaprTopicEnqueuer<TCtx>` (an `EnqueueStep<TCtx>`) | Publishes the item to `DaprPubSubName` / `DaprTopicName` as a structured CloudEvent carrying `Context.Metadata` and the trace parent |
 
-### Step Types
-- **ReceiveStep**: Returns `BusinessStepResult<SourceItem>`. Failures indicate issues with the source (file not found, access denied, corrupt data).
-- **EnqueueStep**: Returns `TechnicalStepResult<SourceItem>`. Failures indicate queue issues (unavailable, publish failed).
-- **CompleteStep**: Returns `BusinessStepResult<SourceItem>`. Failures indicate cleanup issues (can't delete, can't archive).
+A failed publish is a technical failure; the sweep then keeps the source file for the next run.
+Register your own `EnqueueStep<TCtx>` to replace the publisher (tests register `FakeEnqueueStep`),
+or an `IReceivePipeline<TCtx>` (`AddReceivePipeline`) to replace the whole pipeline.
 
 ## SendPipeline Steps
 
@@ -352,25 +271,29 @@ The SendPipeline processes messages in this order:
 | **Idempotency Record** | `IdempotencyRecordStep<string, TCtx>` | Mark as processed |
 | **Route Incidents** | Finalizer | Routes any business failures to incident service |
 
-## Source Listing
+## Source Sweep
 
-The `ISourceLister` interface is responsible for listing items to process. It runs outside the pipeline:
+The hosting lifecycle sweeps the source with the component-neutral `FileSweep` from
+`Intropy.Framework.Hosting` (the same sweep extractors use): it lists the keyed `IFileAdapter`, reads each file, runs the ReceivePipeline in
+the file's own scope, and only then completes the file — `Delete` or `Archive(basePath)`. A file
+whose publish failed stays in the source and counts as failed, so the run exits 1. Delivery is
+at-least-once: a crash after the publish but before completion re-publishes the file on the next
+run, which the SendPipeline's idempotency absorbs.
 
-```csharp
-public interface ISourceLister
-{
-    Task<IReadOnlyList<SourceItemInfo>> ListItemsAsync(CancellationToken cancellationToken = default);
-}
-```
+Each file is its own trace, linked to the job's span (as for extractors), and the trace continues
+through the queue into the SendPipeline. Each file gets a fresh `Context` whose metadata holds the source file name under
+`SourceContextKeys.FileName` (`"file_name"`), the same key extractors get. Context metadata
+travels with the message, so the SendPipeline sees it too. The receive pipeline is resolved once
+before the source is listed: a missing registration fails the run instead of every file.
 
-A default `FileSourceLister` implementation is provided that uses `IFileAdapter.ListAsync()`.
+To use your own context type in both pipelines, register with
+`AddTransactionalIntegration<TCtx>(contextFactory, ...)`. The `ContextFactory<TCtx>` receives the
+metadata and retry flag (`(metadata, isRetry) => new OrderContext(metadata, isRetry)`) and is
+called for each file and each message.
 
 ## Data Types
 
 ```csharp
-// Metadata about an item to be processed (returned by listing operation)
-public record SourceItemInfo(string Id);
-
-// An item with its content, ready for publishing
+// A source file with its content, ready for publishing
 public record SourceItem(string Id, byte[] Data);
 ```

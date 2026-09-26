@@ -75,14 +75,12 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
   seam, plugged in via `ReceivePipelineBuilder<TCtx>.WithEnqueuer(fake)`.
   Captures each `SourceItem` and its already-encoded structured-mode CloudEvents
   envelope (defensive `byte[]` copies — the formatter's buffer is recycled);
-  decode via `CapturedEnqueue.DecodeCloudEvent()`. Item identity survives into
-  the capture, so completer-failure tests can assert what was enqueued even
-  when the pipeline result is a business failure. `SendException` is thrown
-  before capture, surfaces as a *technical failure*, and — because the complete
-  step follows the enqueue step — leaves the source file undeleted, matching a
-  dead broker in production. The `EnqueueStep` API this fake plugs into is
-  documented in `docs/blocks/transactional-integration.md`; the
-  `DaprEnqueuer` sample in the block's README is stale (fixed separately).
+  decode via `CapturedEnqueue.DecodeCloudEvent()`. Register it as the
+  `EnqueueStep<TCtx>` to replace the built-in `DaprTopicEnqueuer`: the receive
+  pipeline `AddTransactionalIntegration` registers publishes through it.
+  `SendException` is thrown before capture, surfaces as a *technical failure*,
+  and — because the sweep completes a file only after it is enqueued — leaves
+  the source file undeleted, matching a dead broker in production.
 - **Service fakes** — faults throw the *typed* `IdempotencyServiceException` /
   `BusinessIncidentServiceException`. Typing matters: the framework's incident
   router has a dedicated catch for `BusinessIncidentServiceException`; any
@@ -147,24 +145,19 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 | Validation failure | Incident routed | Consumed (empty-`CloudEvent` success) |
 | Technical failure (`SendException` / `ReadException`) | No | Left for the next run |
 
-## Transactional receive pipeline matrix
+## Transactional receive side matrix
 
-Per source item:
+Per source file, swept by `FileSweep` around the receive pipeline:
 
 | Scenario | Enqueued | Source file |
 |---|---|---|
-| Valid | Yes | Deleted by completer |
-| Unreadable source (adapter read throws)¹ | No | Incident routed, keyed on file name |
-| Broker down (`SendException` set) | No — technical failure | Left for the next run |
+| Valid | Yes | Deleted (or archived) after the enqueue |
+| Unreadable source (adapter read throws) | No | Left for the next run; counted as failed |
+| Broker down (`SendException` set) | No — technical failure | Left for the next run; counted as failed |
 | Enqueue OK, delete throws (`SetDeleteException`) | Yes — the duplicate lands on the queue | Left; re-processed next run, send-side idempotency must absorb it |
 
-¹ `ReceiveStep` is a `BusinessStep`, so adapter faults here are *business*
-failures — unlike the loader's technical read path.
-
-The fourth row is the transactional analogue of
-`InMemoryFileAdapter.SetDeleteException` and the most valuable row in the
-matrix: the enqueue is captured, the pipeline result is a business failure,
-and the file is re-processed next run.
+The last row is the most valuable one: the enqueue is captured, completion fails, and the file is
+re-processed next run.
 
 ## Transactional send pipeline matrix
 

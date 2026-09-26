@@ -40,7 +40,7 @@ public class LocalFileAdapterIntegrationTests : IAsyncLifetime
             var files = await _adapter.ListAsync();
             foreach (var file in files)
             {
-                await _adapter.DeleteAsync(file.FileName);
+                await _adapter.DeleteAsync(file.Name);
             }
         }
         catch
@@ -115,7 +115,7 @@ public class LocalFileAdapterIntegrationTests : IAsyncLifetime
         var files = await _adapter.ListAsync();
 
         // Assert
-        Assert.Contains(files, f => f.FileName == _testFileName);
+        Assert.Contains(files, f => f.Name == _testFileName);
     }
 
     [Fact]
@@ -131,9 +131,9 @@ public class LocalFileAdapterIntegrationTests : IAsyncLifetime
 
         // Assert
         Assert.Equal(3, files.Count);
-        Assert.Contains(files, f => f.FileName == "file1.txt");
-        Assert.Contains(files, f => f.FileName == "file2.txt");
-        Assert.Contains(files, f => f.FileName == "file3.txt");
+        Assert.Contains(files, f => f.Name == "file1.txt");
+        Assert.Contains(files, f => f.Name == "file2.txt");
+        Assert.Contains(files, f => f.Name == "file3.txt");
     }
 
     [Fact]
@@ -142,14 +142,14 @@ public class LocalFileAdapterIntegrationTests : IAsyncLifetime
         // Arrange
         await _adapter.WriteAsync(_testFileName, "content to delete", Encoding.UTF8);
         var filesBefore = await _adapter.ListAsync();
-        Assert.Contains(filesBefore, f => f.FileName == _testFileName);
+        Assert.Contains(filesBefore, f => f.Name == _testFileName);
 
         // Act
         await _adapter.DeleteAsync(_testFileName);
 
         // Assert
         var filesAfter = await _adapter.ListAsync();
-        Assert.DoesNotContain(filesAfter, f => f.FileName == _testFileName);
+        Assert.DoesNotContain(filesAfter, f => f.Name == _testFileName);
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public class LocalFileAdapterIntegrationTests : IAsyncLifetime
         var overrideAdapter = new LocalFileAdapter(_fixture.DaprClient, overrideOptions);
 
         var files = await overrideAdapter.ListAsync();
-        Assert.Contains(files, f => f.FileName == overrideFileName);
+        Assert.Contains(files, f => f.Name == overrideFileName);
 
         var readContent = await overrideAdapter.GetContentAsync(overrideFileName, Encoding.UTF8);
         Assert.Equal(content, readContent);

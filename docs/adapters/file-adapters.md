@@ -12,7 +12,7 @@ Interface for all file operations. All implementations use Dapr bindings under t
 ```csharp
 public interface IFileAdapter
 {
-    Task<List<FileInfo>> ListAsync();
+    Task<List<FileEntry>> ListAsync();
     Task<byte[]> GetContentAsync(string fileName);
     Task<string?> GetContentAsync(string fileName, Encoding encoding);
     Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null);
@@ -25,7 +25,7 @@ public interface IFileAdapter
 
 | Method | Description |
 |--------|-------------|
-| `ListAsync()` | Lists files matching the configured filter. Returns `List<FileInfo>`. |
+| `ListAsync()` | Lists files matching the configured filter. Returns `List<FileEntry>`. |
 | `GetContentAsync(fileName)` | Reads file content as `byte[]`. |
 | `GetContentAsync(fileName, encoding)` | Reads file content as `string` with the specified encoding. |
 | `WriteAsync(fileName, content)` | Writes `byte[]` content. Optional `basePathOverride` to write to a different directory. |
@@ -55,12 +55,12 @@ public class FileAdapterOptions
 
 ---
 
-## FileInfo
+## FileEntry
 
 **Namespace:** `Intropy.Framework.Adapters.Common`
 
 ```csharp
-public record FileInfo(string FileName);
+public record FileEntry(string Name);
 ```
 
 Returned by `IFileAdapter.ListAsync()`. Contains the file name.
@@ -112,31 +112,19 @@ File adapters are commonly used in receive pipelines to list and read source fil
 
 ```csharp
 // Register the adapter
-builder.Services.AddSingleton<IFileAdapter>(sp =>
+builder.Services.AddKeyedSingleton<IFileAdapter>("order-source", (sp, _) =>
     new SftpAdapter(
         sp.GetRequiredService<DaprClient>(),
         new FileAdapterOptions("sftp-binding", "/incoming", new Regex(@"\.xml$"))));
 
-// Use in source lister
-public class FileSourceLister(IFileAdapter fileAdapter) : ISourceLister
+// Sweep it as a transactional integration's source: the lifecycle's FileSweep lists and reads it,
+// and deletes or archives each file after the receive pipeline published it.
+builder.Services.AddSourcePort("order-source"); // the adapter above is registered under the port name
+builder.Services.AddTransactionalIntegration(opts =>
 {
-    public async Task<List<SourceItemInfo>> ListSourceItemsAsync()
-    {
-        var files = await fileAdapter.ListAsync();
-        return files.Select(f => new SourceItemInfo(f.FileName)).ToList();
-    }
-}
-
-// Use in receive step
-public class FileReceiver(IFileAdapter fileAdapter) : ReceiveStep<Context>
-{
-    public override async Task<(BusinessStepResult<SourceItem> Result, Context Context)> ExecuteAsync(
-        SourceItemInfo input, Context context)
-    {
-        var content = await fileAdapter.GetContentAsync(input.Id);
-        return (new BusinessStepResult<SourceItem>.Success(new SourceItem(input.Id, content)), context);
-    }
-}
+    opts.DaprPubSubName = "pubsub";
+    opts.DaprTopicName = "orders";
+});
 ```
 
 ## See also

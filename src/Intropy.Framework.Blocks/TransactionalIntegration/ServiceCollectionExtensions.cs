@@ -12,69 +12,71 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration;
 /// </summary>
 public static class ServiceCollectionExtensions
 {
+    /// <summary>
+    /// Registers a send pipeline for the Transactional Integration.
+    /// </summary>
+    /// <typeparam name="TInput">The input type for the pipeline (after deserialization).</typeparam>
+    /// <typeparam name="TOutput">The output type for the pipeline (before serialization).</typeparam>
+    /// <typeparam name="TContext">The context type used throughout the pipeline.</typeparam>
     /// <param name="services">The service collection to add services to.</param>
-    extension(IServiceCollection services)
+    /// <param name="pipelineName">The name of the pipeline (used for logging and tracing).</param>
+    /// <param name="configurePipeline">Function to configure the pipeline builder.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddSendPipeline<TInput, TOutput, TContext>(this IServiceCollection services,
+        string pipelineName,
+        Func<SendPipelineBuilder<TInput, TOutput, TContext>, IServiceProvider,
+            SendPipelineBuilder<TInput, TOutput, TContext>> configurePipeline)
+        where TContext : Context
     {
-        /// <summary>
-        /// Registers a send pipeline for the Transactional Integration.
-        /// </summary>
-        /// <typeparam name="TInput">The input type for the pipeline (after deserialization).</typeparam>
-        /// <typeparam name="TOutput">The output type for the pipeline (before serialization).</typeparam>
-        /// <typeparam name="TContext">The context type used throughout the pipeline.</typeparam>
-        /// <param name="pipelineName">The name of the pipeline (used for logging and tracing).</param>
-        /// <param name="configurePipeline">Function to configure the pipeline builder.</param>
-        /// <returns>The service collection for chaining.</returns>
-        public IServiceCollection AddSendPipeline<TInput, TOutput, TContext>(string pipelineName,
-            Func<SendPipelineBuilder<TInput, TOutput, TContext>, IServiceProvider,
-                SendPipelineBuilder<TInput, TOutput, TContext>> configurePipeline)
-            where TContext : Context
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configurePipeline);
+
+        // Register the pipeline
+        services.AddSingleton<ISendPipeline<TContext>, SendPipeline<TInput, TOutput, TContext>>(sp =>
         {
-            ArgumentNullException.ThrowIfNull(services);
-            ArgumentNullException.ThrowIfNull(configurePipeline);
+            var frameworkOptions = sp.GetRequiredService<FrameworkOptions>();
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
 
-            // Register the pipeline
-            services.AddSingleton<ISendPipeline<TContext>, SendPipeline<TInput, TOutput, TContext>>(sp =>
-            {
-                var frameworkOptions = sp.GetRequiredService<FrameworkOptions>();
-                var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var builder = SendPipelineBuilder<TInput, TOutput, TContext>
+                .Create(pipelineName, frameworkOptions, loggerFactory);
 
-                var builder = SendPipelineBuilder<TInput, TOutput, TContext>
-                    .Create(pipelineName, frameworkOptions, loggerFactory);
+            var configuredBuilder = configurePipeline(builder, sp);
+            return configuredBuilder.Build();
+        });
 
-                var configuredBuilder = configurePipeline(builder, sp);
-                return configuredBuilder.Build();
-            });
+        return services;
+    }
 
-            return services;
-        }
+    /// <summary>
+    /// Registers a receive pipeline for the Transactional Integration.
+    /// This pipeline publishes each source item to the integration's queue; the file sweep that
+    /// runs it reads the source and completes it afterwards.
+    /// </summary>
+    /// <typeparam name="TContext">The context type used throughout the pipeline.</typeparam>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="pipelineName">The name of the pipeline (used for logging and tracing).</param>
+    /// <param name="configurePipeline">Function to configure the pipeline builder.</param>
+    /// <returns>The service collection for chaining.</returns>
+    public static IServiceCollection AddReceivePipeline<TContext>(this IServiceCollection services,
+        string pipelineName,
+        Func<ReceivePipelineBuilder<TContext>, IServiceProvider, ReceivePipelineBuilder<TContext>> configurePipeline)
+        where TContext : Context
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configurePipeline);
 
-        /// <summary>
-        /// Registers a receive pipeline for the Transactional Integration.
-        /// This pipeline processes source items through receive, enqueue, and complete steps.
-        /// </summary>
-        /// <param name="pipelineName">The name of the pipeline (used for logging and tracing).</param>
-        /// <param name="configurePipeline">Function to configure the pipeline builder.</param>
-        /// <returns>The service collection for chaining.</returns>
-        public IServiceCollection AddReceivePipeline<TContext>(string pipelineName,
-            Func<ReceivePipelineBuilder<TContext>, IServiceProvider, ReceivePipelineBuilder<TContext>> configurePipeline)
-            where TContext : Context
+        services.AddSingleton<IReceivePipeline<TContext>, ReceivePipeline<TContext>>(sp =>
         {
-            ArgumentNullException.ThrowIfNull(services);
-            ArgumentNullException.ThrowIfNull(configurePipeline);
+            var frameworkOptions = sp.GetRequiredService<FrameworkOptions>();
+            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
 
-            services.AddSingleton<IReceivePipeline<TContext>, ReceivePipeline<TContext>>(sp =>
-            {
-                var frameworkOptions = sp.GetRequiredService<FrameworkOptions>();
-                var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
+            var builder = ReceivePipelineBuilder<TContext>
+                .Create(pipelineName, frameworkOptions, loggerFactory);
 
-                var builder = ReceivePipelineBuilder<TContext>
-                    .Create(pipelineName, frameworkOptions, loggerFactory);
+            var configuredBuilder = configurePipeline(builder, sp);
+            return configuredBuilder.Build();
+        });
 
-                var configuredBuilder = configurePipeline(builder, sp);
-                return configuredBuilder.Build();
-            });
-
-            return services;
-        }
+        return services;
     }
 }

@@ -1,0 +1,274 @@
+using Intropy.Framework.Testing.Topics;
+using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
+using Intropy.Framework.Core.Configuration;
+using Dapr.Client;
+using Dapr.Messaging.PublishSubscribe.Extensions;
+using Intropy.Framework.Adapters.File;
+using Intropy.Framework.Blocks.Shared;
+using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
+using Intropy.Framework.Blocks.TransactionalIntegration.Send;
+using Intropy.Framework.Hosting.RunToCompletion;
+using Intropy.Framework.Hosting.TransactionalIntegration;
+using Intropy.Framework.Hosting.TransactionalIntegration.Lifecycle;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
+
+namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
+
+public class ServiceCollectionExtensionsTests
+{
+    [Fact]
+    public void AddTransactionalIntegration_ShouldThrowArgumentNullException_WhenServicesIsNull()
+    {
+        // Verifies that null service collection is rejected
+        IServiceCollection? services = null;
+
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            services!.AddTransactionalIntegration(_ => { }));
+
+        Assert.Equal("services", exception.ParamName);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_ShouldThrowArgumentNullException_WhenConfigureOptionsIsNull()
+    {
+        // Verifies that null configuration action is rejected
+        var services = GetServices();
+
+        var exception = Assert.Throws<ArgumentNullException>(() =>
+            services.AddTransactionalIntegration(null!));
+
+        Assert.Equal("configureOptions", exception.ParamName);
+    }
+
+    [Fact]
+    public void
+        AddTransactionalIntegration_ShouldThrowInvalidOperationException_WhenDaprPubSubNameIsNotConfigured()
+    {
+        // Verifies that DaprPubSubName is required
+        var services = GetServices();
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddTransactionalIntegration(options =>
+            {
+                options.DaprTopicName = "test-topic";
+                    // DaprPubSubName intentionally not set
+            }));
+
+        Assert.Equal("DaprPubSubName must be configured.", exception.Message);
+    }
+
+    [Fact]
+    public void
+        AddTransactionalIntegration_ShouldThrowInvalidOperationException_WhenDaprTopicNameIsNotConfigured()
+    {
+        // Verifies that DaprTopicName is required
+        var services = GetServices();
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddTransactionalIntegration(options =>
+            {
+                options.DaprPubSubName = "test-pubsub";
+                // DaprTopicName intentionally not set
+            }));
+
+        Assert.Equal("DaprTopicName must be configured.", exception.Message);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_ShouldRegisterOptions_WithConfiguredValues()
+    {
+        // Verifies that options are registered with the configured values
+        var services = GetServices();
+
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "my-pubsub";
+            options.DaprTopicName = "my-topic";
+            options.IdleTimeout = TimeSpan.FromSeconds(10);
+            options.PostIdleGracePeriod = TimeSpan.FromSeconds(30);
+            options.MaxMessageProcessingTime = TimeSpan.FromSeconds(20);
+        });
+
+        var provider = services.BuildServiceProvider();
+        var registeredOptions = provider.GetRequiredService<TransactionalIntegrationOptions>();
+
+        Assert.Equal("my-pubsub", registeredOptions.DaprPubSubName);
+        Assert.Equal("my-topic", registeredOptions.DaprTopicName);
+        Assert.Equal(TimeSpan.FromSeconds(10), registeredOptions.IdleTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(30), registeredOptions.PostIdleGracePeriod);
+        Assert.Equal(TimeSpan.FromSeconds(20), registeredOptions.MaxMessageProcessingTime);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_ShouldRegisterITopicSubscriber()
+    {
+        // Verifies that ITopicSubscriber is registered as DaprTopicSubscriber
+        var services = GetServices();
+
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        });
+
+        var provider = services.BuildServiceProvider();
+        var topicSubscriber = provider.GetRequiredService<ITopicSubscriber>();
+
+        Assert.NotNull(topicSubscriber);
+        Assert.IsType<DaprTopicSubscriber>(topicSubscriber);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_ShouldRegisterLifecycle_WhenAllDependenciesArePresent()
+    {
+        // Verifies that lifecycle is successfully registered when all dependencies exist
+        var services = GetServices();
+        services.AddSingleton(Substitute.For<IFileAdapter>());
+        services.AddSingleton(Substitute.For<ILoggerFactory>());
+        services.AddSingleton(Substitute.For<ISendPipeline<Context>>());
+        services.AddSingleton(Substitute.For<IReceivePipeline<Context>>());
+
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        });
+
+        var provider = services.BuildServiceProvider();
+        var lifecycle = provider.GetRequiredService<TransactionalIntegrationLifecycle<Context>>();
+
+        Assert.NotNull(lifecycle);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_ShouldHostTheLifecycleOnTheRunToCompletionRunner()
+    {
+        // Verifies that the lifecycle is the run-to-completion job and the shared runner hosts it
+        var services = GetServices();
+        services.AddSingleton(Substitute.For<IFileAdapter>());
+        services.AddSingleton(Substitute.For<ILoggerFactory>());
+        services.AddSingleton(Substitute.For<ISendPipeline<Context>>());
+        services.AddSingleton(Substitute.For<IReceivePipeline<Context>>());
+
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        });
+
+        var provider = services.BuildServiceProvider();
+
+        Assert.NotNull(provider.GetRequiredService<RunToCompletionRunner>());
+        Assert.Same(provider.GetRequiredService<TransactionalIntegrationLifecycle<Context>>(),
+            provider.GetRequiredService<IRunToCompletionJob>());
+        Assert.Equal("orders-integration", provider.GetRequiredService<RunToCompletionOptions>().JobName);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_AppliesRunnerSettings()
+    {
+        // Verifies that the job name and sidecar timeouts are configurable through the runner options
+        var services = GetServices();
+
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        }, job =>
+        {
+            job.JobName = "orders-ti";
+            job.SidecarTimeout = TimeSpan.FromSeconds(5);
+        });
+
+        var jobOptions = services.BuildServiceProvider().GetRequiredService<RunToCompletionOptions>();
+        Assert.Equal("orders-ti", jobOptions.JobName);
+        Assert.Equal(TimeSpan.FromSeconds(5), jobOptions.SidecarTimeout);
+    }
+
+    [Fact]
+    public async Task AddTransactionalIntegration_RegistersAReceivePipelineThatPublishesThroughTheRegisteredEnqueueStep()
+    {
+        // Verifies that the receive side needs no component code: the default receive pipeline
+        // publishes through the registered EnqueueStep, which is how tests swap in a fake
+        var services = GetServices();
+        services.AddLogging();
+        var fake = new FakeEnqueueStep<Context>(new FrameworkOptions { ComponentName = "orders-integration", ServiceNamespace = "example" });
+        services.AddSingleton<EnqueueStep<Context>>(fake);
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        });
+        var provider = services.BuildServiceProvider();
+
+        var pipeline = provider.GetRequiredService<IReceivePipeline<Context>>();
+        var (result, _) = await pipeline.Execute(new SourceItem("order-1.json", "{}"u8.ToArray()),
+            new Context(new Dictionary<string, string>()));
+
+        Assert.IsType<StepResult<SourceItem>.Success>(result);
+        Assert.Equal("order-1.json", Assert.Single(fake.Captured).Item.Id);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_DefaultsTheEnqueueStepToTheDaprTopicEnqueuer()
+    {
+        var services = GetServices();
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        });
+
+        var provider = services.BuildServiceProvider();
+
+        Assert.IsType<DaprTopicEnqueuer<Context>>(provider.GetRequiredService<EnqueueStep<Context>>());
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_KeepsAReceivePipelineTheComponentRegistered()
+    {
+        var services = GetServices();
+        var custom = Substitute.For<IReceivePipeline<Context>>();
+        services.AddSingleton(custom);
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        });
+
+        var provider = services.BuildServiceProvider();
+
+        Assert.Same(custom, provider.GetRequiredService<IReceivePipeline<Context>>());
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_ShouldReturnServiceCollection_ForMethodChaining()
+    {
+        // Verifies that the method returns the service collection for fluent API
+        var services = GetServices();
+
+        var result = services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "test-pubsub";
+            options.DaprTopicName = "test-topic";
+        });
+
+        Assert.Same(services, result);
+    }
+
+    private static ServiceCollection GetServices()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_ => new DaprClientBuilder().Build());
+        services.AddDaprPubSubClient();
+        services.AddIntropyFramework(options =>
+        {
+            options.ComponentName = "orders-integration";
+            options.ServiceNamespace = "example";
+        });
+        return services;
+    }
+}

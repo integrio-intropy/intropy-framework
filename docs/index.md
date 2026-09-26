@@ -20,7 +20,7 @@ dotnet add package Intropy.Framework.Blocks
 # File adapters (SFTP, local, Azure Blob Storage — via Dapr bindings)
 dotnet add package Intropy.Framework.Adapters
 
-# Hosting (TransactionalIntegrationRunner, Dapr sidecar lifecycle — includes Blocks)
+# Hosting (RunToCompletionRunner, Dapr sidecar lifecycle — includes Blocks)
 dotnet add package Intropy.Framework.Hosting
 
 # Event dispatcher (attribute-based CloudEvent routing to typed handlers)

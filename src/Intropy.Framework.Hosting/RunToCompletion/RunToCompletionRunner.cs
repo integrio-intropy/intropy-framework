@@ -41,17 +41,18 @@ public class RunToCompletionRunner
     /// </summary>
     /// <param name="ct">
     /// A cancellation token owned by the host's entry point (e.g. wired to SIGTERM).
-    /// Cancellation maps to a success exit code by design: jobs are idempotent.
+    /// Host cancellation maps to a success exit code by design: jobs are idempotent. An
+    /// OperationCanceledException the host did not request is a job failure.
     /// </param>
     /// <returns>
-    /// 0 on success or cancellation, 1 on job failure, 2 on infrastructure failure.
+    /// 0 on success or host cancellation, 1 on job failure, 2 on infrastructure failure.
     /// See <see cref="RunToCompletionExitCodes"/>.
     /// </returns>
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
         try
         {
-            await DaprSidecarManager.WaitAsync(_daprClient, _options.SidecarTimeoutSeconds, _logger, ct);
+            await DaprSidecarManager.WaitAsync(_daprClient, _options.SidecarTimeout, _logger, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -60,8 +61,8 @@ public class RunToCompletionRunner
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Dapr sidecar did not become available within {TimeoutSeconds} seconds",
-                _options.SidecarTimeoutSeconds);
+            _logger.LogError(e, "Dapr sidecar did not become available within {Timeout} seconds",
+                _options.SidecarTimeout.TotalSeconds);
             return RunToCompletionExitCodes.InfrastructureFailure;
         }
 
@@ -72,21 +73,22 @@ public class RunToCompletionRunner
             var summary = await _job.ExecuteAsync(ct);
 
             _logger.LogInformation(
-                "Job {JobName} completed: {Processed} processed, {Failed} failed, {Cancelled} cancelled",
-                _options.JobName, summary.Processed, summary.Failed, summary.Cancelled);
+                "Job {JobName} completed: {Processed} processed, {Failed} failed, {Skipped} skipped",
+                _options.JobName, summary.Processed, summary.Failed, summary.Skipped);
 
             activity?.SetTag("job.processed", summary.Processed);
             activity?.SetTag("job.failed", summary.Failed);
-            activity?.SetTag("job.cancelled", summary.Cancelled);
+            activity?.SetTag("job.skipped", summary.Skipped);
 
             return summary.Failed > 0
                 ? RunToCompletionExitCodes.JobFailure
                 : RunToCompletionExitCodes.Success;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Cancellation is not failure by design: the job decided it does not need to
-            // process (e.g. duplicates detected), or the host aborted an idempotent job.
+            // Host cancellation is not failure by design: the job is idempotent. A cancellation
+            // the host did not request falls through to the job-failure catch below, so a stray
+            // OperationCanceledException can never report a failed run as success.
             _logger.LogInformation("Job {JobName} was cancelled", _options.JobName);
             return RunToCompletionExitCodes.Success;
         }
@@ -98,7 +100,7 @@ public class RunToCompletionRunner
         }
         finally
         {
-            await DaprSidecarManager.ShutdownAsync(_daprClient, _options.SidecarShutdownTimeoutSeconds, _logger);
+            await DaprSidecarManager.ShutdownAsync(_daprClient, _options.SidecarShutdownTimeout, _logger);
         }
     }
 }

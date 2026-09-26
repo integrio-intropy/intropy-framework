@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Core.Configuration;
@@ -7,10 +8,18 @@ using NSubstitute;
 
 namespace Intropy.Framework.Blocks.Test.TransactionalIntegration.Receive;
 
+/// <summary>
+/// The receive pipeline publishes one source item; the file sweep that runs it reads the source
+/// before and completes it after. A failed publish must surface as a failure, so the sweep keeps
+/// the source.
+/// </summary>
 public class ReceivePipelineTests
 {
+    // PipelineTracing (Intropy.Framework.Core) starts the pipeline spans.
+    private const string PipelineActivitySource = "Intropy.Framework.Core";
+
     private readonly IBusinessIncidentServiceClient _businessIncidentServiceClient;
-    private readonly FrameworkOptions _frameworkOptions = new() { ComponentName = "Test",  ServiceNamespace = "Org" };
+    private readonly FrameworkOptions _frameworkOptions = new() { ComponentName = "Test", ServiceNamespace = "Org" };
     private readonly ILoggerFactory _loggerFactory = Substitute.For<ILoggerFactory>();
 
     public ReceivePipelineTests()
@@ -25,76 +34,70 @@ public class ReceivePipelineTests
     }
 
     [Fact]
-    public async Task Execute_WithSuccessfulSteps_ReturnsSuccess()
+    public async Task Execute_WithSuccessfulEnqueue_ReturnsSuccessAndPublishesTheItem()
     {
         // Arrange
+        var enqueuer = new SuccessfulEnqueuer(_frameworkOptions);
         var pipeline = GetPipelineBuilder()
-            .WithReceiver(new SuccessfulReceiver())
-            .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
-            .WithCompleter(new SuccessfulCompleter())
+            .WithEnqueuer(enqueuer)
             .WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"),
                 ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"))
             .Build();
 
-        var itemInfo = new SourceItemInfo("test-file.txt");
-        var context = ReceiveContext.Create();
-
         // Act
-        var (result, _) = await pipeline.Execute(itemInfo, context);
+        var (result, _) = await pipeline.Execute(Item("test-file.txt"), ReceiveContext.Create());
 
         // Assert
         Assert.IsType<StepResult<SourceItem>.Success>(result);
-        // Note: The BusinessIncidentRouter finalizer returns a default value on success,
-        // not the original value from the pipeline. This is the expected behavior.
+        Assert.Equal("test-file.txt", Assert.Single(enqueuer.Published).Id);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Execute_TracesAsItsOwnTraceLinkedToTheCaller_OnlyWhenDetached(bool detachTrace)
+    {
+        // Verifies that a detached execution starts a new trace linked to the caller's span, and
+        // an attached one continues the caller's trace
+        using var parentSource = new ActivitySource($"receive-test-{Guid.NewGuid()}");
+        var activities = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == parentSource || source.Name == PipelineActivitySource,
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (activities) activities.Add(activity); }
+        };
+        ActivitySource.AddActivityListener(listener);
+        var pipeline = GetPipelineBuilder().WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions)).Build();
+
+        Activity parent;
+        using (parent = parentSource.StartActivity("job")!)
+            await pipeline.Execute(Item("test-file.txt"), ReceiveContext.Create(), detachTrace);
+
+        Activity[] captured;
+        lock (activities) captured = [.. activities];
+        var execution = Assert.Single(captured, a => a.DisplayName.StartsWith("Pipeline.", StringComparison.Ordinal) &&
+            (a.TraceId == parent.TraceId || a.Links.Any(l => l.Context.SpanId == parent.SpanId)));
+        Assert.Equal(detachTrace, execution.TraceId != parent.TraceId);
+        Assert.Equal(detachTrace, execution.Links.Any(l => l.Context.SpanId == parent.SpanId));
     }
 
     [Fact]
-    public async Task Execute_WhenReceiveFails_RoutesBusinessIncident()
+    public async Task Execute_WhenEnqueueFails_ReturnsTechnicalFailureWithoutRoutingAnIncident()
     {
         // Arrange
         var pipeline = GetPipelineBuilder()
-            .WithReceiver(new FailingReceiver())
-            .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
-            .WithCompleter(new SuccessfulCompleter())
+            .WithEnqueuer(new FailingEnqueuer(_frameworkOptions))
             .WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"),
                 ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"))
             .Build();
 
-        var itemInfo = new SourceItemInfo("missing-file.txt");
-        var context = ReceiveContext.Create();
-        context.Metadata["sourceItemId"] = "missing-file.txt";
-
         // Act
-        var (result, _) = await pipeline.Execute(itemInfo, context);
+        var (result, _) = await pipeline.Execute(Item("test-file.txt"), ReceiveContext.Create());
 
-        // Assert - business incident routed, so result becomes Success (incident was handled)
-        Assert.IsType<StepResult<SourceItem>.Success>(result);
-        await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
-            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-    }
-
-    [Fact]
-    public async Task Execute_WhenCompleteFails_RoutesBusinessIncident()
-    {
-        // Arrange
-        var pipeline = GetPipelineBuilder()
-            .WithReceiver(new SuccessfulReceiver())
-            .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
-            .WithCompleter(new FailingCompleter())
-            .WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"),
-                ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"))
-            .Build();
-
-        var itemInfo = new SourceItemInfo("test-file.txt");
-        var context = ReceiveContext.Create();
-        context.Metadata["sourceItemId"] = "test-file.txt";
-
-        // Act
-        var (result, _) = await pipeline.Execute(itemInfo, context);
-
-        // Assert - business incident routed for complete failure
-        Assert.IsType<StepResult<SourceItem>.Success>(result);
-        await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+        // Assert - a technical failure is not a business incident; the sweep keeps the source
+        Assert.IsType<StepResult<SourceItem>.TechnicalFailure>(result);
+        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
 
@@ -103,72 +106,35 @@ public class ReceivePipelineTests
     {
         // Arrange
         var pipeline = GetPipelineBuilder()
-            .WithReceiver(new SuccessfulReceiver())
             .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
-            .WithCompleter(new SuccessfulCompleter())
             .Build();
 
-        var itemInfo = new SourceItemInfo("test-file.txt");
-        var context = ReceiveContext.Create();
-
         // Act
-        var (result, _) = await pipeline.Execute(itemInfo, context);
+        var (result, _) = await pipeline.Execute(Item("test-file.txt"), ReceiveContext.Create());
 
         // Assert
         Assert.IsType<StepResult<SourceItem>.Success>(result);
-        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
-            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-    }
-
-    [Fact]
-    public async Task Execute_WithoutBusinessIncidents_WhenReceiveFails_ReturnsBusinessFailure()
-    {
-        // Arrange
-        var pipeline = GetPipelineBuilder()
-            .WithReceiver(new FailingReceiver())
-            .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
-            .WithCompleter(new SuccessfulCompleter())
-            .Build();
-
-        var itemInfo = new SourceItemInfo("missing-file.txt");
-        var context = ReceiveContext.Create();
-
-        // Act
-        var (result, _) = await pipeline.Execute(itemInfo, context);
-
-        // Assert - no router means the failure surfaces instead of being routed
-        Assert.IsType<StepResult<SourceItem>.BusinessFailure>(result);
-        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
-            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
 
     [Fact]
     public async Task Execute_ProcessesMultipleItems()
     {
         // Arrange
-        var pipeline = GetPipelineBuilder()
-            .WithReceiver(new SuccessfulReceiver())
-            .WithEnqueuer(new SuccessfulEnqueuer(_frameworkOptions))
-            .WithCompleter(new SuccessfulCompleter())
-            .WithBusinessIncidents(_businessIncidentServiceClient, ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"),
-                ctx => ctx.Metadata.GetValueOrDefault("sourceItemId", "unknown"))
-            .Build();
+        var enqueuer = new SuccessfulEnqueuer(_frameworkOptions);
+        var pipeline = GetPipelineBuilder().WithEnqueuer(enqueuer).Build();
 
-        var items = new[]
+        // Act
+        foreach (var name in new[] { "file1.txt", "file2.txt", "file3.txt" })
         {
-            new SourceItemInfo("file1.txt"),
-            new SourceItemInfo("file2.txt"),
-            new SourceItemInfo("file3.txt")
-        };
-
-        // Act & Assert
-        foreach (var item in items)
-        {
-            var context = ReceiveContext.Create();
-            var (result, _) = await pipeline.Execute(item, context);
+            var (result, _) = await pipeline.Execute(Item(name), ReceiveContext.Create());
             Assert.IsType<StepResult<SourceItem>.Success>(result);
         }
+
+        // Assert
+        Assert.Equal(["file1.txt", "file2.txt", "file3.txt"], enqueuer.Published.Select(item => item.Id));
     }
+
+    private static SourceItem Item(string id) => new(id, "test-content"u8.ToArray());
 
     private ReceivePipelineBuilder<ReceiveContext> GetPipelineBuilder()
     {

@@ -11,16 +11,16 @@ namespace Intropy.Framework.Hosting.Common;
 internal static class DaprSidecarManager
 {
     /// <summary>
-    /// Waits for the Dapr sidecar to become available, bounded by <paramref name="timeoutSeconds"/>.
+    /// Waits for the Dapr sidecar to become available, bounded by <paramref name="timeout"/>.
     /// </summary>
     public static async Task WaitAsync(
         DaprClient daprClient,
-        int timeoutSeconds,
+        TimeSpan timeout,
         ILogger logger,
         CancellationToken ct = default)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
+        timeoutCts.CancelAfter(timeout);
 
         try
         {
@@ -29,25 +29,25 @@ internal static class DaprSidecarManager
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             throw new TimeoutException(
-                $"Dapr sidecar did not become available within {timeoutSeconds} seconds");
+                $"Dapr sidecar did not become available within {timeout.TotalSeconds} seconds");
         }
     }
 
     /// <summary>
-    /// Shuts down the Dapr sidecar, bounded by <paramref name="timeoutSeconds"/>.
+    /// Shuts down the Dapr sidecar, bounded by <paramref name="timeout"/>.
     /// Never throws: shutdown failure must not mask the job's actual outcome.
     /// </summary>
-    public static async Task ShutdownAsync(DaprClient daprClient, int timeoutSeconds, ILogger logger)
+    public static async Task ShutdownAsync(DaprClient daprClient, TimeSpan timeout, ILogger logger)
     {
         try
         {
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+            using var timeoutCts = new CancellationTokenSource(timeout);
             await daprClient.ShutdownSidecarAsync(timeoutCts.Token);
         }
         catch (OperationCanceledException)
         {
-            logger.LogWarning("Dapr sidecar shutdown did not complete within {TimeoutSeconds} seconds",
-                timeoutSeconds);
+            logger.LogWarning("Dapr sidecar shutdown did not complete within {Timeout} seconds",
+                timeout.TotalSeconds);
         }
         catch (Exception e)
         {

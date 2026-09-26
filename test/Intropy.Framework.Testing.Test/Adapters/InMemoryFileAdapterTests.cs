@@ -17,9 +17,9 @@ public class InMemoryFileAdapterTests
 
         foreach (var file in listed)
         {
-            var content = await adapter.GetContentAsync(file.FileName);
+            var content = await adapter.GetContentAsync(file.Name);
             Assert.NotEmpty(content);
-            await adapter.DeleteAsync(file.FileName);
+            await adapter.DeleteAsync(file.Name);
         }
 
         Assert.Empty(await adapter.ListAsync());
@@ -45,7 +45,7 @@ public class InMemoryFileAdapterTests
         await Assert.ThrowsAsync<FileNotFoundException>(Throws);
         return;
 
-        async Task<string?> Throws() => await adapter.GetContentAsync("missing.txt", Encoding.UTF8);
+        async Task<string> Throws() => await adapter.GetContentAsync("missing.txt", Encoding.UTF8);
     }
 
     [Fact]
@@ -57,6 +57,36 @@ public class InMemoryFileAdapterTests
         var content = await adapter.GetContentAsync("data.txt", Encoding.Unicode);
 
         Assert.Equal("unicode content", content);
+    }
+
+    [Fact]
+    public async Task GetContentAsync_WithEncoding_EmptyFile_ReadsAsEmptyString()
+    {
+        var adapter = new InMemoryFileAdapter().AddFile("empty.txt", []);
+
+        var content = await adapter.GetContentAsync("empty.txt", Encoding.UTF8);
+
+        Assert.Equal(string.Empty, content);
+    }
+
+    [Fact]
+    public async Task PreCancelledToken_ThrowsOperationCanceled_FromEveryMethod()
+    {
+        var adapter = new InMemoryFileAdapter()
+            .AddFile("a.txt", "alpha")
+            .AddFile("unreadable.txt", "beta");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.ListAsync(cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetContentAsync("a.txt", cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetContentAsync("a.txt", Encoding.UTF8, cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.WriteAsync("w.txt", new byte[] { 1 }, ct: cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.WriteAsync("w.txt", "content", Encoding.UTF8, ct: cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.DeleteAsync("a.txt", cts.Token));
+
+        // Nothing was written or removed — cancellation happens before the store is touched.
+        Assert.Equal(2, adapter.Files.Count);
     }
 
     [Fact]
@@ -117,7 +147,7 @@ public class InMemoryFileAdapterTests
             ReadException = new InvalidOperationException("source is dead"),
         }.AddFile("a.txt", "alpha");
 
-        await Assert.ThrowsAsync<InvalidOperationException>(adapter.ListAsync);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => adapter.ListAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(GetThrows);
 
         adapter.ReadException = null;
@@ -185,7 +215,7 @@ public class InMemoryFileAdapterTests
         await Assert.ThrowsAsync<IOException>(UnreadableThrows);
         return;
 
-        async Task<string?> UnreadableThrows() => await adapter.GetContentAsync("corrupt.txt", Encoding.UTF8);
+        async Task<string> UnreadableThrows() => await adapter.GetContentAsync("corrupt.txt", Encoding.UTF8);
     }
 
     [Fact]
@@ -253,7 +283,7 @@ public class InMemoryFileAdapterTests
         Assert.Equal(
             ["archive/c.txt", "inbox/a.txt", "inbox/b.txt", "loose.txt"],
             adapter.Files.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase));
-        Assert.Equal(["a.txt", "b.txt"], listed.Select(f => f.FileName).OrderBy(n => n));
+        Assert.Equal(["a.txt", "b.txt"], listed.Select(f => f.Name).OrderBy(n => n));
     }
 
     [Fact]
@@ -264,7 +294,7 @@ public class InMemoryFileAdapterTests
 
         var listed = await adapter.ListAsync();
 
-        Assert.Equal("a.txt", Assert.Single(listed).FileName);
+        Assert.Equal("a.txt", Assert.Single(listed).Name);
     }
 
     [Fact]
@@ -278,6 +308,6 @@ public class InMemoryFileAdapterTests
 
         Assert.Equal(
             ["inbox/a.txt", "loose.txt"],
-            listed.Select(f => f.FileName).OrderBy(n => n));
+            listed.Select(f => f.Name).OrderBy(n => n));
     }
 }

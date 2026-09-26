@@ -157,9 +157,7 @@ The Blocks package provides pre-named step abstractions for common integration p
 
 | Abstract class | Base class | Input → Output |
 |---|---|---|
-| `ReceiveStep<TCtx>` | `BusinessStep<SourceItemInfo, SourceItem, TCtx>` | Read source item content |
 | `EnqueueStep<TCtx>` | `TechnicalStep<SourceItem, SourceItem, TCtx>` | Publish to message queue |
-| `CompleteStep<TCtx>` | `BusinessStep<SourceItem, SourceItem, TCtx>` | Cleanup after enqueue |
 
 ### Extractor steps
 

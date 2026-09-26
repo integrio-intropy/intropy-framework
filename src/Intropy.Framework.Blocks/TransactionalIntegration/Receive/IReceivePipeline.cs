@@ -4,18 +4,22 @@ using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 namespace Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 
 /// <summary>
-/// A pipeline used on the receive side of a Transactional Integration
+/// The receive side of a Transactional Integration: publishes one source item to the
+/// integration's queue. Reading the source and completing it (delete or archive) belong to the
+/// file sweep that runs the pipeline, which completes an item only after this pipeline succeeds.
 /// </summary>
-/// <typeparam name="TCtx"></typeparam>
+/// <typeparam name="TCtx">The type of the context used in the pipeline.</typeparam>
 public interface IReceivePipeline<TCtx> where TCtx : Context
 {
     /// <summary>
     /// Executes the pipeline for a single source item.
     /// </summary>
-    /// <param name="itemInfo">Information about the item to process.</param>
+    /// <param name="item">The source item and its content.</param>
     /// <param name="context">The context to use in the execution.</param>
+    /// <param name="detachTrace">When true (the default), the execution is its own trace, linked to
+    /// the current one; when false, it continues the current trace.</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution.</param>
     /// <returns>A tuple of the final result of the pipeline execution and the final context.</returns>
-    Task<(StepResult<SourceItem> Result, TCtx Context)> Execute(SourceItemInfo itemInfo,
-        TCtx context, CancellationToken ct = default);
+    Task<(StepResult<SourceItem> Result, TCtx Context)> Execute(SourceItem item,
+        TCtx context, bool detachTrace = true, CancellationToken ct = default);
 }

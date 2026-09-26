@@ -24,5 +24,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
+    <ProjectReference Include="..\..\src\Intropy.Framework.Testing\Intropy.Framework.Testing.csproj" />
   </ItemGroup>
 </Project>

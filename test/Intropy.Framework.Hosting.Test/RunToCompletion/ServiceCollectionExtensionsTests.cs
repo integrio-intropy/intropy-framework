@@ -1,4 +1,5 @@
 using Dapr.Client;
+using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.RunToCompletion;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -21,30 +22,34 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddRunToCompletionJob_ShouldThrowArgumentNullException_WhenConfigureOptionsIsNull()
+    public void AddRunToCompletionJob_DefaultsTheJobNameToTheComponentName()
     {
-        // Verifies that null configuration action is rejected
+        // Verifies that every job is named after its component unless JobName overrides it
         var services = GetServices();
+        services.AddIntropyFramework(options =>
+        {
+            options.ComponentName = "orders-import";
+            options.ServiceNamespace = "example";
+        });
 
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            services.AddRunToCompletionJob<TestJob>(null!));
+        services.AddRunToCompletionJob<TestJob>();
 
-        Assert.Equal("configureOptions", exception.ParamName);
+        var provider = services.BuildServiceProvider();
+        Assert.Equal("orders-import", provider.GetRequiredService<RunToCompletionOptions>().JobName);
     }
 
     [Fact]
-    public void AddRunToCompletionJob_ShouldThrowInvalidOperationException_WhenJobNameIsNotConfigured()
+    public void AddRunToCompletionJob_WithoutJobNameOrComponentName_FailsWhenResolved()
     {
-        // Verifies that JobName is required
+        // Verifies that a job never runs unnamed
         var services = GetServices();
+        services.AddRunToCompletionJob<TestJob>();
 
+        var provider = services.BuildServiceProvider();
         var exception = Assert.Throws<InvalidOperationException>(() =>
-            services.AddRunToCompletionJob<TestJob>(_ =>
-            {
-                // JobName intentionally not set
-            }));
+            provider.GetRequiredService<RunToCompletionOptions>());
 
-        Assert.Equal("JobName must be configured.", exception.Message);
+        Assert.Contains("AddIntropyFramework", exception.Message);
     }
 
     [Fact]
@@ -56,16 +61,16 @@ public class ServiceCollectionExtensionsTests
         services.AddRunToCompletionJob<TestJob>(options =>
         {
             options.JobName = "my-job";
-            options.SidecarTimeoutSeconds = 15;
-            options.SidecarShutdownTimeoutSeconds = 5;
+            options.SidecarTimeout = TimeSpan.FromSeconds(15);
+            options.SidecarShutdownTimeout = TimeSpan.FromSeconds(5);
         });
 
         var provider = services.BuildServiceProvider();
         var registeredOptions = provider.GetRequiredService<RunToCompletionOptions>();
 
         Assert.Equal("my-job", registeredOptions.JobName);
-        Assert.Equal(15, registeredOptions.SidecarTimeoutSeconds);
-        Assert.Equal(5, registeredOptions.SidecarShutdownTimeoutSeconds);
+        Assert.Equal(TimeSpan.FromSeconds(15), registeredOptions.SidecarTimeout);
+        Assert.Equal(TimeSpan.FromSeconds(5), registeredOptions.SidecarShutdownTimeout);
     }
 
     [Fact]

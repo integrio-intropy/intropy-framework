@@ -18,9 +18,7 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     private readonly FrameworkOptions _frameworkOptions;
     private readonly ILogger _logger;
 
-    private ReceiveStep<TCtx>? _receiver;
     private EnqueueStep<TCtx>? _enqueuer;
-    private CompleteStep<TCtx>? _completer;
     private BusinessIncidentRouteStep<SourceItem, TCtx>? _businessIncidentRouter;
 
     private ReceivePipelineBuilder(string pipelineName, FrameworkOptions frameworkOptions,
@@ -51,18 +49,6 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     }
 
     /// <summary>
-    /// Configures the receive step that reads content from the source.
-    /// </summary>
-    /// <param name="receiver">The <see cref="ReceiveStep{TCtx}"/> that reads content.</param>
-    /// <returns>The builder for method chaining.</returns>
-    public ReceivePipelineBuilder<TCtx> WithReceiver(ReceiveStep<TCtx> receiver)
-    {
-        ArgumentNullException.ThrowIfNull(receiver);
-        _receiver = receiver;
-        return this;
-    }
-
-    /// <summary>
     /// Configures the enqueue step that publishes content to the queue.
     /// </summary>
     /// <param name="enqueuer">The <see cref="EnqueueStep{TCtx}"/> that publishes content.</param>
@@ -71,18 +57,6 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(enqueuer);
         _enqueuer = enqueuer;
-        return this;
-    }
-
-    /// <summary>
-    /// Configures the complete step that handles cleanup.
-    /// </summary>
-    /// <param name="completer">The <see cref="CompleteStep{TCtx}"/> that handles cleanup.</param>
-    /// <returns>The builder for method chaining.</returns>
-    public ReceivePipelineBuilder<TCtx> WithCompleter(CompleteStep<TCtx> completer)
-    {
-        ArgumentNullException.ThrowIfNull(completer);
-        _completer = completer;
         return this;
     }
 
@@ -136,19 +110,13 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     {
         // Business incident routing is optional and is skipped at runtime when not configured
         // (see ReceivePipeline using AddOptionalFinalizer).
-        if (_receiver == null)
-            throw new InvalidOperationException($"{nameof(ReceiveStep<TCtx>)} must be configured");
         if (_enqueuer == null)
             throw new InvalidOperationException($"{nameof(EnqueueStep<TCtx>)} must be configured");
-        if (_completer == null)
-            throw new InvalidOperationException($"{nameof(CompleteStep<TCtx>)} must be configured");
 
         return new ReceivePipeline<TCtx>(
             _pipelineName,
             _logger,
-            _receiver,
             _enqueuer,
-            _completer,
             _businessIncidentRouter
         );
     }
