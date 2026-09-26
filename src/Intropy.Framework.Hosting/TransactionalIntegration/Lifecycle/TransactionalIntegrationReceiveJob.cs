@@ -26,7 +26,7 @@ internal sealed class TransactionalIntegrationReceiveJob<TCtx>(
         SweptFile file, TCtx context, CancellationToken ct)
     {
         var item = new SourceItem(file.Name, await file.ReadAsync(ct));
-        var (result, _) = await pipeline.Execute(item, context, detachTrace: true, ct);
+        var (result, _) = await pipeline.Execute(item, context, detachTrace: false, ct);
         return result;
     }
 }

@@ -314,6 +314,77 @@ public class MessageSubscriberTests
             return Assert.Single(stopped, a => a.DisplayName == "MessageReceived" && a.TraceId == traceId);
     }
 
+    public static TheoryData<string?> MissingOrInvalidTraceParents => new() { null, "", "not-a-traceparent" };
+
+    [Theory]
+    [MemberData(nameof(MissingOrInvalidTraceParents))]
+    public async Task HandleMessage_StartsANewTrace_WhenTheMessageCarriesNoValidTraceContext(string? traceParent)
+    {
+        // Even when a span (such as the job's) is current on the delivering thread, a message
+        // without trace context is its own unit of work, not part of that span's trace.
+        using var jobSource = new ActivitySource($"subscriber-tracing-test-{Guid.NewGuid()}");
+        using var listener = ListenTo(jobSource);
+        var extensions = traceParent is null
+            ? new Dictionary<string, Value>()
+            : new Dictionary<string, Value> { ["traceparent"] = Value.ForString(traceParent) };
+
+        using var job = jobSource.StartActivity("job")!;
+        var consumer = await CaptureSpanDuringPipelineAsync(CreateTopicMessage("test-id", "data"u8.ToArray(), extensions));
+
+        Assert.NotNull(consumer);
+        Assert.Equal("MessageReceived", consumer.DisplayName);
+        Assert.Equal(ActivityKind.Consumer, consumer.Kind);
+        Assert.Equal(default, consumer.ParentSpanId);
+        Assert.NotEqual(job.TraceId, consumer.TraceId);
+        Assert.Same(job, Activity.Current);
+    }
+
+    [Fact]
+    public async Task HandleMessage_ContinuesThePropagatedTrace_WhenTheMessageCarriesOne()
+    {
+        using var listener = ListenTo(null);
+        var traceId = ActivityTraceId.CreateRandom();
+        var parentSpanId = ActivitySpanId.CreateRandom();
+        var extensions = new Dictionary<string, Value>
+        {
+            ["traceparent"] = Value.ForString($"00-{traceId}-{parentSpanId}-01")
+        };
+
+        var consumer = await CaptureSpanDuringPipelineAsync(CreateTopicMessage("test-id", "data"u8.ToArray(), extensions));
+
+        Assert.NotNull(consumer);
+        Assert.Equal(traceId, consumer.TraceId);
+        Assert.Equal(parentSpanId, consumer.ParentSpanId);
+        Assert.True(consumer.HasRemoteParent);
+    }
+
+    /// <summary>Delivers <paramref name="message"/> and returns the span current while the send
+    /// pipeline ran: the consumer span.</summary>
+    private async Task<Activity?> CaptureSpanDuringPipelineAsync(TopicMessage message)
+    {
+        Activity? current = null;
+        _messageHandler.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+            .Returns(_ =>
+            {
+                current = Activity.Current;
+                return ((StepResult<string>)new StepResult<string>.Success(""), new Context(new Dictionary<string, string>()));
+            });
+
+        await InvokeMessageHandler(_topicSubscriber, message);
+        return current;
+    }
+
+    private static ActivityListener ListenTo(ActivitySource? testSource)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == testSource || source.Name == "Intropy.Framework.Hosting",
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
+    }
+
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);
 
     private async Task<TopicResponseAction> InvokeMessageHandler(

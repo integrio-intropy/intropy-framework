@@ -144,7 +144,10 @@ services.AddSingleton<IBusinessIncidentServiceClient>(new FakeBusinessIncidentSe
 | `Aborted` without a host cancellation | Kept | `Failed` |
 | Listing fails or composition is invalid | — | The job fails |
 
-Each file is its own trace, linked to the job's span. Any `Failed` file makes the run exit 1; the kept file is retried on the next run. Host
+Each file is its own trace: a `process <source port>` root span, linked to the job's span,
+holding the file's read, its pipeline and its completion. It is tagged with the file name and
+its outcome, and marked as an error when the file is kept. Logs written while a file is processed
+carry `FileName` and `SourcePort` as a logging scope. Any `Failed` file makes the run exit 1; the kept file is retried on the next run. Host
 cancellation is checked before listing and before each file; in-flight work is always awaited.
 Delivery is at-least-once: a crash after publishing but before the idempotency record means the
 next run may publish the file again.

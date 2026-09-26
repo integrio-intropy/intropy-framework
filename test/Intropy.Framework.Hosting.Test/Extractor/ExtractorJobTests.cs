@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
@@ -23,9 +22,6 @@ namespace Intropy.Framework.Hosting.Test.Extractor;
 /// </summary>
 public class ExtractorJobTests
 {
-    // PipelineTracing (Intropy.Framework.Core) starts the pipeline spans.
-    private const string PipelineActivitySource = "Intropy.Framework.Core";
-
     private const string ValidInput =
         """{"Id":"input-42","Version":"2026-01-15T09:30:00+00:00","Valid":true}""";
     private const string InvalidInput =
@@ -78,37 +74,6 @@ public class ExtractorJobTests
         Assert.Single(fakes.Topic.Events);
         Assert.False(fakes.Files.Files.ContainsKey("order-1.json"));
         Assert.Equal(ValidInput, fakes.Files.GetString("archive", "order-1.json"));
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_TracesEachFileAsItsOwnTraceLinkedToTheJob()
-    {
-        using var jobSource = new ActivitySource($"extractor-job-test-{Guid.NewGuid()}");
-        var activities = new List<Activity>();
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = source => source == jobSource || source.Name == PipelineActivitySource,
-            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity => { lock (activities) activities.Add(activity); }
-        };
-        ActivitySource.AddActivityListener(listener);
-        var fakes = new ExtractorSweepTestProcess.SweepFakes();
-        fakes.Files.AddFile("order-1.json", ValidInput);
-        fakes.Files.AddFile("order-2.json", ValidInput.Replace("input-42", "input-43"));
-        var sweep = CreateSweep(fakes.CreateServices());
-
-        Activity job;
-        using (job = jobSource.StartActivity("job")!)
-            await sweep.ExecuteAsync(CancellationToken.None);
-
-        Activity[] captured;
-        lock (activities) captured = [.. activities];
-        var files = captured.Where(a => a.DisplayName == "Pipeline.orders-extractor.Process" &&
-            a.Links.Any(l => l.Context.SpanId == job.SpanId)).ToList();
-        Assert.Equal(2, files.Count);
-        Assert.All(files, file => Assert.NotEqual(job.TraceId, file.TraceId));
-        Assert.NotEqual(files[0].TraceId, files[1].TraceId);
-        Assert.DoesNotContain(captured, a => a.DisplayName == "Pipeline.orders-extractor.Process" && a.TraceId == job.TraceId);
     }
 
     [Fact]

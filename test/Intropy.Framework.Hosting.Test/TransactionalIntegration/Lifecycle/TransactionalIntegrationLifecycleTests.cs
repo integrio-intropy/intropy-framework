@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dapr.Messaging.PublishSubscribe;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
@@ -101,16 +102,31 @@ public class TransactionalIntegrationLifecycleTests
     [Fact]
     public async Task ExecuteAsync_RunsEachFileAsItsOwnTrace()
     {
-        // Verifies that the receive side traces files the same way extractors do: each file is
-        // its own trace, linked to the job
+        // Verifies that the receive side traces files the same way extractors do: the receive
+        // pipeline continues the file's own trace (whose root the sweep links to the job), so the
+        // trace carries on through the queue
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "Intropy.Framework.Hosting",
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
+        };
+        ActivitySource.AddActivityListener(listener);
         var source = new InMemoryFileAdapter().AddFile("file1.txt", "one");
+        Activity? current = null;
         _receivePipeline.Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo => (new StepResult<SourceItem>.Success(callInfo.Arg<SourceItem>()), callInfo.Arg<Context>()));
+            .Returns(callInfo =>
+            {
+                current = Activity.Current;
+                return (new StepResult<SourceItem>.Success(callInfo.Arg<SourceItem>()), callInfo.Arg<Context>());
+            });
 
         await Lifecycle(source).ExecuteAsync(CancellationToken.None);
 
-        await _receivePipeline.Received(1).Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), true,
+        await _receivePipeline.Received(1).Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), false,
             Arg.Any<CancellationToken>());
+        Assert.NotNull(current);
+        Assert.StartsWith("process ", current.DisplayName);
+        Assert.Equal("file1.txt", current.GetTagItem("intropy.file.name"));
     }
 
     [Fact]

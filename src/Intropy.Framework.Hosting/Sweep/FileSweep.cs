@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Intropy.Framework.Adapters.Common;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Hosting.RunToCompletion;
+using Intropy.Framework.Hosting.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -31,6 +33,14 @@ namespace Intropy.Framework.Hosting.Sweep;
 /// <para>
 /// Delivery is at-least-once: a crash after the handler published but before completion means
 /// the next run handles the file again.
+/// </para>
+/// <para>
+/// Tracing: each file is its own trace, rooted in a <c>process {sourcePort}</c> span linked to
+/// the span current when the sweep started (the job's), so a large sweep is not one oversized
+/// trace. The file's read, its handling and its completion are all in that trace, and so is
+/// every log written while the file is processed, which also carries the file name as a logging
+/// scope. A handler continues the file's trace rather than detaching from it, so the trace can
+/// continue downstream (through the queue, for a Transactional Integration).
 /// </para>
 /// </remarks>
 /// <param name="provider">The root provider: the source adapter and every file scope come from it.</param>
@@ -181,6 +191,67 @@ public sealed class FileSweep(
         Func<SweptFile, CancellationToken, Task<SweepOutcome>> handleFile,
         CancellationToken ct)
     {
+        var runActivity = Activity.Current;
+        var activity = StartFileActivity(runActivity, fileName);
+        try
+        {
+            using var logScope = _logger.BeginScope(new Dictionary<string, object>
+            {
+                ["FileName"] = fileName,
+                ["SourcePort"] = sourcePort
+            });
+            var outcome = await ProcessFileInScopeAsync(state, source, fileName, handleFile, activity, ct);
+            RecordOutcome(activity, outcome);
+            return outcome;
+        }
+        finally
+        {
+            activity?.Dispose();
+            Activity.Current = runActivity;
+        }
+    }
+
+    /// <summary>Starts the root span of the file's own trace, linked to the run's span.</summary>
+    private Activity? StartFileActivity(Activity? runActivity, string fileName)
+    {
+        Activity.Current = null;
+        var activity = ActivitySourceProvider.ActivitySource.StartActivity(
+            $"process {sourcePort}",
+            ActivityKind.Internal,
+            parentContext: default,
+            links: runActivity is null ? null : [new ActivityLink(runActivity.Context)]);
+        activity?.SetTag("intropy.component.name", componentName);
+        activity?.SetTag("intropy.source.port", sourcePort);
+        activity?.SetTag("intropy.file.name", fileName);
+        return activity;
+    }
+
+    /// <summary>Tags the file's outcome. A file left in place is an error of its trace; a more
+    /// specific status already set while processing it is kept.</summary>
+    private static void RecordOutcome(Activity? activity, SweepOutcome outcome)
+    {
+        if (activity is null)
+            return;
+
+        activity.SetTag("intropy.sweep.outcome", outcome switch
+        {
+            SweepOutcome.Consumed => "consumed",
+            SweepOutcome.Duplicate => "duplicate",
+            SweepOutcome.Aborted => "aborted",
+            _ => "failed"
+        });
+        if (outcome is SweepOutcome.Failed && activity.Status == ActivityStatusCode.Unset)
+            activity.SetStatus(ActivityStatusCode.Error, "The file was not handled; it stays for the next run");
+    }
+
+    private async Task<SweepOutcome> ProcessFileInScopeAsync(
+        SweepState state,
+        IFileAdapter source,
+        string fileName,
+        Func<SweptFile, CancellationToken, Task<SweepOutcome>> handleFile,
+        Activity? activity,
+        CancellationToken ct)
+    {
         AsyncServiceScope? scope = null;
         try
         {
@@ -200,18 +271,20 @@ public sealed class FileSweep(
             {
                 _logger.LogWarning(e, "Processing {FileName} was unexpectedly cancelled without a host cancellation; leaving it for the next run",
                     fileName);
+                RecordFailure(activity, e);
                 return SweepOutcome.Failed;
             }
             catch (Exception e)
             {
                 _logger.LogWarning(e, "Processing {FileName} failed unexpectedly; leaving it for the next run", fileName);
+                RecordFailure(activity, e);
                 return SweepOutcome.Failed;
             }
 
             switch (outcome)
             {
                 case SweepOutcome.Consumed or SweepOutcome.Duplicate:
-                    return await CompleteAsync(source, file, outcome);
+                    return await CompleteAsync(source, file, outcome, activity);
                 case SweepOutcome.Aborted when ct.IsCancellationRequested:
                     return SweepOutcome.Aborted;
                 case SweepOutcome.Aborted:
@@ -233,7 +306,7 @@ public sealed class FileSweep(
     /// already published, so the next run handles the file again; idempotency, where the
     /// component has it, cancels the duplicate.</returns>
     private async Task<SweepOutcome> CompleteAsync(
-        IFileAdapter source, SweptFile file, SweepOutcome outcome)
+        IFileAdapter source, SweptFile file, SweepOutcome outcome, Activity? activity)
     {
         try
         {
@@ -245,8 +318,15 @@ public sealed class FileSweep(
         {
             _logger.LogWarning(e, "Could not complete {FileName} ({Completion}) after processing; the next run handles it again",
                 file.Name, completion);
+            RecordFailure(activity, e);
             return SweepOutcome.Failed;
         }
+    }
+
+    private static void RecordFailure(Activity? activity, Exception e)
+    {
+        activity?.AddException(e);
+        activity?.SetStatus(ActivityStatusCode.Error, e.Message);
     }
 
     /// <summary>Disposes a file scope without letting a cleanup failure escape: the file's

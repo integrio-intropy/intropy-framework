@@ -43,7 +43,7 @@ internal sealed class ExtractorJob<TInput, TOutput, TCtx>(
         if (content.Length == 0)
             return new StepResult<CloudEvent>.TechnicalFailure(new TechnicalFailure("The file has no content"));
 
-        var (result, _) = await pipeline.Execute(content, context, detachTrace: true, ct);
+        var (result, _) = await pipeline.Execute(content, context, detachTrace: false, ct);
         return result;
     }
 }

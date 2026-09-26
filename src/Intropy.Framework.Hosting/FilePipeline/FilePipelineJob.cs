@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
@@ -26,9 +27,10 @@ namespace Intropy.Framework.Hosting.FilePipeline;
 /// executed.
 /// </para>
 /// <para>
-/// Tracing: each file is its own trace, linked to the job's span, so a large sweep is not one
-/// oversized trace and a file's trace can continue downstream (through the queue, for a
-/// Transactional Integration). Implementations run their pipeline with <c>detachTrace: true</c>.
+/// Tracing: <see cref="FileSweep"/> makes each file its own trace, linked to the job's span.
+/// Implementations run their pipeline with <c>detachTrace: false</c>, so the pipeline continues
+/// the file's trace — next to the file's read and completion — and the trace can continue
+/// downstream (through the queue, for a Transactional Integration).
 /// </para>
 /// <para>
 /// Registered as a singleton, it never captures a scoped pipeline. It needs no sidecar; the
@@ -96,6 +98,9 @@ internal abstract class FilePipelineJob<TPipeline, TResult, TCtx>(
                 _logger.LogWarning(failure.Value.Exception,
                     "Processing {FileName} failed: {Description}; leaving it for the next run",
                     file.Name, failure.Value.Description);
+                // The current span is the file's own (FileSweep): name the failure on it, which
+                // also covers failures returned before the pipeline started.
+                Activity.Current?.SetStatus(ActivityStatusCode.Error, failure.Value.Description);
                 return SweepOutcome.Failed;
             default:
                 _logger.LogWarning("Processing {FileName} failed ({ResultType}); leaving it for the next run",
