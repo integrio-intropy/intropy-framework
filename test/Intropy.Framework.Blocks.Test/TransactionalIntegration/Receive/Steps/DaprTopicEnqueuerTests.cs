@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using CloudNative.CloudEvents;
 using CloudNative.CloudEvents.SystemTextJson;
@@ -8,6 +9,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using NSubstitute;
+using NSubstitute.ExceptionExtensions;
 
 namespace Intropy.Framework.Blocks.Test.TransactionalIntegration.Receive.Steps;
 
@@ -46,5 +48,77 @@ public class DaprTopicEnqueuerTests
         Assert.Equal("{}"u8.ToArray(), (byte[])envelope.Data!);
         var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>((string)envelope[metadataAttribute]!);
         Assert.Equal("order-1.json", metadata![SourceContextKeys.FileName]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PublishesUnderAProducerSpan_WhoseContextTheEnvelopeCarries()
+    {
+        // The consumer continues the send span, following the OpenTelemetry messaging conventions
+        var daprClient = Substitute.For<DaprClient>();
+        byte[]? published = null;
+        daprClient
+            .PublishByteEventAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+                Arg.Any<string>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => published = ci.ArgAt<ReadOnlyMemory<byte>>(2).ToArray());
+        var enqueuer = new DaprTopicEnqueuer<Context>(daprClient, "internal-orders", "hop", Options);
+
+        var (root, spans) = await CaptureBlocksSpansAsync(() => enqueuer.ExecuteAsync(
+            new SourceItem("order-1.json", "{}"u8.ToArray()), new Context(new Dictionary<string, string>()),
+            CancellationToken.None));
+
+        var send = Assert.Single(spans);
+        Assert.Equal("send hop", send.DisplayName);
+        Assert.Equal(ActivityKind.Producer, send.Kind);
+        Assert.Equal(root.SpanId, send.ParentSpanId);
+        Assert.Equal("dapr", send.GetTagItem("messaging.system"));
+        Assert.Equal("send", send.GetTagItem("messaging.operation.type"));
+        Assert.Equal("hop", send.GetTagItem("messaging.destination.name"));
+        var traceParent = CloudEventAttribute.CreateExtension("traceparent", CloudEventAttributeType.String);
+        var envelope = new JsonEventFormatter().DecodeStructuredModeMessage(published!, null, [traceParent]);
+        Assert.Equal(send.Id, envelope[traceParent]);
+        Assert.Equal(envelope.Id, send.GetTagItem("messaging.message.id"));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MarksTheSendSpanAsAnError_WhenPublishingFails()
+    {
+        var daprClient = Substitute.For<DaprClient>();
+        daprClient
+            .PublishByteEventAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+                Arg.Any<string>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("broker unavailable"));
+        var enqueuer = new DaprTopicEnqueuer<Context>(daprClient, "internal-orders", "hop", Options);
+
+        var (_, spans) = await CaptureBlocksSpansAsync(() => Assert.ThrowsAsync<InvalidOperationException>(() =>
+            enqueuer.ExecuteAsync(new SourceItem("order-1.json", "{}"u8.ToArray()),
+                new Context(new Dictionary<string, string>()), CancellationToken.None)));
+
+        var send = Assert.Single(spans);
+        Assert.Equal(ActivityStatusCode.Error, send.Status);
+        Assert.Equal(typeof(InvalidOperationException).FullName, send.GetTagItem("error.type"));
+        Assert.Contains(send.Events, e => e.Name == "exception");
+    }
+
+    /// <summary>Runs <paramref name="act"/> under a test-owned root span and returns it with the
+    /// Blocks spans in its trace, ignoring spans from tests running in parallel.</summary>
+    private static async Task<(Activity Root, List<Activity> Spans)> CaptureBlocksSpansAsync(Func<Task> act)
+    {
+        using var testSource = new ActivitySource($"enqueuer-test-{Guid.NewGuid()}");
+        var stopped = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == testSource || source.Name == "Intropy.Framework.Blocks",
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => { lock (stopped) stopped.Add(activity); }
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        Activity root;
+        using (root = testSource.StartActivity("test")!)
+            await act();
+
+        lock (stopped)
+            return (root, stopped.Where(a => a.Source.Name == "Intropy.Framework.Blocks" && a.TraceId == root.TraceId).ToList());
     }
 }

@@ -332,6 +332,68 @@ public class TransactionalIntegrationLifecycleTests
         Assert.True(subscribeStarted.Task.IsCompleted);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_CountsMessagesLeftForRedeliveryAsFailed_AndTagsTheJobSpan()
+    {
+        // A run whose deliveries failed must not look clean: each message counts once, by its last
+        // outcome in the run, and a message that failed and then succeeded on redelivery is processed
+        DeliverOnSubscribe(
+            Message("m1", "fail"),
+            Message("m2", "fail"),
+            Message("m2", "ok"),
+            Message("m3", "duplicate"));
+        _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                var result = System.Text.Encoding.UTF8.GetString(callInfo.Arg<ReadOnlyMemory<byte>>().Span) switch
+                {
+                    "fail" => (StepResult<string>)new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed")),
+                    "duplicate" => new StepResult<string>.Cancelled(),
+                    _ => new StepResult<string>.Success("")
+                };
+                return (result, callInfo.Arg<Context>());
+            });
+        using var jobSource = new ActivitySource($"lifecycle-test-{Guid.NewGuid()}");
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == jobSource,
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        Hosting.RunToCompletion.JobRunSummary summary;
+        using (var job = jobSource.StartActivity("job")!)
+        {
+            summary = await Lifecycle(new InMemoryFileAdapter()).ExecuteAsync(CancellationToken.None);
+
+            Assert.Equal(1, job.GetTagItem("intropy.messages.processed"));
+            Assert.Equal(1, job.GetTagItem("intropy.messages.failed"));
+            Assert.Equal(1, job.GetTagItem("intropy.messages.skipped"));
+        }
+
+        Assert.Equal(0, summary.Processed); // no files
+        Assert.Equal(1, summary.Failed);    // m1, left for redelivery
+    }
+
+    /// <summary>Delivers <paramref name="messages"/> in order as soon as the subscription opens.</summary>
+    private void DeliverOnSubscribe(params TopicMessage[] messages) =>
+        _topicSubscriber.SubscribeAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(),
+                Arg.Any<TopicMessageHandler>(), Arg.Any<CancellationToken>())
+            .Returns(async callInfo =>
+            {
+                var handler = callInfo.Arg<TopicMessageHandler>();
+                foreach (var message in messages)
+                    await handler(message, CancellationToken.None);
+                return Substitute.For<IAsyncDisposable>();
+            });
+
+    private static TopicMessage Message(string id, string data) =>
+        new(id, Source: "test-source", Type: "test-type", SpecVersion: "", DataContentType: "", Topic: "", PubSubName: "")
+        {
+            Data = System.Text.Encoding.UTF8.GetBytes(data),
+            Extensions = new Dictionary<string, Google.Protobuf.WellKnownTypes.Value>()
+        };
+
     private TransactionalIntegrationLifecycle<Context> Lifecycle(IFileAdapter source, SweepCompletion? completion = null)
     {
         var services = new ServiceCollection();

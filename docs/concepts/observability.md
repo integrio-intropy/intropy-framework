@@ -95,7 +95,7 @@ The framework uses a separate `ActivitySource` for each package, versioned with 
 | `Intropy.Framework.Core` | Pipelines and steps |
 | `Intropy.Framework.Blocks` | Block-level operations |
 | `Intropy.Framework.Adapters` | File adapter operations (list, get, create, delete) |
-| `Intropy.Framework.Hosting` | Run-to-completion jobs and consumed messages |
+| `Intropy.Framework.Hosting` | Run-to-completion jobs, one trace per swept file, and consumed messages |
 
 To collect traces, subscribe to all of them with the `IntropyTelemetry.ActivitySources` wildcard:
 
@@ -103,6 +103,18 @@ To collect traces, subscribe to all of them with the `IntropyTelemetry.ActivityS
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing.AddSource(IntropyTelemetry.ActivitySources));
 ```
+
+### Messaging spans
+
+A Transactional Integration traces its queue hop with the OpenTelemetry messaging conventions.
+The receive side publishes each file under a `send {topic}` span (kind `Producer`), and that span's
+context travels with the message. The send side processes each message under a `process {topic}`
+span (kind `Consumer`) that continues it. When a message carries no trace context, its consumer
+span starts a new trace instead. Both carry `messaging.system`, `messaging.destination.name`,
+`messaging.operation.type` and `messaging.message.id`. A failure sets `error.type` and `Error`
+status. Each consumer span links to the job span of the run that consumed it. The job span is
+tagged with the run's message counts: `intropy.messages.processed`, `intropy.messages.failed` (left
+for redelivery) and `intropy.messages.skipped` (duplicates).
 
 ### Run-to-completion jobs
 

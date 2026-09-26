@@ -193,7 +193,7 @@ The `RunToCompletionRunner` hosts the lifecycle. Run it through the host, and re
 return await app.RunToCompletionAsync();
 ```
 
-`RunToCompletionAsync()` starts the host, runs the job, and stops and disposes the host afterwards. Starting it creates the OpenTelemetry providers, and disposing it flushes them, so the run's traces reach your backend before the process exits. SIGTERM cancels the job. The runner waits for the Dapr sidecar, runs the receive pipeline to discover and enqueue source items, subscribes to the pub/sub topic to trigger the send pipeline for each message, and shuts down after an idle timeout. It returns `0` on success (or when the host cancels), `1` on failure or when source files were left in place, and `2` when the sidecar never became available.
+`RunToCompletionAsync()` starts the host, runs the job, and stops and disposes the host afterwards. Starting it creates the OpenTelemetry providers, and disposing it flushes them, so the run's traces reach your backend before the process exits. SIGTERM cancels the job. The runner waits for the Dapr sidecar, runs the receive pipeline to discover and enqueue source items, subscribes to the pub/sub topic to trigger the send pipeline for each message, and shuts down after an idle timeout. It returns `0` on success (or when the host cancels), `1` on failure, when source files were left in place, or when messages were left for redelivery (returned for retry, or still in flight when the grace period ended), and `2` when the sidecar never became available.
 
 ## Handle results
 

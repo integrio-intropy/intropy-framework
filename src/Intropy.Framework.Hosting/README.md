@@ -55,7 +55,7 @@ providers are only created when the host starts, and only flushed when the host 
 | Code | Meaning |
 |------|---------|
 | 0 | Success, nothing to do, or cancelled. Cancellation is success **by design**: the job is idempotent and decided it does not need to process (e.g. duplicates detected), so the scheduler must not retry. |
-| 1 | Job failure: the job threw, or `JobRunSummary.Failed` was greater than zero. |
+| 1 | Job failure: the job threw, or `JobRunSummary.Failed` was greater than zero. For a Transactional Integration, `Failed` counts files left in place and messages the run left for redelivery. |
 | 2 | Infrastructure failure: the Dapr sidecar never became available. The job never ran. |
 
 A failed sidecar shutdown is logged but never changes the exit code — the job's outcome stands.

@@ -1,8 +1,10 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Dapr.Messaging.PublishSubscribe;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Hosting.Common;
+using Intropy.Framework.Hosting.RunToCompletion;
 using Intropy.Framework.Hosting.TransactionalIntegration.Helpers;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Microsoft.Extensions.Logging;
@@ -31,6 +33,14 @@ internal class MessageSubscriber<TCtx>(
 {
     private readonly MessageActivityTracker _activityTracker = new();
 
+    /// <summary>Each message's latest outcome in this run, by message id: a redelivered message
+    /// that succeeds later in the run counts once, as processed.</summary>
+    private readonly ConcurrentDictionary<string, MessageOutcome> _outcomes = new();
+
+    /// <summary>The span of the run consuming the messages (the job's), linked from each
+    /// message's span.</summary>
+    private ActivityContext _run;
+
     /// <summary>
     /// Starts the message subscription and waits for completion.
     /// This method will block until the idle timeout is reached and graceful shutdown completes.
@@ -38,10 +48,16 @@ internal class MessageSubscriber<TCtx>(
     /// <param name="publishingCompleteSignal">A task that completes when all files have been published.</param>
     /// <param name="ct">The host's cancellation: it stops waiting for the publisher and the idle
     /// timeout, and in-flight messages still get the grace period before the subscription closes.</param>
-    public async Task ExecuteAsync(Task publishingCompleteSignal, CancellationToken ct = default)
+    /// <returns>The messages this run consumed, by their last outcome: acknowledged as
+    /// <c>Processed</c>, idempotent duplicates as <c>Skipped</c>, and messages left for
+    /// redelivery — returned for retry, or still in flight when the grace period ended — as
+    /// <c>Failed</c>.</returns>
+    public async Task<JobRunSummary> ExecuteAsync(Task publishingCompleteSignal, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(publishingCompleteSignal);
         using var shutdownSignal = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _run = Activity.Current?.Context ?? default;
+        var unfinished = 0;
 
         var subscription = await topicSubscriber.SubscribeAsync(
             options.DaprPubSubName,
@@ -75,7 +91,7 @@ internal class MessageSubscriber<TCtx>(
         {
             // Wait for in-flight messages while the subscription is still open,
             // so Dapr can still deliver ack/nack responses for those messages.
-            await _activityTracker.WaitForAllMessagesToComplete(
+            unfinished = await _activityTracker.WaitForAllMessagesToComplete(
                 options.PostIdleGracePeriod,
                 logger);
 
@@ -84,12 +100,27 @@ internal class MessageSubscriber<TCtx>(
             // Dispose the subscription after all in-flight messages have completed.
             await subscription.DisposeAsync();
         }
+
+        return Summarize(unfinished);
+    }
+
+    private JobRunSummary Summarize(int unfinished)
+    {
+        var outcomes = _outcomes.Values.ToList();
+        var summary = new JobRunSummary(
+            Processed: outcomes.Count(o => o == MessageOutcome.Processed),
+            Failed: outcomes.Count(o => o == MessageOutcome.Failed) + unfinished,
+            Skipped: outcomes.Count(o => o == MessageOutcome.Skipped));
+        logger.LogInformation(
+            "Consumed messages for {Component}: {Processed} processed, {Failed} left for redelivery, {Skipped} skipped",
+            componentName, summary.Processed, summary.Failed, summary.Skipped);
+        return summary;
     }
 
     private async Task<TopicResponseAction> HandleMessageAsync(TopicMessage message,
         CancellationToken cancellationToken)
     {
-        using var activity = DaprActivityHelper.Restore(message.Extensions);
+        using var activity = DaprActivityHelper.StartProcessActivity(message, options.DaprTopicName, componentName, _run);
         using var messageScope = _activityTracker.BeginMessageProcessing();
 
         try
@@ -102,21 +133,42 @@ internal class MessageSubscriber<TCtx>(
             switch (result)
             {
                 case StepResult<string>.TechnicalFailure failure:
-                    activity?.SetStatus(ActivityStatusCode.Error, failure.Value.Description);
-                    return TopicResponseAction.Retry;
+                    Fail(activity, "technical_failure", failure.Value.Description);
+                    return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
                 case StepResult<string>.BusinessFailure failure:
-                    activity?.SetStatus(ActivityStatusCode.Error, failure.Value.Description);
-                    return TopicResponseAction.Retry;
+                    Fail(activity, "business_failure", failure.Value.Description);
+                    return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
+                case StepResult<string>.Cancelled:
+                    return Record(message, MessageOutcome.Skipped, TopicResponseAction.Success);
                 default:
-                    return TopicResponseAction.Success;
+                    return Record(message, MessageOutcome.Processed, TopicResponseAction.Success);
             }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Error processing message");
             activity?.AddException(ex);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            return TopicResponseAction.Retry;
+            Fail(activity, ex.GetType().FullName!, ex.Message);
+            return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
         }
+    }
+
+    private static void Fail(Activity? activity, string errorType, string description)
+    {
+        activity?.SetTag("error.type", errorType);
+        activity?.SetStatus(ActivityStatusCode.Error, description);
+    }
+
+    private TopicResponseAction Record(TopicMessage message, MessageOutcome outcome, TopicResponseAction response)
+    {
+        _outcomes[message.Id] = outcome;
+        return response;
+    }
+
+    private enum MessageOutcome
+    {
+        Processed,
+        Skipped,
+        Failed
     }
 }

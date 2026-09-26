@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Hosting.RunToCompletion;
@@ -50,8 +51,11 @@ public class TransactionalIntegrationLifecycle<TCtx> : IRunToCompletionJob where
     /// Runs the transactional integration lifecycle: sweeps the source while subscribing, and
     /// returns once publishing is done and the subscription has gone idle (or the host cancelled).
     /// </summary>
-    /// <returns>The source sweep's outcome: files published (and completed), and files left in
-    /// place as failed.</returns>
+    /// <returns>Files published (and completed) as <c>Processed</c> and duplicates as
+    /// <c>Skipped</c>. <c>Failed</c> counts both sides: files left in place, and messages the run
+    /// left for redelivery — so a run whose deliveries failed exits 1 like one whose files did. The
+    /// consumed messages' own counts are tagged on the job's span
+    /// (<c>intropy.messages.processed</c>, <c>.failed</c>, <c>.skipped</c>).</returns>
     public async Task<JobRunSummary> ExecuteAsync(CancellationToken ct)
     {
         var coordinator = new LifecycleCoordinator();
@@ -76,6 +80,15 @@ public class TransactionalIntegrationLifecycle<TCtx> : IRunToCompletionJob where
         var subscriberTask = _messageSubscriber.ExecuteAsync(coordinator.PublishingCompleteSignal, ct);
 
         await Task.WhenAll(publisherTask, subscriberTask);
-        return await publisherTask;
+        var files = await publisherTask;
+        var messages = await subscriberTask;
+
+        // The current span is the job's (RunToCompletionRunner).
+        var job = Activity.Current;
+        job?.SetTag("intropy.messages.processed", messages.Processed);
+        job?.SetTag("intropy.messages.failed", messages.Failed);
+        job?.SetTag("intropy.messages.skipped", messages.Skipped);
+
+        return files with { Failed = files.Failed + messages.Failed };
     }
 }

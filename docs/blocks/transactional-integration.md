@@ -49,7 +49,7 @@ The lifecycle is a run-to-completion job, hosted by the same `RunToCompletionRun
 
 ```csharp
 // Starts the host, runs the job, then stops and disposes the host (flushing telemetry).
-return await app.RunToCompletionAsync(ct); // 0 success or host cancellation; 1 failure or files left in place; 2 sidecar unavailable or host failed to start
+return await app.RunToCompletionAsync(ct); // 0 success or host cancellation; 1 failure, files left in place, or messages left for redelivery; 2 sidecar unavailable or host failed to start
 ```
 
 ## Configuration
@@ -153,7 +153,7 @@ builder.Services.AddSendPipeline<Order, Invoice, Context>("order-send",
 
 ## Context propagation
 
-The TI automatically propagates `Context.Metadata` and W3C trace context through Dapr CloudEvent extensions. When the send pipeline receives a message, the metadata and trace parent from the receive pipeline are restored automatically. This means the send pipeline's trace is linked to the receive pipeline's trace, and any metadata you set in the receive pipeline (like file names or batch IDs) is available in the send pipeline.
+The TI automatically propagates `Context.Metadata` and W3C trace context through Dapr CloudEvent extensions. When the send pipeline receives a message, the metadata and trace parent from the receive pipeline are restored automatically. The receive side publishes under a `send {topic}` producer span, and the send side processes each message under a `process {topic}` consumer span that continues it, so one file is one trace from the source to the send pipeline. Each consumer span is also linked to the span of the run that consumed it. Any metadata you set in the receive pipeline (like file names or batch IDs) is available in the send pipeline.
 
 ## Related
 

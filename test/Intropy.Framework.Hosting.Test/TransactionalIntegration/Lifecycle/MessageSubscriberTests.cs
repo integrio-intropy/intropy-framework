@@ -311,7 +311,7 @@ public class MessageSubscriberTests
             new Dictionary<string, Value> { ["traceparent"] = Value.ForString(traceParent) }));
 
         lock (stopped)
-            return Assert.Single(stopped, a => a.DisplayName == "MessageReceived" && a.TraceId == traceId);
+            return Assert.Single(stopped, a => a.DisplayName == "process test-topic" && a.TraceId == traceId);
     }
 
     public static TheoryData<string?> MissingOrInvalidTraceParents => new() { null, "", "not-a-traceparent" };
@@ -332,7 +332,7 @@ public class MessageSubscriberTests
         var consumer = await CaptureSpanDuringPipelineAsync(CreateTopicMessage("test-id", "data"u8.ToArray(), extensions));
 
         Assert.NotNull(consumer);
-        Assert.Equal("MessageReceived", consumer.DisplayName);
+        Assert.Equal("process test-topic", consumer.DisplayName);
         Assert.Equal(ActivityKind.Consumer, consumer.Kind);
         Assert.Equal(default, consumer.ParentSpanId);
         Assert.NotEqual(job.TraceId, consumer.TraceId);
@@ -356,6 +356,82 @@ public class MessageSubscriberTests
         Assert.Equal(traceId, consumer.TraceId);
         Assert.Equal(parentSpanId, consumer.ParentSpanId);
         Assert.True(consumer.HasRemoteParent);
+    }
+
+    [Fact]
+    public async Task HandleMessage_DescribesTheConsumerSpanWithTheMessagingConventions()
+    {
+        using var listener = ListenTo(null);
+        var extensions = new Dictionary<string, Value> { ["retrycount"] = Value.ForString("2") };
+
+        var consumer = await CaptureSpanDuringPipelineAsync(CreateTopicMessage("msg-7", "data"u8.ToArray(), extensions));
+
+        Assert.NotNull(consumer);
+        Assert.Equal("dapr", consumer.GetTagItem("messaging.system"));
+        Assert.Equal("process", consumer.GetTagItem("messaging.operation.type"));
+        Assert.Equal("test-topic", consumer.GetTagItem("messaging.destination.name"));
+        Assert.Equal("msg-7", consumer.GetTagItem("messaging.message.id"));
+        Assert.Equal("test-integration", consumer.GetTagItem("intropy.component.name"));
+        Assert.Equal(2L, consumer.GetTagItem("intropy.message.retry_count"));
+    }
+
+    [Fact]
+    public async Task HandleMessage_LinksTheConsumerSpanToTheRunThatConsumedIt()
+    {
+        // The subscription is opened inside the job's span: every message it consumes links to it,
+        // whether or not the message continues a trace of its own
+        using var jobSource = new ActivitySource($"subscriber-link-test-{Guid.NewGuid()}");
+        using var listener = ListenTo(jobSource);
+        TopicMessageHandler? handler = null;
+        var topicSubscriber = Substitute.For<ITopicSubscriber>();
+        topicSubscriber.SubscribeAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(),
+                Arg.Do((Action<TopicMessageHandler>)(h => handler = h)), Arg.Any<CancellationToken>())
+            .Returns(Substitute.For<IAsyncDisposable>());
+        Activity? consumer = null;
+        _messageHandler.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+            .Returns(_ =>
+            {
+                consumer = Activity.Current;
+                return ((StepResult<string>)new StepResult<string>.Success(""), new Context(new Dictionary<string, string>()));
+            });
+        var subscriber = new MessageSubscriber<Context>(topicSubscriber, _messageHandler, _options, "test-integration",
+            (metadata, isRetry) => new Context(metadata, isRetry), _logger);
+        var publishing = new TaskCompletionSource();
+
+        Task run;
+        ActivitySpanId jobSpanId;
+        using (var job = jobSource.StartActivity("job")!)
+        {
+            jobSpanId = job.SpanId;
+            run = subscriber.ExecuteAsync(publishing.Task);
+        }
+        for (var i = 0; i < 20 && handler is null; i++)
+            await Task.Delay(50);
+        await handler!(CreateTopicMessage("msg-1", "data"u8.ToArray()), CancellationToken.None);
+        publishing.SetResult();
+        await run;
+
+        Assert.NotNull(consumer);
+        Assert.Contains(consumer.Links, l => l.Context.SpanId == jobSpanId);
+    }
+
+    [Fact]
+    public async Task HandleMessage_TagsTheErrorTypeOnTheConsumerSpan_WhenThePipelineFails()
+    {
+        using var listener = ListenTo(null);
+        Activity? consumer = null;
+        _messageHandler.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+            .Returns(_ =>
+            {
+                consumer = Activity.Current;
+                return ((StepResult<string>)new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed")),
+                    new Context(new Dictionary<string, string>()));
+            });
+
+        await InvokeMessageHandler(_topicSubscriber, CreateTopicMessage("test-id", "data"u8.ToArray()));
+
+        Assert.NotNull(consumer);
+        Assert.Equal("technical_failure", consumer.GetTagItem("error.type"));
     }
 
     /// <summary>Delivers <paramref name="message"/> and returns the span current while the send

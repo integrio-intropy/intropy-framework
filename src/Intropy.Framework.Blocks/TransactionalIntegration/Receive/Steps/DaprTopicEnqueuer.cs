@@ -22,6 +22,12 @@ public class DaprTopicEnqueuer<TCtx>(
     FrameworkOptions options) : EnqueueStep<TCtx>(options) where TCtx : Context
 {
     /// <inheritdoc/>
+    protected override string DestinationName => topicName;
+
+    /// <inheritdoc/>
+    protected override string MessagingSystem => "dapr";
+
+    /// <inheritdoc/>
     public override async Task<(TechnicalStepResult<SourceItem> Result, TCtx Context)> ExecuteAsync(SourceItem input,
         ReadOnlyMemory<byte> cloudEvent, TCtx context, CancellationToken ct)
     {

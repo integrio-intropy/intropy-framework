@@ -59,7 +59,8 @@ internal class MessageActivityTracker
     /// <summary>
     /// Waits for all in-progress messages to complete, up to the specified timeout.
     /// </summary>
-    public async Task WaitForAllMessagesToComplete(TimeSpan timeout, ILogger logger)
+    /// <returns>The number of messages still in progress when the timeout was reached.</returns>
+    public async Task<int> WaitForAllMessagesToComplete(TimeSpan timeout, ILogger logger)
     {
         var deadline = _timeProvider.GetUtcNow() + timeout;
 
@@ -70,7 +71,7 @@ internal class MessageActivityTracker
             if (currentCount == 0)
             {
                 logger.LogInformation("All messages completed successfully.");
-                return;
+                return 0;
             }
 
             logger.LogInformation("Waiting for {MessageCount} message(s) to complete...", currentCount);
@@ -84,6 +85,8 @@ internal class MessageActivityTracker
             logger.LogWarning("Graceful shutdown timeout reached. {MessageCount} message(s) still in progress.",
                 remainingCount);
         }
+
+        return remainingCount;
     }
 
     private int GetMessagesInProgress()
