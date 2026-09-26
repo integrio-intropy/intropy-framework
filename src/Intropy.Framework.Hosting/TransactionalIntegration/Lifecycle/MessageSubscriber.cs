@@ -126,9 +126,23 @@ internal class MessageSubscriber<TCtx>(
     private async Task<TopicResponseAction> HandleMessageAsync(TopicMessage message,
         CancellationToken cancellationToken)
     {
+        var start = Stopwatch.GetTimestamp();
         using var activity = DaprActivityHelper.StartProcessActivity(message, options.DaprTopicName, componentName, _run);
         using var messageScope = _activityTracker.BeginMessageProcessing();
+        var (response, outcome, errorType) = await ProcessAsync(message, activity, cancellationToken);
 
+        // The latest outcome in the run counts; an interruption by the host stopping does not
+        // replace an earlier one.
+        if (outcome is not MessageOutcome.Interrupted)
+            _outcomes[message.Id] = outcome;
+        HostingMetrics.RecordProcessedMessage(componentName, options.DaprTopicName, OutcomeName(outcome), errorType,
+            Stopwatch.GetElapsedTime(start));
+        return response;
+    }
+
+    private async Task<(TopicResponseAction Response, MessageOutcome Outcome, string? ErrorType)> ProcessAsync(
+        TopicMessage message, Activity? activity, CancellationToken cancellationToken)
+    {
         try
         {
             var (metadata, isRetry) = ContextHelper.Restore(message);
@@ -139,18 +153,16 @@ internal class MessageSubscriber<TCtx>(
             switch (result)
             {
                 case StepResult<string>.TechnicalFailure failure:
-                    Fail(activity, "technical_failure", failure.Value.Description);
-                    return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
+                    return Failed(activity, "technical_failure", failure.Value.Description);
                 case StepResult<string>.BusinessFailure failure:
-                    Fail(activity, "business_failure", failure.Value.Description);
-                    return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
+                    return Failed(activity, "business_failure", failure.Value.Description);
                 case StepResult<string>.Cancelled:
-                    return Record(message, MessageOutcome.Skipped, TopicResponseAction.Success);
+                    return (TopicResponseAction.Success, MessageOutcome.Skipped, null);
                 case StepResult<string>.Aborted:
                     // Never acknowledge an interrupted message: it was not processed.
                     return Interrupted(message, activity);
                 default:
-                    return Record(message, MessageOutcome.Processed, TopicResponseAction.Success);
+                    return (TopicResponseAction.Success, MessageOutcome.Processed, null);
             }
         }
         catch (OperationCanceledException) when (_hostCancellation.IsCancellationRequested)
@@ -161,45 +173,50 @@ internal class MessageSubscriber<TCtx>(
         {
             logger.LogError(ex, "Error processing message");
             activity?.AddException(ex);
-            Fail(activity, ex.GetType().FullName!, ex.Message);
-            return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
+            return Failed(activity, ex.GetType().FullName!, ex.Message);
         }
     }
 
     /// <summary>Leaves an interrupted message for redelivery. Interrupted because the host is
     /// stopping, it is not counted and its span is not an error; interrupted otherwise (such as
     /// by the processing timeout), it is a failure.</summary>
-    private TopicResponseAction Interrupted(TopicMessage message, Activity? activity)
+    private (TopicResponseAction, MessageOutcome, string?) Interrupted(TopicMessage message, Activity? activity)
     {
         if (_hostCancellation.IsCancellationRequested)
         {
             logger.LogInformation("Processing message {MessageId} was interrupted by the host stopping; it is left for redelivery",
                 message.Id);
-            return TopicResponseAction.Retry;
+            return (TopicResponseAction.Retry, MessageOutcome.Interrupted, null);
         }
 
         logger.LogWarning("Processing message {MessageId} was aborted without the host stopping; it is left for redelivery",
             message.Id);
-        Fail(activity, "aborted", "Processing was aborted without the host stopping");
-        return Record(message, MessageOutcome.Failed, TopicResponseAction.Retry);
+        return Failed(activity, "aborted", "Processing was aborted without the host stopping");
     }
 
-    private static void Fail(Activity? activity, string errorType, string description)
+    private static (TopicResponseAction, MessageOutcome, string?) Failed(Activity? activity, string errorType,
+        string description)
     {
         activity?.SetTag("error.type", errorType);
         activity?.SetStatus(ActivityStatusCode.Error, description);
+        return (TopicResponseAction.Retry, MessageOutcome.Failed, errorType);
     }
 
-    private TopicResponseAction Record(TopicMessage message, MessageOutcome outcome, TopicResponseAction response)
+    private static string OutcomeName(MessageOutcome outcome) => outcome switch
     {
-        _outcomes[message.Id] = outcome;
-        return response;
-    }
+        MessageOutcome.Processed => "processed",
+        MessageOutcome.Skipped => "skipped",
+        MessageOutcome.Interrupted => "interrupted",
+        _ => "failed"
+    };
 
     private enum MessageOutcome
     {
         Processed,
         Skipped,
-        Failed
+        Failed,
+
+        /// <summary>Interrupted by the host stopping: left for redelivery, but not counted.</summary>
+        Interrupted
     }
 }

@@ -300,6 +300,45 @@ public class RunToCompletionRunnerTests
             (string?)t.Value == typeof(InvalidOperationException).FullName);
     }
 
+    public static TheoryData<int, int> FailedItemsAndExitCodes => new()
+    {
+        { 0, RunToCompletionExitCodes.Success },
+        { 3, RunToCompletionExitCodes.JobFailure }
+    };
+
+    [Theory]
+    [MemberData(nameof(FailedItemsAndExitCodes))]
+    public async Task RunAsync_RecordsTheRunAndItsDuration_ByExitCode(int failed, int exitCode)
+    {
+        using var metrics = new MetricCapture();
+        _options.JobName = $"metrics-job-{Guid.NewGuid()}";
+        _job.ExecuteAsync(Arg.Any<CancellationToken>())
+            .Returns(new JobRunSummary(Processed: 1, Failed: failed, Skipped: 0));
+
+        await CreateRunner().RunAsync();
+
+        var run = Assert.Single(metrics.Of("intropy.job.runs", "intropy.job.name", _options.JobName));
+        Assert.Equal(1, run.Value);
+        Assert.Equal(exitCode, run.Tags["process.exit.code"]);
+        var duration = Assert.Single(metrics.Of("intropy.job.duration", "intropy.job.name", _options.JobName));
+        Assert.True(duration.Value >= 0);
+    }
+
+    [Fact]
+    public async Task RunAsync_RecordsTheRun_WhenTheSidecarNeverBecomesAvailable()
+    {
+        // The run that never started is the one most worth alerting on
+        using var metrics = new MetricCapture();
+        _options.JobName = $"metrics-job-{Guid.NewGuid()}";
+        _daprClient.WaitForSidecarAsync(Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InvalidOperationException("sidecar unreachable"));
+
+        await CreateRunner().RunAsync();
+
+        var run = Assert.Single(metrics.Of("intropy.job.runs", "intropy.job.name", _options.JobName));
+        Assert.Equal(RunToCompletionExitCodes.InfrastructureFailure, run.Tags["process.exit.code"]);
+    }
+
     /// <summary>Runs the job under a test-owned root span and returns the runner's job span in its
     /// trace only, so spans from tests running in parallel are ignored.</summary>
     private async Task<Activity> CaptureJobSpanAsync(RunToCompletionRunner runner)

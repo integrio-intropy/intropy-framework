@@ -97,11 +97,13 @@ The framework uses a separate `ActivitySource` for each package, versioned with 
 | `Intropy.Framework.Adapters` | File adapter operations (list, get, create, delete) |
 | `Intropy.Framework.Hosting` | Run-to-completion jobs, one trace per swept file, and consumed messages |
 
-To collect traces, subscribe to all of them with the `IntropyTelemetry.ActivitySources` wildcard:
+To collect traces, subscribe to all of them with the `IntropyTelemetry.ActivitySources` wildcard,
+and to the metrics with `IntropyTelemetry.Meters`:
 
 ```csharp
 builder.Services.AddOpenTelemetry()
-    .WithTracing(tracing => tracing.AddSource(IntropyTelemetry.ActivitySources));
+    .WithTracing(tracing => tracing.AddSource(IntropyTelemetry.ActivitySources))
+    .WithMetrics(metrics => metrics.AddMeter(IntropyTelemetry.Meters));
 ```
 
 ### Messaging spans
@@ -116,10 +118,30 @@ status. Each consumer span links to the job span of the run that consumed it. Th
 tagged with the run's message counts: `intropy.messages.processed`, `intropy.messages.failed` (left
 for redelivery) and `intropy.messages.skipped` (duplicates).
 
+## Metrics
+
+The `Intropy.Framework.Hosting` meter reports what scheduled jobs are usually alerted on:
+
+| Instrument | Type | Unit | Tags |
+|------------|------|------|------|
+| `intropy.job.runs` | Counter | `{run}` | `intropy.job.name`, `process.exit.code` |
+| `intropy.job.duration` | Histogram | `s` | `intropy.job.name`, `process.exit.code` |
+| `intropy.sweep.files` | Counter | `{file}` | `intropy.component.name`, `intropy.source.port`, `intropy.sweep.outcome` (`consumed`, `duplicate`, `failed`, `aborted`) |
+| `messaging.client.consumed.messages` | Counter | `{message}` | `messaging.system`, `messaging.operation.name`, `messaging.destination.name`, `intropy.component.name`, `intropy.message.outcome`, `error.type` |
+| `messaging.process.duration` | Histogram | `s` | Same as `messaging.client.consumed.messages` |
+
+`intropy.message.outcome` is `processed`, `skipped` (a duplicate), `failed` (left for
+redelivery; `error.type` says why), or `interrupted` (left for redelivery because the host was
+stopping, which is not a failure). A run that never started, because the sidecar didn't come up,
+is counted with exit code `2`. Job durations use buckets from 1 second to 1 hour. Message
+durations use the buckets that the messaging conventions advise.
+
 ### Run-to-completion jobs
 
 A job's process exits as soon as the job ends. Telemetry that is still buffered in the
-exporter when the process exits is lost, and the job's own span is always in the last batch. Run
+exporter when the process exits is lost. The job's own span is always in the last batch, and
+metrics are exported only periodically (every 60 seconds by default), so a short job exports none
+unless it flushes on exit. Run
 the job with `RunToCompletionAsync()` on the host: it starts the host (the OpenTelemetry hosting
 integration creates its providers in a hosted service) and disposes it afterwards, which flushes
 the exporters.

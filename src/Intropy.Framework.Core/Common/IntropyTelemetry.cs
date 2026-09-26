@@ -7,7 +7,8 @@ namespace Intropy.Framework.Core.Common;
 /// <example>
 /// <code>
 /// builder.Services.AddOpenTelemetry()
-///     .WithTracing(tracing => tracing.AddSource(IntropyTelemetry.ActivitySources));
+///     .WithTracing(tracing => tracing.AddSource(IntropyTelemetry.ActivitySources))
+///     .WithMetrics(metrics => metrics.AddMeter(IntropyTelemetry.Meters));
 /// </code>
 /// </example>
 public static class IntropyTelemetry
@@ -18,4 +19,10 @@ public static class IntropyTelemetry
     /// package added later.
     /// </summary>
     public const string ActivitySources = "Intropy.Framework.*";
+
+    /// <summary>
+    /// A wildcard matching every framework <see cref="System.Diagnostics.Metrics.Meter"/>
+    /// (today <c>Intropy.Framework.Hosting</c>), and any package's meter added later.
+    /// </summary>
+    public const string Meters = "Intropy.Framework.*";
 }

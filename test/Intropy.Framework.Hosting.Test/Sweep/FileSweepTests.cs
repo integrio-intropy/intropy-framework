@@ -150,6 +150,34 @@ public class FileSweepTests
         Assert.NotSame(scopes[0], scopes[1]);
     }
 
+    [Fact]
+    public async Task SweepAsync_RecordsEachFileByOutcome()
+    {
+        using var metrics = new MetricCapture();
+        var port = $"metrics-port-{Guid.NewGuid()}";
+        var source = new InMemoryFileAdapter()
+            .AddFile("consumed.json", "{}").AddFile("duplicate.json", "{}").AddFile("failed.json", "{}");
+        var collection = new ServiceCollection();
+        collection.AddKeyedSingleton<IFileAdapter>(port, source);
+        var sweep = new FileSweep(collection.BuildServiceProvider(), port, "sweep-test", SweepCompletion.Delete,
+            NullLoggerFactory.Instance);
+
+        await sweep.SweepAsync((file, _) => Task.FromResult(file.Name switch
+        {
+            "consumed.json" => SweepOutcome.Consumed,
+            "duplicate.json" => SweepOutcome.Duplicate,
+            _ => SweepOutcome.Failed
+        }), CancellationToken.None);
+
+        var files = metrics.Of("intropy.sweep.files", "intropy.source.port", port);
+        Assert.Equal(["consumed", "duplicate", "failed"], files.Select(f => (string)f.Tags["intropy.sweep.outcome"]!).Order());
+        Assert.All(files, f =>
+        {
+            Assert.Equal(1, f.Value);
+            Assert.Equal("sweep-test", f.Tags["intropy.component.name"]);
+        });
+    }
+
     private static FileSweep Sweep(
         InMemoryFileAdapter source,
         SweepCompletion? completion = null,

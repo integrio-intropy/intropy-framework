@@ -50,6 +50,14 @@ public class RunToCompletionRunner
     /// </returns>
     public async Task<int> RunAsync(CancellationToken ct = default)
     {
+        var start = Stopwatch.GetTimestamp();
+        var exitCode = await RunCoreAsync(ct);
+        HostingMetrics.RecordJobRun(_options.JobName, exitCode, Stopwatch.GetElapsedTime(start));
+        return exitCode;
+    }
+
+    private async Task<int> RunCoreAsync(CancellationToken ct)
+    {
         try
         {
             await DaprSidecarManager.WaitAsync(_daprClient, _options.SidecarTimeout, _logger, ct);

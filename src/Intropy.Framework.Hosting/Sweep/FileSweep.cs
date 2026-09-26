@@ -202,6 +202,7 @@ public sealed class FileSweep(
             });
             var outcome = await ProcessFileInScopeAsync(state, source, fileName, handleFile, activity, ct);
             RecordOutcome(activity, outcome);
+            HostingMetrics.RecordSweptFile(componentName, sourcePort, outcome);
             return outcome;
         }
         finally
@@ -233,13 +234,7 @@ public sealed class FileSweep(
         if (activity is null)
             return;
 
-        activity.SetTag("intropy.sweep.outcome", outcome switch
-        {
-            SweepOutcome.Consumed => "consumed",
-            SweepOutcome.Duplicate => "duplicate",
-            SweepOutcome.Aborted => "aborted",
-            _ => "failed"
-        });
+        activity.SetTag("intropy.sweep.outcome", HostingMetrics.OutcomeName(outcome));
         if (outcome is SweepOutcome.Failed && activity.Status == ActivityStatusCode.Unset)
             activity.SetStatus(ActivityStatusCode.Error, "The file was not handled; it stays for the next run");
     }

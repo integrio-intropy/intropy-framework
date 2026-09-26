@@ -488,11 +488,62 @@ public class MessageSubscriberTests
         Assert.Equal(ActivityStatusCode.Unset, consumer.Status);
     }
 
+    public static TheoryData<string, string, string?> ResultsAndOutcomes => new()
+    {
+        { "success", "processed", null },
+        { "duplicate", "skipped", null },
+        { "technical", "failed", "technical_failure" },
+        { "aborted", "failed", "aborted" },
+        { "host-stopping", "interrupted", null }
+    };
+
+    [Theory]
+    [MemberData(nameof(ResultsAndOutcomes))]
+    public async Task HandleMessage_RecordsTheConsumedMessageAndItsProcessingDuration(string result, string outcome,
+        string? errorType)
+    {
+        using var metrics = new MetricCapture();
+        var options = new TransactionalIntegrationOptions
+        {
+            DaprPubSubName = _options.DaprPubSubName,
+            DaprTopicName = $"metrics-topic-{Guid.NewGuid()}",
+            IdleTimeout = _options.IdleTimeout,
+            PostIdleGracePeriod = _options.PostIdleGracePeriod,
+            MaxMessageProcessingTime = _options.MaxMessageProcessingTime
+        };
+
+        await RunWithOneMessageAsync(host => result switch
+        {
+            "success" => new StepResult<string>.Success(""),
+            "duplicate" => new StepResult<string>.Cancelled(),
+            "technical" => new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed")),
+            "aborted" => new StepResult<string>.Aborted(),
+            _ => CancelAndAbort(host)
+        }, options);
+
+        var consumed = Assert.Single(metrics.Of("messaging.client.consumed.messages", "messaging.destination.name",
+            options.DaprTopicName));
+        Assert.Equal(1, consumed.Value);
+        Assert.Equal("dapr", consumed.Tags["messaging.system"]);
+        Assert.Equal("process", consumed.Tags["messaging.operation.name"]);
+        Assert.Equal(outcome, consumed.Tags["intropy.message.outcome"]);
+        Assert.Equal(errorType, consumed.Tags.GetValueOrDefault("error.type"));
+        var duration = Assert.Single(metrics.Of("messaging.process.duration", "messaging.destination.name",
+            options.DaprTopicName));
+        Assert.Equal(outcome, duration.Tags["intropy.message.outcome"]);
+    }
+
+    private static StepResult<string> CancelAndAbort(CancellationTokenSource host)
+    {
+        host.Cancel();
+        return new StepResult<string>.Aborted();
+    }
+
     /// <summary>Runs a subscriber whose publisher has finished, delivers one message whose send
     /// pipeline returns <paramref name="result"/> (given the host's cancellation source), and
     /// returns the response to Dapr, the run's summary, and the consumer span.</summary>
     private async Task<(TopicResponseAction Response, JobRunSummary Summary, Activity? Consumer)> RunWithOneMessageAsync(
-        Func<CancellationTokenSource, StepResult<string>> result)
+        Func<CancellationTokenSource, StepResult<string>> result, TransactionalIntegrationOptions? options = null)
     {
         using var host = new CancellationTokenSource();
         TopicMessageHandler? handler = null;
@@ -507,7 +558,7 @@ public class MessageSubscriberTests
                 consumer = Activity.Current;
                 return (result(host), new Context(new Dictionary<string, string>()));
             });
-        var subscriber = new MessageSubscriber<Context>(topicSubscriber, _messageHandler, _options, "test-integration",
+        var subscriber = new MessageSubscriber<Context>(topicSubscriber, _messageHandler, options ?? _options, "test-integration",
             (metadata, isRetry) => new Context(metadata, isRetry), _logger);
         // The publisher never finishes on its own: the run ends on the idle timeout, or when the
         // pipeline cancels the host.
