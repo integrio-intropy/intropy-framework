@@ -301,7 +301,7 @@ public ExtractorBuilder<TInput, TOutput, TCtx> WithDaprServiceInvoker(
     string type)
 ```
 
-Configures sending CloudEvents to a Dapr service via service invocation. Invokes the target service's `"ingest"` endpoint.
+Configures sending CloudEvents to a Dapr service via service invocation. Invokes the target service's `"ingest"` endpoint. A non-success status code is a technical failure.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

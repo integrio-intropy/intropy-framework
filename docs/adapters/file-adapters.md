@@ -106,6 +106,28 @@ Uses the `blobName` metadata key for blob operations and handles path prefix nor
 
 ---
 
+## Tracing
+
+Every operation of the built-in adapters is a span on the `Intropy.Framework.Adapters` source,
+named `{operation} {binding}` (for example `get orders-source`). The operation is the Dapr binding
+operation: `list`, `get`, `create` or `delete`.
+
+| Attribute | On | Value |
+|-----------|----|-------|
+| `intropy.file.adapter` | all | `local`, `sftp` or `azure_blob` |
+| `intropy.file.binding` | all | The Dapr binding name |
+| `intropy.file.operation` | all | `list`, `get`, `create` or `delete` |
+| `file.directory` | `list` | The base path listed |
+| `intropy.file.listed` / `intropy.file.matched` | `list` | Files the binding returned / files left after `FileNameRegex` |
+| `file.name`, `file.path` | `get`, `create`, `delete` | The file name, and the path sent to the binding |
+| `file.size` | `get`, `create` | Bytes read or written |
+| `error.type` | failures | The exception type; the span status is `Error` |
+
+A cancellation the caller requested leaves the span unmarked. When a file you expected isn't
+picked up, compare `intropy.file.listed` with `intropy.file.matched` on the `list` span.
+
+---
+
 ## Usage with Transactional Integration
 
 File adapters are commonly used in receive pipelines to list and read source files:

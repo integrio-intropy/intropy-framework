@@ -11,6 +11,9 @@ namespace Intropy.Framework.Adapters.File;
 public class SftpAdapter(DaprClient daprClient, FileAdapterOptions options)
     : DaprBindingFileAdapter(daprClient, options)
 {
+    /// <inheritdoc/>
+    internal override string AdapterKind => "sftp";
+
     /// <summary>bindings.sftp carries the file path under <c>fileName</c>.</summary>
     internal override string FileNameMetadataKey => "fileName";
 

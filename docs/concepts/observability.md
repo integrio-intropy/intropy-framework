@@ -94,7 +94,7 @@ The framework uses a separate `ActivitySource` for each package, versioned with 
 |----------------|-------|
 | `Intropy.Framework.Core` | Pipelines and steps |
 | `Intropy.Framework.Blocks` | Block-level operations |
-| `Intropy.Framework.Adapters` | File adapter operations (list, get, create, delete) |
+| `Intropy.Framework.Adapters` | File adapter operations, named `{operation} {binding}` (see [File Adapters](../adapters/file-adapters.md#tracing)) |
 | `Intropy.Framework.Hosting` | Run-to-completion jobs, one trace per swept file, and consumed messages |
 
 To collect traces, subscribe to all of them with the `IntropyTelemetry.ActivitySources` wildcard,

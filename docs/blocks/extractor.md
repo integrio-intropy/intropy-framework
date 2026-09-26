@@ -232,7 +232,7 @@ Sends CloudEvents to another Dapr service's `"ingest"` endpoint via `DaprClient.
     type: "com.company.customer.extracted")
 ```
 
-The invoker creates an HTTP POST request with the CloudEvent as the body and invokes `{appId}/ingest`.
+The invoker creates an HTTP POST request with the CloudEvent as the body and invokes `{appId}/ingest`. Only a success status (2xx) counts as delivered. Any other status is a technical failure, so the item is not completed and is retried on the next run.
 
 ### Custom sender
 

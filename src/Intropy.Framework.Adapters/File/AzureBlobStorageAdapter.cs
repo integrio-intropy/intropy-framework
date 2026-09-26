@@ -13,6 +13,9 @@ public class AzureBlobStorageAdapter(DaprClient daprClient, FileAdapterOptions o
 {
     private const string DeleteSnapshotsKey = "deleteSnapshots";
 
+    /// <inheritdoc/>
+    internal override string AdapterKind => "azure_blob";
+
     /// <summary>bindings.azure.blobstorage carries the blob path under <c>blobName</c>.</summary>
     internal override string FileNameMetadataKey => "blobName";
 

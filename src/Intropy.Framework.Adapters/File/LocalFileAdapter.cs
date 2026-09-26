@@ -12,6 +12,9 @@ namespace Intropy.Framework.Adapters.File;
 public class LocalFileAdapter(DaprClient daprClient, FileAdapterOptions options)
     : DaprBindingFileAdapter(daprClient, options)
 {
+    /// <inheritdoc/>
+    internal override string AdapterKind => "local";
+
     /// <summary>bindings.localstorage carries the file path under <c>fileName</c>.</summary>
     internal override string FileNameMetadataKey => "fileName";
 
