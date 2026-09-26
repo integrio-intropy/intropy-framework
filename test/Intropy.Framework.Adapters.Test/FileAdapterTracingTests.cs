@@ -34,6 +34,7 @@ public class FileAdapterTracingTests
             Assert.Equal(ActivityStatusCode.Error, span.Status);
             Assert.Equal("binding unavailable", span.StatusDescription);
             Assert.Contains(span.Events, e => e.Name == "exception");
+            Assert.False(string.IsNullOrEmpty(span.Source.Version));
         });
     }
 

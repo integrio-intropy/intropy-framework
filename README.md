@@ -53,8 +53,7 @@ builder.Services.AddSendPipeline<Order, Invoice, Context>("order-to-invoice",
             sp.GetRequiredService<IBusinessIncidentServiceClient>(),
             ctx => ctx.Metadata["message_id"]));
 
-var runner = app.Services.GetRequiredService<TransactionalIntegrationRunner>();
-return await runner.RunAsync();
+return await app.RunToCompletionAsync();
 ```
 
 See the [Getting Started guide](docs/getting-started.md) for the full walkthrough.

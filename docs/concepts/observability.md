@@ -88,15 +88,36 @@ This means you can find failed steps in your tracing backend by filtering on `st
 
 ## Activity sources
 
-The framework uses separate `ActivitySource` instances for each package:
+The framework uses a separate `ActivitySource` for each package, versioned with the package:
 
-| Package | ActivitySource |
-|---------|---------------|
-| Core | Used for pipeline and step spans |
-| Blocks | Used for block-level operations |
-| Adapters | Used for file adapter operations |
+| ActivitySource | Spans |
+|----------------|-------|
+| `Intropy.Framework.Core` | Pipelines and steps |
+| `Intropy.Framework.Blocks` | Block-level operations |
+| `Intropy.Framework.Adapters` | File adapter operations (list, get, create, delete) |
+| `Intropy.Framework.Hosting` | Run-to-completion jobs and consumed messages |
 
-To collect traces, subscribe to these activity sources in your OpenTelemetry configuration.
+To collect traces, subscribe to all of them with the `IntropyTelemetry.ActivitySources` wildcard:
+
+```csharp
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing => tracing.AddSource(IntropyTelemetry.ActivitySources));
+```
+
+### Run-to-completion jobs
+
+A job's process exits as soon as the job ends. Telemetry that is still buffered in the
+exporter when the process exits is lost, and the job's own span is always in the last batch. Run
+the job with `RunToCompletionAsync()` on the host: it starts the host (the OpenTelemetry hosting
+integration creates its providers in a hosted service) and disposes it afterwards, which flushes
+the exporters.
+
+```csharp
+return await app.RunToCompletionAsync();
+```
+
+If you build a bare `ServiceProvider` instead of a host, register the providers yourself (for
+example `Sdk.CreateTracerProviderBuilder()`), and dispose them before returning.
 
 ## Practical implications
 

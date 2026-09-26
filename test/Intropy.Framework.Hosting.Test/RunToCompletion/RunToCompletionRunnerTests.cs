@@ -272,6 +272,7 @@ public class RunToCompletionRunnerTests
 
         Assert.Equal(ActivityStatusCode.Error, span.Status);
         Assert.Equal("2 item(s) failed", span.StatusDescription);
+        Assert.False(string.IsNullOrEmpty(span.Source.Version));
     }
 
     [Fact]

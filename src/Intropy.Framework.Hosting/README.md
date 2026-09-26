@@ -43,6 +43,11 @@ await using var provider = services.BuildServiceProvider();
 return await provider.GetRequiredService<RunToCompletionRunner>().RunAsync(ct);
 ```
 
+With a generic host, `host.RunToCompletionAsync(ct)` does this for you: it starts the host,
+cancels the job when the host is asked to stop (SIGTERM), and stops and disposes the host
+afterwards. Use it when you export telemetry through the OpenTelemetry hosting integration: its
+providers are only created when the host starts, and only flushed when the host is disposed.
+
 `AddRunToCompletionJob` registers the job as a singleton if you haven't. Register it yourself first if you need control over construction — your registration takes precedence.
 
 ### Exit codes

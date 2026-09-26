@@ -48,8 +48,8 @@ The lifecycle is a run-to-completion job, hosted by the same `RunToCompletionRun
 6. The Dapr sidecar is shut down
 
 ```csharp
-var runner = app.Services.GetRequiredService<RunToCompletionRunner>();
-var exitCode = await runner.RunAsync(ct); // 0 success or host cancellation; 1 failure or files left in place; 2 sidecar unavailable
+// Starts the host, runs the job, then stops and disposes the host (flushing telemetry).
+return await app.RunToCompletionAsync(ct); // 0 success or host cancellation; 1 failure or files left in place; 2 sidecar unavailable or host failed to start
 ```
 
 ## Configuration

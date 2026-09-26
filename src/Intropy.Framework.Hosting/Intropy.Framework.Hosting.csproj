@@ -13,6 +13,7 @@
   <ItemGroup>
     <PackageReference Include="Dapr.Client" />
     <PackageReference Include="Dapr.Messaging" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
 </Project>
