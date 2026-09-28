@@ -14,7 +14,7 @@ This guide walks you through building a complete Transactional Integration with 
 dotnet add package Intropy.Framework.Hosting
 ```
 
-The Hosting package provides `AddTransactionalIntegration` and the `RunToCompletionRunner` that hosts it, and transitively brings in Blocks, Adapters, and Core. If you only need the pipeline engine without the TI lifecycle, install `Intropy.Framework.Blocks` (or just `Intropy.Framework.Core`) instead.
+The Hosting package provides `AddTransactionalIntegration` and the `JobRunner` that hosts it, and transitively brings in Blocks, Adapters, and Core. If you only need the pipeline engine without the TI lifecycle, install `Intropy.Framework.Blocks` (or just `Intropy.Framework.Core`) instead.
 
 ## Register framework services
 
@@ -32,7 +32,9 @@ builder.Services.AddTransactionalIntegration(opts =>
 
 `AddIntropyFramework` registers `FrameworkOptions` and validates the component name. You can also set the `INTROPY_COMPONENT_NAME` environment variable and call `AddIntropyFramework()` without a delegate.
 
-`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `RunToCompletionRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are required.
+To export traces and metrics, configure OpenTelemetry with [Intropy.Telemetry](https://github.com/integrio-intropy/intropy-telemetry). Use the component name as its `ServiceName`, and add the framework's meters. See [Observability](concepts/observability.md#collecting-the-telemetry).
+
+`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `JobRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are required.
 
 ## Define your data models
 
@@ -52,7 +54,7 @@ source port, with its adapter configured under `Ports:order-source`:
 
 ```csharp
 builder.Services.AddSourcePort("order-source", builder.Configuration);
-// or, to archive handled files: AddSourcePort("order-source", builder.Configuration, SweepCompletion.Archive("archive"))
+// or, to archive handled files: AddSourcePort("order-source", builder.Configuration, FileCompletion.Archive("archive"))
 ```
 
 To replace the publisher, register your own `EnqueueStep<Context>`; to replace the whole receive
@@ -187,7 +189,7 @@ All builder methods are required. The builder throws `InvalidOperationException`
 
 ## Run it
 
-The `RunToCompletionRunner` hosts the lifecycle. Run it through the host, and return its exit code:
+The `JobRunner` hosts the lifecycle. Run it through the host, and return its exit code:
 
 ```csharp
 return await app.RunToCompletionAsync();

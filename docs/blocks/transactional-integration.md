@@ -38,7 +38,7 @@ If the send pipeline fails for a message, the message remains on the topic for a
 
 ## Lifecycle
 
-The lifecycle is a run-to-completion job, hosted by the same `RunToCompletionRunner` as the extractor:
+The lifecycle is a run-to-completion job, hosted by the same `JobRunner` as the extractor:
 
 1. Waits for the Dapr sidecar to be ready
 2. Starts the receive pipeline (publisher) and send pipeline (subscriber) concurrently
@@ -59,7 +59,7 @@ return await app.RunToCompletionAsync(ct); // 0 success or host cancellation; 1 
 The swept port is registered on its own, with its file adapter configured under `Ports:<port>`:
 
 ```csharp
-builder.Services.AddSourcePort("order-source", builder.Configuration); // optional third argument: SweepCompletion.Archive("archive")
+builder.Services.AddSourcePort("order-source", builder.Configuration); // optional third argument: FileCompletion.Archive("archive")
 ```
 
 ```csharp
@@ -85,7 +85,7 @@ builder.Services.AddTransactionalIntegration(opts =>
 | `PostIdleGracePeriod` | Time to wait after idle before shutting down |
 | `MaxMessageProcessingTime` | Maximum time a single message can take before timeout |
 
-The optional second delegate configures the shared `RunToCompletionOptions`: `JobName`, `SidecarTimeout`, and `SidecarShutdownTimeout`.
+The optional second delegate configures the shared `JobOptions`: `JobName`, `SidecarTimeout`, and `SidecarShutdownTimeout`.
 
 Pipelines use the base `Context` by default. To use your own context type in both pipelines, pass a
 `ContextFactory<TCtx>`, the same factory shape extractors use:

@@ -362,7 +362,7 @@ services.AddTransactionalIntegration(opts =>
 });
 ```
 
-Registers `TransactionalIntegrationOptions`, `ITopicSubscriber`, and `TransactionalIntegrationLifecycle` as the `IRunToCompletionJob` hosted by `RunToCompletionRunner`. An optional second delegate configures the runner's `RunToCompletionOptions` (job name, sidecar timeouts).
+Registers `TransactionalIntegrationOptions`, `ITopicSubscriber`, and `TransactionalIntegrationJob` as the `IJob` hosted by `JobRunner`. An optional second delegate configures the runner's `JobOptions` (job name, sidecar timeouts).
 
 ## See also
 

@@ -5,8 +5,8 @@ using Intropy.Framework.Blocks.Extractor.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Extractor;
-using Intropy.Framework.Hosting.Sweep;
-using Intropy.Framework.Hosting.RunToCompletion;
+using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -21,7 +21,7 @@ namespace Intropy.Framework.Hosting.Test.Extractor;
 internal sealed record TestExtractor<TInput, TOutput, TCtx> where TCtx : Context
 {
     public string SourcePort { get; init; } = ExtractorSweepTestProcess.SourceKey;
-    public SweepCompletion Completion { get; init; } = SweepCompletion.Delete;
+    public FileCompletion Completion { get; init; } = FileCompletion.Delete;
     public required Type Deserializer { get; init; }
     public required Type Validator { get; init; }
     public required Type Transformer { get; init; }
@@ -37,7 +37,7 @@ internal sealed record TestExtractor<TInput, TOutput, TCtx> where TCtx : Context
 
     /// <summary>Registers the steps (existing registrations win), a default Dapr publisher, and
     /// the extractor itself.</summary>
-    public IServiceCollection Register(IServiceCollection services, Action<RunToCompletionOptions>? configureJob = null)
+    public IServiceCollection Register(IServiceCollection services, Action<JobOptions>? configureJob = null)
     {
         services.AddSingleton(this);
         foreach (var step in (Type[])[Deserializer, Validator, Transformer, .. Enrichments])
@@ -76,6 +76,6 @@ internal static class TestExtractorServiceCollectionExtensions
     /// <summary>Registers <paramref name="extractor"/> as a component would, with optional
     /// runner settings.</summary>
     internal static IServiceCollection AddExtractor<TInput, TOutput, TCtx>(this IServiceCollection services,
-        TestExtractor<TInput, TOutput, TCtx> extractor, Action<RunToCompletionOptions>? configureJob = null)
+        TestExtractor<TInput, TOutput, TCtx> extractor, Action<JobOptions>? configureJob = null)
         where TCtx : Context => extractor.Register(services, configureJob);
 }

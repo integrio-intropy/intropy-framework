@@ -4,7 +4,7 @@ using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Extractor;
-using Intropy.Framework.Hosting.Sweep;
+using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Testing.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -65,7 +65,7 @@ public class ExtractorJobTests
     {
         var fakes = new ExtractorSweepTestProcess.SweepFakes();
         fakes.Files.AddFile("order-1.json", ValidInput);
-        var definition = ExtractorSweepTestProcess.Definition() with { Completion = SweepCompletion.Archive("archive") };
+        var definition = ExtractorSweepTestProcess.Definition() with { Completion = FileCompletion.Archive("archive") };
         var sweep = CreateSweep(fakes.CreateServices(definition: definition));
 
         var summary = await sweep.ExecuteAsync(CancellationToken.None);

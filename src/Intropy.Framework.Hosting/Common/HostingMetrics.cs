@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
-using Intropy.Framework.Hosting.Sweep;
+using Intropy.Framework.Hosting.FileSweeps;
 
 namespace Intropy.Framework.Hosting.Common;
 
@@ -53,7 +53,7 @@ internal static class HostingMetrics
         JobDuration.Record(duration.TotalSeconds, tags);
     }
 
-    internal static void RecordSweptFile(string componentName, string sourcePort, SweepOutcome outcome) =>
+    internal static void RecordSweptFile(string componentName, string sourcePort, FileOutcome outcome) =>
         SweptFiles.Add(1, new TagList
         {
             { "intropy.component.name", componentName },
@@ -85,11 +85,11 @@ internal static class HostingMetrics
         ProcessDuration.Record(duration.TotalSeconds, tags);
     }
 
-    internal static string OutcomeName(SweepOutcome outcome) => outcome switch
+    internal static string OutcomeName(FileOutcome outcome) => outcome switch
     {
-        SweepOutcome.Consumed => "consumed",
-        SweepOutcome.Duplicate => "duplicate",
-        SweepOutcome.Aborted => "aborted",
+        FileOutcome.Consumed => "consumed",
+        FileOutcome.Duplicate => "duplicate",
+        FileOutcome.Aborted => "aborted",
         _ => "failed"
     };
 }

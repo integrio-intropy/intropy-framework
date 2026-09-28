@@ -6,7 +6,7 @@ using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Extractor.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Extractor;
-using Intropy.Framework.Hosting.Sweep;
+using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Testing.Adapters;
 using Intropy.Framework.Testing.Services;
 using Intropy.Framework.Testing.Topics;

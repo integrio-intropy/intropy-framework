@@ -9,7 +9,7 @@ using Intropy.Framework.Blocks.Extractor.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Extractor;
-using Intropy.Framework.Hosting.Sweep;
+using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Testing.Adapters;
 using Intropy.Framework.Testing.Services;
 using Intropy.Framework.Testing.Topics;
@@ -194,16 +194,11 @@ internal static class ExtractorSweepTestProcess
     {
         public Task<List<FileEntry>> ListAsync(CancellationToken ct = default) => inner.ListAsync(ct);
 
-        public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) => inner.GetContentAsync(fileName, ct);
-
-        public async Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default) =>
-            fileName == emptyContentFile ? string.Empty : await inner.GetContentAsync(fileName, encoding, ct);
+        public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) =>
+            fileName == emptyContentFile ? Task.FromResult(Array.Empty<byte>()) : inner.GetContentAsync(fileName, ct);
 
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => inner.DeleteAsync(fileName, ct);
     }
@@ -216,13 +211,8 @@ internal static class ExtractorSweepTestProcess
 
         public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) => inner.GetContentAsync(fileName, ct);
 
-        public Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default) => inner.GetContentAsync(fileName, encoding, ct);
-
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public async Task DeleteAsync(string fileName, CancellationToken ct = default)
         {
@@ -237,22 +227,17 @@ internal static class ExtractorSweepTestProcess
     {
         public Task<List<FileEntry>> ListAsync(CancellationToken ct = default) => inner.ListAsync(ct);
 
-        public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) => inner.GetContentAsync(fileName, ct);
-
-        public async Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default)
+        public async Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default)
         {
             // The read is not hooked to the token (doesn't forward it): the host cancellation
             // arrives mid-read and the read still completes normally.
             await Task.Delay(20, CancellationToken.None);
             await cts.CancelAsync();
-            return await inner.GetContentAsync(fileName, encoding, ct);
+            return await inner.GetContentAsync(fileName, ct);
         }
 
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => inner.DeleteAsync(fileName, ct);
     }
@@ -263,11 +248,9 @@ internal static class ExtractorSweepTestProcess
     {
         public Task<List<FileEntry>> ListAsync(CancellationToken ct = default) => inner.ListAsync(ct);
 
-        public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) => inner.GetContentAsync(fileName, ct);
-
-        public async Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default)
+        public async Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default)
         {
-            var content = await inner.GetContentAsync(fileName, encoding, ct);
+            var content = await inner.GetContentAsync(fileName, ct);
             if (fileName == cancelAfterFile)
                 await cts.CancelAsync();
             return content;
@@ -275,9 +258,6 @@ internal static class ExtractorSweepTestProcess
 
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => inner.DeleteAsync(fileName, ct);
     }
@@ -289,9 +269,7 @@ internal static class ExtractorSweepTestProcess
     {
         public Task<List<FileEntry>> ListAsync(CancellationToken ct = default) => inner.ListAsync(ct);
 
-        public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) => inner.GetContentAsync(fileName, ct);
-
-        public async Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default)
+        public async Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default)
         {
             if (fileName == oceFile)
             {
@@ -299,14 +277,11 @@ internal static class ExtractorSweepTestProcess
                     await cts.CancelAsync();
                 throw new OperationCanceledException("Simulated cancellation surfacing during read");
             }
-            return await inner.GetContentAsync(fileName, encoding, ct);
+            return await inner.GetContentAsync(fileName, ct);
         }
 
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => inner.DeleteAsync(fileName, ct);
     }
@@ -325,13 +300,8 @@ internal static class ExtractorSweepTestProcess
 
         public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) => inner.GetContentAsync(fileName, ct);
 
-        public Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default) => inner.GetContentAsync(fileName, encoding, ct);
-
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => inner.DeleteAsync(fileName, ct);
     }
@@ -350,13 +320,8 @@ internal static class ExtractorSweepTestProcess
 
         public Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default) => inner.GetContentAsync(fileName, ct);
 
-        public Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default) => inner.GetContentAsync(fileName, encoding, ct);
-
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => inner.DeleteAsync(fileName, ct);
     }

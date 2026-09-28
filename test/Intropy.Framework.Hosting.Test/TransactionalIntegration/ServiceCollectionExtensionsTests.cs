@@ -8,9 +8,8 @@ using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
-using Intropy.Framework.Hosting.RunToCompletion;
+using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
-using Intropy.Framework.Hosting.TransactionalIntegration.Lifecycle;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -138,13 +137,13 @@ public class ServiceCollectionExtensionsTests
         });
 
         var provider = services.BuildServiceProvider();
-        var lifecycle = provider.GetRequiredService<TransactionalIntegrationLifecycle<Context>>();
+        var lifecycle = provider.GetRequiredService<TransactionalIntegrationJob<Context>>();
 
         Assert.NotNull(lifecycle);
     }
 
     [Fact]
-    public void AddTransactionalIntegration_ShouldHostTheLifecycleOnTheRunToCompletionRunner()
+    public void AddTransactionalIntegration_ShouldHostTheLifecycleOnTheJobRunner()
     {
         // Verifies that the lifecycle is the run-to-completion job and the shared runner hosts it
         var services = GetServices();
@@ -161,10 +160,10 @@ public class ServiceCollectionExtensionsTests
 
         var provider = services.BuildServiceProvider();
 
-        Assert.NotNull(provider.GetRequiredService<RunToCompletionRunner>());
-        Assert.Same(provider.GetRequiredService<TransactionalIntegrationLifecycle<Context>>(),
-            provider.GetRequiredService<IRunToCompletionJob>());
-        Assert.Equal("orders-integration", provider.GetRequiredService<RunToCompletionOptions>().JobName);
+        Assert.NotNull(provider.GetRequiredService<JobRunner>());
+        Assert.Same(provider.GetRequiredService<TransactionalIntegrationJob<Context>>(),
+            provider.GetRequiredService<IJob>());
+        Assert.Equal("orders-integration", provider.GetRequiredService<JobOptions>().JobName);
     }
 
     [Fact]
@@ -183,7 +182,7 @@ public class ServiceCollectionExtensionsTests
             job.SidecarTimeout = TimeSpan.FromSeconds(5);
         });
 
-        var jobOptions = services.BuildServiceProvider().GetRequiredService<RunToCompletionOptions>();
+        var jobOptions = services.BuildServiceProvider().GetRequiredService<JobOptions>();
         Assert.Equal("orders-ti", jobOptions.JobName);
         Assert.Equal(TimeSpan.FromSeconds(5), jobOptions.SidecarTimeout);
     }

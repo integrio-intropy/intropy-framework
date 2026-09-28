@@ -3,8 +3,8 @@ using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Extractor;
-using Intropy.Framework.Hosting.Sweep;
-using Intropy.Framework.Hosting.RunToCompletion;
+using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Testing.Adapters;
 using Intropy.Framework.Testing.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -35,9 +35,9 @@ public class ExtractorRunToCompletionTests
         // The explicit composition check resolves the full graph in a scope, without a sidecar.
         await provider.ValidateExtractorCompositionAsync<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>();
 
-        var job = provider.GetRequiredService<IRunToCompletionJob>();
+        var job = provider.GetRequiredService<IJob>();
         Assert.IsType<ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>>(job);
-        Assert.Equal("orders-extractor", provider.GetRequiredService<RunToCompletionOptions>().JobName);
+        Assert.Equal("orders-extractor", provider.GetRequiredService<JobOptions>().JobName);
         Assert.Empty(provider.GetRequiredService<DaprClient>().ReceivedCalls()); // no external calls
     }
 
@@ -46,7 +46,7 @@ public class ExtractorRunToCompletionTests
     {
         var (provider, _) = BuildRegistration(options => options.SidecarTimeout = TimeSpan.FromSeconds(42));
 
-        var options = provider.GetRequiredService<RunToCompletionOptions>();
+        var options = provider.GetRequiredService<JobOptions>();
         Assert.Equal("orders-extractor", options.JobName); // the component name
         Assert.Equal(TimeSpan.FromSeconds(42), options.SidecarTimeout);   // existing runner options, no second options model
     }
@@ -62,7 +62,7 @@ public class ExtractorRunToCompletionTests
         await using var provider = services.BuildServiceProvider();
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => provider.GetRequiredService<IRunToCompletionJob>().ExecuteAsync(CancellationToken.None));
+            () => provider.GetRequiredService<IJob>().ExecuteAsync(CancellationToken.None));
 
         Assert.Contains("AddSourcePort", error.Message);
         Assert.Single(fakes.Files.Files);
@@ -79,7 +79,7 @@ public class ExtractorRunToCompletionTests
         await using var provider = services.BuildServiceProvider();
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => provider.GetRequiredService<IRunToCompletionJob>().ExecuteAsync(CancellationToken.None));
+            () => provider.GetRequiredService<IJob>().ExecuteAsync(CancellationToken.None));
 
         Assert.Contains(nameof(FrameworkOptions), error.Message);
         Assert.Single(fakes.Files.Files);
@@ -105,11 +105,11 @@ public class ExtractorRunToCompletionTests
     {
         var (provider, fakes) = BuildRegistration();
         fakes.Files.AddFile("order-1.json", ValidInput);
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
-        Assert.Equal(RunToCompletionExitCodes.Success, exitCode);
+        Assert.Equal(JobExitCodes.Success, exitCode);
         await provider.GetRequiredService<DaprClient>().Received(1).WaitForSidecarAsync(Arg.Any<CancellationToken>());
         await provider.GetRequiredService<DaprClient>().Received(1).ShutdownSidecarAsync(Arg.Any<CancellationToken>());
         Assert.Single(fakes.Topic.Events);
@@ -123,11 +123,11 @@ public class ExtractorRunToCompletionTests
         fakes.Files.AddFile("order-1.json", ValidInput);
         fakes.Idempotency.NextStatus = new Intropy.Contracts.IdempotencyService.StatusResponse(
             Intropy.Contracts.IdempotencyService.Action.Ignore, Intropy.Contracts.IdempotencyService.Reason.SameData);
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
-        Assert.Equal(RunToCompletionExitCodes.Success, exitCode);
+        Assert.Equal(JobExitCodes.Success, exitCode);
         Assert.Empty(fakes.Topic.Events);
         Assert.Empty(fakes.Files.Files); // deleted as a duplicate
     }
@@ -137,13 +137,13 @@ public class ExtractorRunToCompletionTests
     {
         var (provider, fakes) = BuildRegistration();
         fakes.Files.AddFile("order-1.json", string.Empty);
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
         // An empty source file reads as string.Empty on every adapter and is a stuck file:
         // the run fails with exit 1 and the file stays for the next run.
-        Assert.Equal(RunToCompletionExitCodes.JobFailure, exitCode);
+        Assert.Equal(JobExitCodes.JobFailure, exitCode);
         Assert.True(fakes.Files.Files.ContainsKey("order-1.json"));
         Assert.Empty(fakes.Topic.Events);
     }
@@ -154,11 +154,11 @@ public class ExtractorRunToCompletionTests
         var (provider, fakes) = BuildRegistration();
         fakes.Files.AddFile("order-1.json", ValidInput);
         fakes.Topic.SendException = new InvalidOperationException("Broker unreachable");
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
-        Assert.Equal(RunToCompletionExitCodes.JobFailure, exitCode);
+        Assert.Equal(JobExitCodes.JobFailure, exitCode);
         Assert.True(fakes.Files.Files.ContainsKey("order-1.json"));
     }
 
@@ -177,12 +177,12 @@ public class ExtractorRunToCompletionTests
             ExtractorTestProcess.TestContext>(ExtractorSweepTestProcess.Definition());
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var _ = provider;
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync(cts.Token);
 
         // Cancellation must not erase previously recorded failures.
-        Assert.Equal(RunToCompletionExitCodes.JobFailure, exitCode);
+        Assert.Equal(JobExitCodes.JobFailure, exitCode);
         Assert.Empty(fakes.Topic.Events);
     }
 
@@ -199,13 +199,13 @@ public class ExtractorRunToCompletionTests
             ExtractorTestProcess.TestContext>(ExtractorSweepTestProcess.Definition());
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var _ = provider;
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
         // An OperationCanceledException with no host cancellation must not become a
         // successful run: the file failed.
-        Assert.Equal(RunToCompletionExitCodes.JobFailure, exitCode);
+        Assert.Equal(JobExitCodes.JobFailure, exitCode);
         Assert.True(fakes.Files.Files.ContainsKey("order-1.json"));
     }
 
@@ -222,13 +222,13 @@ public class ExtractorRunToCompletionTests
             ExtractorTestProcess.TestContext>(ExtractorSweepTestProcess.Definition());
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var _ = provider;
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
         // An OperationCanceledException from the listing the host never requested fails
         // the job instead of reporting an empty successful sweep.
-        Assert.Equal(RunToCompletionExitCodes.JobFailure, exitCode);
+        Assert.Equal(JobExitCodes.JobFailure, exitCode);
         Assert.True(fakes.Files.Files.ContainsKey("order-1.json"));
     }
 
@@ -249,12 +249,12 @@ public class ExtractorRunToCompletionTests
             => new ExtractorSweepTestProcess.ScopeCleanupOceDependency(throwOnDispose: created++ > 0));
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var _ = provider;
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
         // An escaping cleanup OCE never hides the recorded failure: it maps to exit 1.
-        Assert.Equal(RunToCompletionExitCodes.JobFailure, exitCode);
+        Assert.Equal(JobExitCodes.JobFailure, exitCode);
     }
 
     [Fact]
@@ -272,13 +272,13 @@ public class ExtractorRunToCompletionTests
             => new ExtractorSweepTestProcess.ScopeCleanupOceDependency(throwOnDispose: created++ > 0));
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var _ = provider;
-        var runner = provider.GetRequiredService<RunToCompletionRunner>();
+        var runner = provider.GetRequiredService<JobRunner>();
 
         var exitCode = await runner.RunAsync();
 
         // A cleanup cancellation the host never requested on an otherwise clean run is a job
         // failure; the recorded outcomes (publication, consumption) are not lost.
-        Assert.Equal(RunToCompletionExitCodes.JobFailure, exitCode);
+        Assert.Equal(JobExitCodes.JobFailure, exitCode);
         Assert.Single(fakes.Topic.Events);
         Assert.Empty(fakes.Files.Files);
     }
@@ -293,7 +293,7 @@ public class ExtractorRunToCompletionTests
         services.RemoveAllKeyed<IFileAdapter>(ExtractorSweepTestProcess.SourceKey);
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
         await using var _ = provider.ConfigureAwait(false);
-        var job = provider.GetRequiredService<IRunToCompletionJob>();
+        var job = provider.GetRequiredService<IJob>();
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
             () => job.ExecuteAsync(CancellationToken.None));
@@ -308,7 +308,7 @@ public class ExtractorRunToCompletionTests
     public async Task SingletonJob_DoesNotCaptureAScopedPipeline()
     {
         var (provider, fakes) = BuildRegistration();
-        var job = provider.GetRequiredService<IRunToCompletionJob>(); // singleton resolution must succeed
+        var job = provider.GetRequiredService<IJob>(); // singleton resolution must succeed
 
         // The scoped pipeline is not resolvable from the root provider.
         Assert.Throws<InvalidOperationException>(() =>
@@ -328,10 +328,10 @@ public class ExtractorRunToCompletionTests
     {
         var (provider, daprClient) = BuildRegistrationWithSlowSidecar();
 
-        var exitCode = await provider.GetRequiredService<RunToCompletionRunner>().RunAsync();
+        var exitCode = await provider.GetRequiredService<JobRunner>().RunAsync();
 
         // Existing sidecar startup failure behavior remains intact.
-        Assert.Equal(RunToCompletionExitCodes.InfrastructureFailure, exitCode);
+        Assert.Equal(JobExitCodes.InfrastructureFailure, exitCode);
         Assert.DoesNotContain(daprClient.ReceivedCalls(), c => c.GetMethodInfo().Name == "ShutdownSidecarAsync");
     }
 
@@ -352,7 +352,7 @@ public class ExtractorRunToCompletionTests
     }
 
     private static (ServiceProvider Provider, ExtractorSweepTestProcess.SweepFakes Fakes) BuildRegistration(
-        Action<RunToCompletionOptions>? configureOptions = null)
+        Action<JobOptions>? configureOptions = null)
     {
         var fakes = new ExtractorSweepTestProcess.SweepFakes();
         var services = fakes.CreateEdgeServices();

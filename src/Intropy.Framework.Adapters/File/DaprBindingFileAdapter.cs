@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.RegularExpressions;
 using Dapr.Client;
 using Intropy.Framework.Adapters.Common;
@@ -10,8 +9,7 @@ namespace Intropy.Framework.Adapters.File;
 /// The shared Dapr-binding implementation behind <see cref="LocalFileAdapter"/>,
 /// <see cref="SftpAdapter"/>, and <see cref="AzureBlobStorageAdapter"/>: the binding operation
 /// constants, the span around each Dapr call (named <c>{operation} {binding}</c>, with the
-/// binding, path and size as attributes), the encoding-based
-/// <c>GetContentAsync</c>/<c>WriteAsync</c> overloads, regex filtering, and the shared
+/// binding, path and size as attributes), regex filtering, and the shared
 /// request/response flow. Each adapter supplies only what genuinely varies: the file-name
 /// metadata key, path combination, list-request building/list-response parsing, and any extra
 /// per-operation metadata.
@@ -23,7 +21,6 @@ namespace Intropy.Framework.Adapters.File;
 /// it. Custom adapters implement <see cref="IFileAdapter"/> directly (or plug in through the
 /// <c>AddFileAdapter</c> factory overload).
 /// </para>
-/// <para>An empty file's content decodes as <see cref="string.Empty"/> — never null.</para>
 /// </remarks>
 public abstract class DaprBindingFileAdapter : IFileAdapter
 {
@@ -110,16 +107,6 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
     }
 
     /// <inheritdoc/>
-    public async Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(encoding);
-
-        var data = await GetContentAsync(fileName, ct);
-        var content = encoding.GetString(data);
-        return content;
-    }
-
-    /// <inheritdoc/>
     public async Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null,
         CancellationToken ct = default)
     {
@@ -134,17 +121,6 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
             await DaprClient.InvokeBindingAsync(request, ct);
             return true;
         }, ct);
-    }
-
-    /// <inheritdoc/>
-    public async Task WriteAsync(string fileName, string content, Encoding encoding,
-        string? basePathOverride = null, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(encoding);
-        ArgumentNullException.ThrowIfNull(content);
-
-        var data = encoding.GetBytes(content);
-        await WriteAsync(fileName, data, basePathOverride, ct);
     }
 
     /// <inheritdoc/>

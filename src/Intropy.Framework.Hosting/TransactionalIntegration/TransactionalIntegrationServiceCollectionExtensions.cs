@@ -5,8 +5,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
-using Intropy.Framework.Hosting.RunToCompletion;
-using Intropy.Framework.Hosting.TransactionalIntegration.Lifecycle;
+using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -28,7 +27,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// name, default: the component name) and the sidecar timeouts.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddTransactionalIntegration(this IServiceCollection services,
-        Action<TransactionalIntegrationOptions> configureOptions, Action<RunToCompletionOptions>? configureJob = null) =>
+        Action<TransactionalIntegrationOptions> configureOptions, Action<JobOptions>? configureJob = null) =>
         services.AddTransactionalIntegration<Context>((metadata, isRetry) => new Context(metadata, isRetry),
             configureOptions, configureJob);
 
@@ -39,7 +38,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// NOTE: You must register the component identity (<c>AddIntropyFramework</c>),
     /// <c>DaprClient</c>, an ISendPipeline of <typeparamref name="TCtx"/>, and the
     /// source port (<c>AddSourcePort</c>).
-    /// The lifecycle is hosted by <see cref="RunToCompletionRunner"/>; resolve it and call
+    /// The lifecycle is hosted by <see cref="JobRunner"/>; resolve it and call
     /// <c>RunAsync</c>.
     /// </summary>
     /// <remarks>
@@ -58,7 +57,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddTransactionalIntegration<TCtx>(this IServiceCollection services,
         ContextFactory<TCtx> contextFactory, Action<TransactionalIntegrationOptions> configureOptions,
-        Action<RunToCompletionOptions>? configureJob = null) where TCtx : Context
+        Action<JobOptions>? configureJob = null) where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(contextFactory);
@@ -97,29 +96,29 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             return new DaprTopicSubscriber(pubSubClient);
         });
 
-        // Register the lifecycle
-        services.AddSingleton<TransactionalIntegrationLifecycle<TCtx>>(sp =>
-        {
-            var topicSubscriber = sp.GetRequiredService<ITopicSubscriber>();
-            var sendPipeline = sp.GetRequiredService<ISendPipeline<TCtx>>();
+        // The send side: the message processor and the subscription around it.
+        services.AddSingleton(sp => new MessageProcessor<TCtx>(
+            sp.GetRequiredService<ISendPipeline<TCtx>>(),
+            contextFactory,
+            sp.GetRequiredService<FrameworkOptions>().ComponentName,
+            options.DaprTopicName,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<MessageProcessor<TCtx>>()));
+        services.AddSingleton(sp => new MessageSubscriber<TCtx>(
+            sp.GetRequiredService<ITopicSubscriber>(),
+            sp.GetRequiredService<MessageProcessor<TCtx>>(),
+            sp.GetRequiredService<TransactionalIntegrationOptions>(),
+            sp.GetRequiredService<FrameworkOptions>().ComponentName,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<MessageSubscriber<TCtx>>()));
 
-            var lifecycleOptions = sp.GetRequiredService<TransactionalIntegrationOptions>();
-            var loggerFactory = sp.GetRequiredService<ILoggerFactory>();
-            var componentName = sp.GetRequiredService<FrameworkOptions>().ComponentName;
-            var receiveJob = new TransactionalIntegrationReceiveJob<TCtx>(sp,
-                sp.GetRequiredService<FrameworkOptions>(), contextFactory, loggerFactory);
+        // The receive side, and the lifecycle hosting both.
+        services.AddSingleton(sp => new TransactionalIntegrationReceiver<TCtx>(sp,
+            sp.GetRequiredService<FrameworkOptions>(), contextFactory, sp.GetRequiredService<ILoggerFactory>()));
+        services.AddSingleton(sp => new TransactionalIntegrationJob<TCtx>(
+            sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
+            sp.GetRequiredService<MessageSubscriber<TCtx>>(),
+            sp.GetRequiredService<ILoggerFactory>()));
 
-            return new TransactionalIntegrationLifecycle<TCtx>(
-                receiveJob,
-                topicSubscriber,
-                sendPipeline,
-                lifecycleOptions,
-                componentName,
-                contextFactory,
-                loggerFactory);
-        });
-
-        services.AddRunToCompletionJob<TransactionalIntegrationLifecycle<TCtx>>(configureJob);
+        services.AddJob<TransactionalIntegrationJob<TCtx>>(configureJob);
 
         return services;
     }

@@ -1,7 +1,7 @@
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
-using Intropy.Framework.Hosting.RunToCompletion;
+using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -16,7 +16,7 @@ public static class ExtractorServiceCollectionExtensions
 {
     /// <summary>
     /// Registers one extractor component for file-sweep processing hosted by
-    /// <see cref="RunToCompletionRunner"/>. Only one extractor component may be registered per
+    /// <see cref="JobRunner"/>. Only one extractor component may be registered per
     /// service provider.
     /// </summary>
     /// <remarks>
@@ -38,7 +38,7 @@ public static class ExtractorServiceCollectionExtensions
         this IServiceCollection services,
         Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
         ContextFactory<TCtx> contextFactory,
-        Action<RunToCompletionOptions>? configureJob = null) where TCtx : Context
+        Action<JobOptions>? configureJob = null) where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configurePipeline);
@@ -51,7 +51,7 @@ public static class ExtractorServiceCollectionExtensions
         services.AddSingleton(provider => new ExtractorJob<TInput, TOutput, TCtx>(provider,
             provider.GetRequiredService<FrameworkOptions>(), contextFactory,
             provider.GetRequiredService<ILoggerFactory>()));
-        services.AddRunToCompletionJob<ExtractorJob<TInput, TOutput, TCtx>>(configureJob);
+        services.AddJob<ExtractorJob<TInput, TOutput, TCtx>>(configureJob);
         return services;
     }
 

@@ -97,8 +97,37 @@ The framework uses a separate `ActivitySource` for each package, versioned with 
 | `Intropy.Framework.Adapters` | File adapter operations, named `{operation} {binding}` (see [File Adapters](../adapters/file-adapters.md#tracing)) |
 | `Intropy.Framework.Hosting` | Run-to-completion jobs, one trace per swept file, and consumed messages |
 
-To collect traces, subscribe to all of them with the `IntropyTelemetry.ActivitySources` wildcard,
-and to the metrics with `IntropyTelemetry.Meters`:
+### Collecting the telemetry
+
+Configure OpenTelemetry in the component with
+[Intropy.Telemetry](https://github.com/integrio-intropy/intropy-telemetry): `Intropy.Telemetry.ConsoleApp`
+for a run-to-completion job, `Intropy.Telemetry.AspNetCore` for a component that serves HTTP. It
+already listens to `Intropy.*`, which covers every framework source, in both its `Open` and `Strict`
+modes. It does not subscribe to any meters, so add the framework's:
+
+```csharp
+builder.Services.AddIntropyFramework(o =>
+{
+    o.ComponentName = "order-processor";
+    o.ServiceNamespace = "integrio";
+});
+
+builder.Services.AddOpenTelemetry(config => // Intropy.Telemetry.ConsoleApp
+{
+    config.ServiceName = "order-processor"; // the component name
+    config.ServiceNamespace = "integrio";
+    config.Environment = builder.Environment.EnvironmentName;
+    config.ConfigureMetrics = metrics => metrics.AddMeter(IntropyTelemetry.Meters);
+});
+```
+
+Use the component name as the service name. Traces then identify the component through the
+resource's `service.name`, so the framework does not repeat it on its spans. Its metrics do carry
+`intropy.component.name`, because many metric backends expose resource attributes only through a
+separate join.
+
+Without Intropy.Telemetry, subscribe to the framework's sources and meters yourself with the
+`IntropyTelemetry.ActivitySources` and `IntropyTelemetry.Meters` wildcards:
 
 ```csharp
 builder.Services.AddOpenTelemetry()
@@ -108,11 +137,9 @@ builder.Services.AddOpenTelemetry()
 
 ### Messaging spans
 
-A Transactional Integration traces its queue hop with the OpenTelemetry messaging conventions. An
-Extractor's `WithDaprTopicPublisher` publishes the same way, under a `send {topic}` producer span
-whose context the CloudEvent carries.
+A Transactional Integration traces its queue hop with the OpenTelemetry messaging conventions.
 The receive side publishes each file under a `send {topic}` span (kind `Producer`), and that span's
-context travels with the message. The send side processes each message under a `process {topic}`
+context travels with the message. An Extractor's `WithDaprTopicPublisher` publishes the same way. The send side processes each message under a `process {topic}`
 span (kind `Consumer`) that continues it. When a message carries no trace context, its consumer
 span starts a new trace instead. Both carry `messaging.system`, `messaging.destination.name`,
 `messaging.operation.type` and `messaging.message.id`. A failure sets `error.type` and `Error`
@@ -152,8 +179,23 @@ the exporters.
 return await app.RunToCompletionAsync();
 ```
 
-If you build a bare `ServiceProvider` instead of a host, register the providers yourself (for
-example `Sdk.CreateTracerProviderBuilder()`), and dispose them before returning.
+If you build a bare `ServiceProvider` instead of a host, nothing starts or disposes the providers
+for you. With Intropy.Telemetry, wrap the run in its `OpenTelemetryScope`. It creates the providers
+and flushes them when it is disposed:
+
+```csharp
+await using var provider = services.BuildServiceProvider();
+int exitCode;
+using (new OpenTelemetryScope(provider))
+    exitCode = await provider.GetRequiredService<JobRunner>().RunAsync(ct);
+return exitCode;
+```
+
+Without Intropy.Telemetry, dispose the tracer, meter and logger providers before returning.
+
+In Intropy.Telemetry's `Strict` mode, the Dapr gRPC and HttpClient client spans are dropped. The
+framework's own send and process spans still carry the trace context across the queue, so a file's
+trace stays connected.
 
 ## Practical implications
 

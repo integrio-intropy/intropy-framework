@@ -5,14 +5,15 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
-using Intropy.Framework.Hosting.FilePipeline;
-using Intropy.Framework.Hosting.Sweep;
+using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.Logging;
 
 namespace Intropy.Framework.Hosting.Extractor;
 
 /// <summary>
-/// One run of an extractor: each source file is read as UTF-8 text and run through the composed
+/// The extractor's run-to-completion job: one sweep of the source port, where each source file is
+/// read as UTF-8 text and run through the composed
 /// <see cref="Extractor{TInput,TOutput,TCtx}"/> pipeline. A published file (or one routed as a
 /// delivered business incident) and an idempotent duplicate are completed as the source port
 /// says (<c>AddSourcePort</c>); a failed file stays for
@@ -30,10 +31,13 @@ internal sealed class ExtractorJob<TInput, TOutput, TCtx>(
     FrameworkOptions frameworkOptions,
     ContextFactory<TCtx> contextFactory,
     ILoggerFactory loggerFactory)
-    : FilePipelineJob<Extractor<TInput, TOutput, TCtx>, CloudEvent, TCtx>(provider, frameworkOptions, contextFactory,
-        loggerFactory)
+    : FilePipelineSweep<Extractor<TInput, TOutput, TCtx>, CloudEvent, TCtx>(provider, frameworkOptions, contextFactory,
+        loggerFactory), IJob
     where TCtx : Context
 {
+    /// <summary>Runs one sweep of the source port.</summary>
+    public Task<RunSummary> ExecuteAsync(CancellationToken ct) => SweepAsync(ct);
+
     protected override async Task<StepResult<CloudEvent>> RunPipelineAsync(Extractor<TInput, TOutput, TCtx> pipeline,
         SweptFile file, TCtx context, CancellationToken ct)
     {

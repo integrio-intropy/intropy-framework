@@ -29,11 +29,11 @@ services.AddDestinationPort("orders-destination", configuration);  // a port you
 ```
 
 To declare the port the framework sweeps (one per component, one per file-driven job), and
-choose its `SweepCompletion`, register through `Intropy.Framework.Hosting`:
+choose its `FileCompletion`, register through `Intropy.Framework.Hosting`:
 
 ```csharp
-using Intropy.Framework.Hosting.Sweep;
-services.AddSourcePort("orders-source", configuration, SweepCompletion.Archive("archive")); // completion optional; default: delete
+using Intropy.Framework.Hosting.FileSweeps;
+services.AddSourcePort("orders-source", configuration, FileCompletion.Archive("archive")); // completion optional; default: delete
 ```
 
 `AddSourcePort` also registers the port's adapter from `Ports:<port>` and declares the port as
@@ -117,15 +117,15 @@ Dapr-binding base the framework adapters derive from cannot be derived outside t
 Every `IFileAdapter` method — the two `GetContentAsync` overloads, both `WriteAsync` overloads,
 `ListAsync`, and `DeleteAsync` — takes an optional `CancellationToken` last, forwarded into the
 Dapr binding call where the transport supports it. Accessors that read on demand forward it too:
-`SweptFile.ReadAsync` / `SweptFile.ReadTextAsync` accept a token, and the sweep and file jobs
-flow the host's cancellation into listing and reads. One deliberate exception:
-`SweepCompletion.CompleteAsync` takes no cancellation token — completion of an already handled
+`SweptFile.ReadAsync` / `SweptFile.ReadTextAsync` accept a token, and the sweep and the jobs
+that run it flow the host's cancellation into listing and reads. One deliberate exception:
+`FileCompletion.CompleteAsync` takes no cancellation token — completion of an already handled
 file is always awaited to the end, even when the host cancels the sweep.
 
 ## Sweeping a source
 
 `FileSweep` and the source-port registration (`AddSourcePort`) live in the
-`Intropy.Framework.Hosting` package (`Intropy.Framework.Hosting.Sweep` namespace) — see the
+`Intropy.Framework.Hosting` package (`Intropy.Framework.Hosting.FileSweeps` namespace) — see the
 [Sweeping a source](../Intropy.Framework.Hosting/README.md#sweeping-a-source) section of its
 README. `Intropy.Framework.Adapters` supplies the `IFileAdapter` implementations, the options,
 and `AddFileAdapter` / `AddDestinationPort`; extractors and transactional integrations consume

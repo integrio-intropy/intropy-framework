@@ -85,7 +85,7 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     }
 
     /// <summary>
-    /// Seeds a file that is listed but cannot be read: both <c>GetContentAsync</c> overloads throw
+    /// Seeds a file that is listed but cannot be read: <c>GetContentAsync</c> throws
     /// <paramref name="exception"/> for this file while other files read fine. Simulates a
     /// corrupt or inaccessible source file.
     /// </summary>
@@ -153,7 +153,7 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     }
 
     /// <summary>
-    /// When set, thrown by <see cref="ListAsync"/> and both <c>GetContentAsync</c> overloads to
+    /// When set, thrown by <see cref="ListAsync"/> and <c>GetContentAsync</c> to
     /// simulate a dead source. Clearing the property restores normal behavior. Safe to toggle
     /// between runs; not a coordination primitive for mid-run assertions.
     /// </summary>
@@ -164,7 +164,7 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     }
 
     /// <summary>
-    /// When set, thrown by both <c>WriteAsync</c> overloads to simulate a dead destination.
+    /// When set, thrown by <c>WriteAsync</c> to simulate a dead destination.
     /// Clearing the property restores normal behavior. Safe to toggle between runs; not a
     /// coordination primitive for mid-run assertions.
     /// </summary>
@@ -236,16 +236,6 @@ public sealed class InMemoryFileAdapter : IFileAdapter
     }
 
     /// <inheritdoc/>
-    /// <exception cref="FileNotFoundException">Thrown when the file does not exist, matching the Dapr binding.</exception>
-    public async Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(encoding);
-        ct.ThrowIfCancellationRequested();
-        var data = await GetContentAsync(fileName, ct);
-        return encoding.GetString(data);
-    }
-
-    /// <inheritdoc/>
     public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(content);
@@ -258,15 +248,6 @@ public sealed class InMemoryFileAdapter : IFileAdapter
         }
 
         return Task.CompletedTask;
-    }
-
-    /// <inheritdoc/>
-    public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(content);
-        ArgumentNullException.ThrowIfNull(encoding);
-        ct.ThrowIfCancellationRequested();
-        return WriteAsync(fileName, encoding.GetBytes(content), basePathOverride, ct);
     }
 
     /// <inheritdoc/>

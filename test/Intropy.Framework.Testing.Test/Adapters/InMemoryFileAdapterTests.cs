@@ -1,4 +1,5 @@
 using System.Text;
+using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Testing.Adapters;
 
 namespace Intropy.Framework.Testing.Test.Adapters;

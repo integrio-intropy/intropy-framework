@@ -40,6 +40,8 @@ public class ExtractorJobTracingTests
         Assert.All(files, file =>
         {
             Assert.Equal("consumed", file.GetTagItem("intropy.sweep.outcome"));
+            // The component is the resource's service.name, on every span already.
+            Assert.Null(file.GetTagItem("intropy.component.name"));
             // The pipeline continues the file's trace instead of starting one of its own.
             var pipeline = Assert.Single(spans, s => s.Source.Name == PipelineActivitySource &&
                 s.DisplayName == "Pipeline.orders-extractor.Process" && s.TraceId == file.TraceId);
@@ -184,18 +186,8 @@ public class ExtractorJobTracingTests
             return inner.GetContentAsync(fileName, ct);
         }
 
-        public Task<string> GetContentAsync(string fileName, Encoding encoding, CancellationToken ct = default)
-        {
-            Record("get", fileName);
-            return inner.GetContentAsync(fileName, encoding, ct);
-        }
-
         public Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default) =>
             inner.WriteAsync(fileName, content, basePathOverride, ct);
-
-        public Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null,
-            CancellationToken ct = default) =>
-            inner.WriteAsync(fileName, content, encoding, basePathOverride, ct);
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default)
         {

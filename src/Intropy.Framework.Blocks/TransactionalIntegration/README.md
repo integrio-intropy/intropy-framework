@@ -191,7 +191,7 @@ builder.Services.AddDaprClient();
 builder.Services.AddDaprPubSubClient();
 
 // The port the file sweep reads; its adapter is configured under Ports:order-source
-builder.Services.AddSourcePort("order-source", builder.Configuration); // or SweepCompletion.Archive("archive")
+builder.Services.AddSourcePort("order-source", builder.Configuration); // or FileCompletion.Archive("archive")
 
 // Add HTTP client for the sender
 builder.Services.AddHttpClient();
@@ -226,7 +226,7 @@ builder.Services.AddSendPipeline<OrderInput, OrderOutput, Context>("OrderSendPip
 var host = builder.Build();
 
 // Run the lifecycle to completion (sidecar wait, sweep + subscription, sidecar shutdown)
-var runner = host.Services.GetRequiredService<RunToCompletionRunner>();
+var runner = host.Services.GetRequiredService<JobRunner>();
 return await runner.RunAsync();
 ```
 
