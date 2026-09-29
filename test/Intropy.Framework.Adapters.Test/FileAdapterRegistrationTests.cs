@@ -105,6 +105,7 @@ public class FileAdapterRegistrationTests
     [InlineData("Kind", "")]
     [InlineData("Kind", "unknown-secret")]
     [InlineData("Kind", "99")]
+    [InlineData("Kind", "1")]
     [InlineData("Kind", "File,Sftp")]
     [InlineData("Kind", "File")]
     [InlineData("Kind", "Blob")]

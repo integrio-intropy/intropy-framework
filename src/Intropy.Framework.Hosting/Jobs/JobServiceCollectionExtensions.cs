@@ -27,6 +27,11 @@ public static class JobServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        // Multiple runners resolve ambiguous options and sidecar lifecycles; one process is one job.
+        if (services.Any(d => d.ServiceType == typeof(JobRunner)))
+            throw new InvalidOperationException(
+                "A run-to-completion job is already registered; a process hosts exactly one job.");
+
         var options = new JobOptions();
         configureOptions?.Invoke(options);
 

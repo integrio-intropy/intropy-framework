@@ -60,6 +60,22 @@ public class MessageActivityTrackerTests
     }
 
     [Fact]
+    public void RestartIdleClock_MeasuresTheNextWindowFromTheRestart_NotFromConstruction()
+    {
+        // The tracker clock starts at construction, which precedes the sidecar wait and the whole
+        // sweep; monitoring must open a fresh idle window, not inherit an already-expired one.
+        var tracker = new MessageActivityTracker(_time);
+
+        _time.Advance(TimeSpan.FromSeconds(10));
+        tracker.RestartIdleClock();
+        _time.Advance(TimeSpan.FromMilliseconds(500));
+
+        Assert.False(tracker.ShouldShutdownDueToInactivity(TimeSpan.FromSeconds(1)));
+        _time.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(tracker.ShouldShutdownDueToInactivity(TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
     public void BeginMessageProcessing_ShouldTrackMultipleConcurrentMessages()
     {
         // Verifies that multiple concurrent messages are correctly tracked

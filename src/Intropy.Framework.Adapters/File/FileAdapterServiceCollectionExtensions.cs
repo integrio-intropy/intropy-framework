@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 using Dapr.Client;
 using Microsoft.Extensions.Configuration;
@@ -36,11 +35,12 @@ public static class FileAdapterServiceCollectionExtensions
                 throw Invalid(location, $"Unknown or non-scalar setting '{child.Key}'.");
         }
 
+        // The kind is named, never numbered: a numeric value silently changes meaning when the
+        // enum is reordered, and the error message is written for configuration authors.
         var text = section[nameof(FileTransportOptions.Kind)];
         if (string.IsNullOrWhiteSpace(text) ||
             !Enum.TryParse<FileAdapterKind>(text, true, out var kind) || !Enum.IsDefined(kind) ||
-            (!string.Equals(text.Trim(), kind.ToString(), StringComparison.OrdinalIgnoreCase) &&
-             !int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)))
+            !string.Equals(text.Trim(), kind.ToString(), StringComparison.OrdinalIgnoreCase))
             throw Invalid(location, "Kind must explicitly select Local, Sftp or AzureBlob.");
 
         return Register(services, key, new FileTransportOptions

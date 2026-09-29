@@ -81,6 +81,19 @@ public class JobHostExtensionsTests
         Assert.True(probe.Disposed);
     }
 
+    [Fact]
+    public async Task RunToCompletionAsync_ReturnsInfrastructureFailure_WhenNoJobIsRegistered()
+    {
+        // A misconfigured host must leave through the exit-code contract, not crash the process
+        // with an unhandled resolution exception. Nothing starts, so there is nothing to observe
+        // beyond the code itself.
+        var host = new HostBuilder().Build();
+
+        var exitCode = await host.RunToCompletionAsync();
+
+        Assert.Equal(JobExitCodes.InfrastructureFailure, exitCode);
+    }
+
     private static IHost BuildHost(ProbeJob job, TelemetryProviderProbe probe) =>
         new HostBuilder()
             .ConfigureServices(services =>

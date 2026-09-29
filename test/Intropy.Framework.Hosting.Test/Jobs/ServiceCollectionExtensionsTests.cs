@@ -39,6 +39,17 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddJob_RejectsASecondJob()
+    {
+        // Two runners would race for the process's exit code and sidecar; a host is one job.
+        var services = GetServices();
+
+        services.AddJob<TestJob>();
+
+        Assert.Throws<InvalidOperationException>(() => services.AddJob<TestJob>());
+    }
+
+    [Fact]
     public void AddJob_WithoutJobNameOrComponentName_FailsWhenResolved()
     {
         // Verifies that a job never runs unnamed

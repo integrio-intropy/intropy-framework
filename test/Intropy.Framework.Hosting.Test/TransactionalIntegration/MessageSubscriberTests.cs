@@ -10,6 +10,7 @@ using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 
 namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
@@ -33,13 +34,14 @@ public class MessageSubscriberTests
     /// <summary>Builds a subscriber around the shared send-pipeline substitute, composing the
     /// processor the way the DI registration does.</summary>
     private MessageSubscriber<Context> CreateSubscriber(ITopicSubscriber topicSubscriber,
-        TransactionalIntegrationOptions? options = null)
+        TransactionalIntegrationOptions? options = null, TimeProvider? timeProvider = null)
     {
         var resolved = options ?? _options;
         var processor = new MessageProcessor<Context>(_messageHandler,
             (metadata, isRetry) => new Context(metadata, isRetry), "test-integration", resolved.DaprTopicName,
             Substitute.For<ILogger<MessageProcessor<Context>>>());
-        return new MessageSubscriber<Context>(topicSubscriber, processor, resolved, "test-integration", _logger);
+        return new MessageSubscriber<Context>(topicSubscriber, processor, resolved, "test-integration",
+            _logger, timeProvider);
     }
 
     [Fact]
@@ -67,6 +69,53 @@ public class MessageSubscriberTests
         await executeTask;
 
         Assert.True(executeTask.IsCompleted);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OpensAFreshIdleWindow_WhenMonitoringStarts()
+    {
+        // A sweep outlasting the idle timeout must not look already-idle at the first poll: the
+        // window is measured from when monitoring starts, not from when the subscriber was built.
+        var time = new FakeTimeProvider();
+        var disposed = new TaskCompletionSource();
+        var subscription = new SignalSubscription(disposed);
+        TopicMessageHandler? handler = null;
+        var topicSubscriber = Substitute.For<ITopicSubscriber>();
+        topicSubscriber.SubscribeAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(),
+                Arg.Do((Action<TopicMessageHandler>)(h => handler = h)), Arg.Any<CancellationToken>())
+            .Returns(subscription);
+
+        var options = new TransactionalIntegrationOptions
+        {
+            DaprPubSubName = "test-pubsub",
+            DaprTopicName = "test-topic",
+            IdleTimeout = TimeSpan.FromSeconds(5)
+        };
+        var subscriber = CreateSubscriber(topicSubscriber, options, time);
+        var publishing = new TaskCompletionSource();
+
+        var run = subscriber.ExecuteAsync(publishing.Task);
+        for (var i = 0; i < 20 && handler is null; i++)
+            await Task.Delay(50);
+        Assert.NotNull(handler);
+
+        // The sweep runs longer than the idle timeout while the publisher is still going.
+        time.Advance(TimeSpan.FromSeconds(10));
+        publishing.SetResult();
+        // Let monitoring start and open the fresh window before the first poll fires.
+        await Task.Delay(100);
+
+        time.Advance(TimeSpan.FromSeconds(1));
+        await Task.Delay(100);
+
+        // Assert — quiet time measured from monitoring start is one second, not eleven: the run
+        // is still draining, not already shutting down.
+        Assert.False(disposed.Task.IsCompleted);
+
+        // Once the full idle window really elapses, the run shuts down and disposes cleanly.
+        time.Advance(TimeSpan.FromSeconds(5));
+        await disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -608,6 +657,15 @@ public class MessageSubscriberTests
         };
         ActivitySource.AddActivityListener(listener);
         return listener;
+    }
+
+    private sealed class SignalSubscription(TaskCompletionSource disposed) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync()
+        {
+            disposed.SetResult();
+            return ValueTask.CompletedTask;
+        }
     }
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);

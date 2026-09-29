@@ -41,6 +41,18 @@ internal class MessageActivityTracker
     }
 
     /// <summary>
+    /// Restarts the idle clock: the next <see cref="ShouldShutdownDueToInactivity"/> window
+    /// measures inactivity from now rather than from when the tracker was constructed.
+    /// </summary>
+    public void RestartIdleClock()
+    {
+        lock (_lock)
+        {
+            _lastMessageReceivedAt = _timeProvider.GetUtcNow();
+        }
+    }
+
+    /// <summary>
     /// Checks if the system should shut down due to inactivity.
     /// Returns true if the idle timeout has been reached AND no messages are being processed.
     /// </summary>

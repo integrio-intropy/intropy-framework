@@ -18,19 +18,20 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <param name="options">Configuration options for the integration.</param>
 /// <param name="componentName">The component name, for logs and errors.</param>
 /// <param name="logger">An instance of <see cref="ILogger"/> for logging.</param>
+/// <param name="timeProvider">Time source for the idle clock. Defaults to
+/// <see cref="TimeProvider.System"/>. Override in tests to control time.</param>
 /// <typeparam name="TCtx">The send pipeline's context type.</typeparam>
 internal class MessageSubscriber<TCtx>(
     ITopicSubscriber topicSubscriber,
     MessageProcessor<TCtx> processor,
     TransactionalIntegrationOptions options,
     string componentName,
-    ILogger<MessageSubscriber<TCtx>> logger) where TCtx : Context
+    ILogger<MessageSubscriber<TCtx>> logger,
+    TimeProvider? timeProvider = null) where TCtx : Context
 {
-    private readonly MessageActivityTracker _activityTracker = new();
-
-    /// <summary>Each message's latest outcome in this run, by message id: a redelivered message
-    /// that succeeds later in the run counts once, as processed.</summary>
-    private readonly ConcurrentDictionary<string, MessageOutcome> _outcomes = new();
+    /// <summary>Subscription teardown happens while the sidecar is going away; the run must not
+    /// hang forever on it. Bounded generously above any Dapr client's own timeouts.</summary>
+    private static readonly TimeSpan s_disposeTimeout = TimeSpan.FromSeconds(10);
 
     /// <summary>
     /// Starts the message subscription and waits for completion.
@@ -51,11 +52,16 @@ internal class MessageSubscriber<TCtx>(
         var run = Activity.Current?.Context ?? default;
         var unfinished = 0;
 
+        // The run's state is the run's, not the singleton subscriber's: the outcome tally and
+        // idle clock must live and die with ExecuteAsync, so two runs can never see each other.
+        var activityTracker = new MessageActivityTracker(timeProvider);
+        var outcomes = new ConcurrentDictionary<string, MessageOutcome>();
+
         var subscription = await topicSubscriber.SubscribeAsync(
             options.DaprPubSubName,
             options.DaprTopicName,
             options.MaxMessageProcessingTime,
-            (message, messageCt) => HandleMessageAsync(message, run, ct, messageCt),
+            (message, messageCt) => HandleMessageAsync(message, run, activityTracker, outcomes, ct, messageCt),
             CancellationToken.None);
 
         try
@@ -65,11 +71,17 @@ internal class MessageSubscriber<TCtx>(
             await publishingCompleteSignal.WaitAsync(shutdownSignal.Token);
             logger.LogInformation("Publisher completed. Starting idle timeout monitoring.");
 
+            // The idle window measures quiet time after the sweep, not the process's whole
+            // lifetime: the clock restarts here so a sweep longer than IdleTimeout cannot make
+            // the first poll look already-idle and exit with messages still on the queue.
+            activityTracker.RestartIdleClock();
+
             // Start the idle monitor only after publisher completes
             var idleMonitor = new IdleTimeoutMonitor(
-                _activityTracker,
+                activityTracker,
                 options.IdleTimeout,
-                logger);
+                logger,
+                timeProvider);
 
             await idleMonitor.WaitForIdleTimeoutAsync(shutdownSignal.Token);
 
@@ -83,39 +95,53 @@ internal class MessageSubscriber<TCtx>(
         {
             // Wait for in-flight messages while the subscription is still open,
             // so Dapr can still deliver ack/nack responses for those messages.
-            unfinished = await _activityTracker.WaitForAllMessagesToComplete(
+            unfinished = await activityTracker.WaitForAllMessagesToComplete(
                 options.PostIdleGracePeriod,
                 logger);
 
             await shutdownSignal.CancelAsync();
 
-            // Dispose the subscription after all in-flight messages have completed.
-            await subscription.DisposeAsync();
+            await DisposeSubscriptionAsync(subscription);
         }
 
-        return Summarize(ct.IsCancellationRequested ? 0 : unfinished);
+        return Summarize(ct.IsCancellationRequested ? 0 : unfinished, outcomes);
+    }
+
+    private async Task DisposeSubscriptionAsync(IAsyncDisposable subscription)
+    {
+        // JobRunner shuts the sidecar down as soon as the run returns; if the subscription's own
+        // teardown wedges, an otherwise-finished run must not hang with it.
+        try
+        {
+            await subscription.DisposeAsync().AsTask().WaitAsync(s_disposeTimeout, CancellationToken.None);
+        }
+        catch (Exception e)
+        {
+            logger.LogWarning(e, "Subscription teardown for {Component} did not complete cleanly", componentName);
+        }
     }
 
     private async Task<TopicResponseAction> HandleMessageAsync(TopicMessage message, ActivityContext run,
+        MessageActivityTracker activityTracker, ConcurrentDictionary<string, MessageOutcome> outcomes,
         CancellationToken hostCancellation, CancellationToken cancellationToken)
     {
-        using var messageScope = _activityTracker.BeginMessageProcessing();
+        using var messageScope = activityTracker.BeginMessageProcessing();
         var result = await processor.ProcessAsync(message, run, hostCancellation, cancellationToken);
 
         // The latest outcome in the run counts; an interruption by the host stopping does not
         // replace an earlier one.
         if (result.Outcome is not MessageOutcome.Interrupted)
-            _outcomes[message.Id] = result.Outcome;
+            outcomes[message.Id] = result.Outcome;
         return result.Response;
     }
 
-    private RunSummary Summarize(int unfinished)
+    private RunSummary Summarize(int unfinished, ConcurrentDictionary<string, MessageOutcome> outcomes)
     {
-        var outcomes = _outcomes.Values.ToList();
+        var tallied = outcomes.Values.ToList();
         var summary = new RunSummary(
-            Processed: outcomes.Count(o => o == MessageOutcome.Processed),
-            Failed: outcomes.Count(o => o == MessageOutcome.Failed) + unfinished,
-            Skipped: outcomes.Count(o => o == MessageOutcome.Skipped));
+            Processed: tallied.Count(o => o == MessageOutcome.Processed),
+            Failed: tallied.Count(o => o == MessageOutcome.Failed) + unfinished,
+            Skipped: tallied.Count(o => o == MessageOutcome.Skipped));
         logger.LogInformation(
             "Consumed messages for {Component}: {Processed} processed, {Failed} left for redelivery, {Skipped} skipped",
             componentName, summary.Processed, summary.Failed, summary.Skipped);

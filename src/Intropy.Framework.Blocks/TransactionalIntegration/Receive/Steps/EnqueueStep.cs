@@ -37,13 +37,13 @@ public abstract class EnqueueStep<TCtx>(FrameworkOptions options) : TechnicalSte
         // The send span is the one the message carries, so the consumer's span continues it,
         // following the OpenTelemetry messaging conventions.
         using var activity = MessagingTelemetry.StartSendActivity(DestinationName, MessagingSystem);
-        var cloudEvent = CloudEventHelper.Create(input, context, activity ?? Activity.Current, options);
-        activity?.SetTag("messaging.message.id", cloudEvent.Id);
-        var formatter = new JsonEventFormatter();
-        var bytes = formatter.EncodeStructuredModeMessage(cloudEvent, out _);
-
         try
         {
+            var cloudEvent = CloudEventHelper.Create(input, context, activity ?? Activity.Current, options);
+            activity?.SetTag("messaging.message.id", cloudEvent.Id);
+            var formatter = new JsonEventFormatter();
+            var bytes = formatter.EncodeStructuredModeMessage(cloudEvent, out _);
+
             var result = await ExecuteAsync(input, bytes, context, ct);
             if (result.Result is TechnicalStepResult<SourceItem>.Failure failure)
                 MessagingTelemetry.Fail(activity, "technical_failure", failure.Value.Description);

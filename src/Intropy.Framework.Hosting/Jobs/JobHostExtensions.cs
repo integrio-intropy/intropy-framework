@@ -38,10 +38,24 @@ public static class JobHostExtensions
 
         try
         {
-            var runner = host.Services.GetRequiredService<JobRunner>();
-            var logger = host.Services.GetRequiredService<ILoggerFactory>()
-                .CreateLogger(typeof(JobHostExtensions).FullName!);
-            var lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+            JobRunner runner;
+            ILogger logger;
+            IHostApplicationLifetime lifetime;
+            try
+            {
+                runner = host.Services.GetRequiredService<JobRunner>();
+                logger = host.Services.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger(typeof(JobHostExtensions).FullName!);
+                lifetime = host.Services.GetRequiredService<IHostApplicationLifetime>();
+            }
+            catch (Exception e)
+            {
+                // A misconfigured host must still leave through the exit-code contract (see
+                // <see cref="JobExitCodes"/>), not an unhandled exception; with providers not yet
+                // built there is no logger to fail into, so the console is the terminal record.
+                await Console.Error.WriteLineAsync($"error: the job host is not configured to run to completion: {e.Message}");
+                return JobExitCodes.InfrastructureFailure;
+            }
 
             try
             {
