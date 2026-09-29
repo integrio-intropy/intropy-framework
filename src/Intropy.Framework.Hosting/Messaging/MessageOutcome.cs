@@ -20,5 +20,8 @@ internal enum MessageOutcome
 
     /// <summary>No route handles the message's event type; acknowledged as the loader's
     /// <see cref="UnroutedPolicy"/> says.</summary>
-    Unrouted
+    Unrouted,
+
+    /// <summary>Excluded by a batch route's filter: acknowledged without being looked up or sent.</summary>
+    Filtered
 }

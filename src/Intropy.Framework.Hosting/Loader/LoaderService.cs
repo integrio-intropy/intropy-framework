@@ -172,26 +172,13 @@ internal sealed class LoaderService(
             HostingMetrics.RecordProcessedMessage(componentName, options.TopicName,
                 HostingMetrics.OutcomeName(outcome.Outcome), outcome.ErrorType, Stopwatch.GetElapsedTime(start),
                 route?.Name);
-            return ToResponse(outcome.Outcome);
+            return LoaderAcks.ToResponse(outcome.Outcome, options.Unrouted);
         }
         finally
         {
             Interlocked.Decrement(ref _inFlight);
         }
     }
-
-    private TopicResponseAction ToResponse(MessageOutcome outcome) => outcome switch
-    {
-        MessageOutcome.Processed or MessageOutcome.Skipped => TopicResponseAction.Success,
-        MessageOutcome.Unrouted => options.Unrouted switch
-        {
-            // Drop hands the message to the subscription's dead-letter topic.
-            UnroutedPolicy.DeadLetter => TopicResponseAction.Drop,
-            UnroutedPolicy.Ack => TopicResponseAction.Success,
-            _ => TopicResponseAction.Retry
-        },
-        _ => TopicResponseAction.Retry
-    };
 
     /// <summary>Waits for the message in flight while the stream is still open, so its ack reaches
     /// the sidecar; interrupts it when it outlives the grace period.</summary>

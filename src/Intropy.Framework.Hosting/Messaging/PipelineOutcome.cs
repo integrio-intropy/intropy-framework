@@ -12,6 +12,18 @@ internal readonly record struct PipelineOutcome(MessageOutcome Outcome, string? 
     internal static PipelineOutcome Failed(string errorType, string description) =>
         new(MessageOutcome.Failed, errorType, description);
 
+    /// <summary>Maps an exception that escaped a pipeline: an interruption when
+    /// <paramref name="interrupt"/> caused it, a timeout when <paramref name="cancellationToken"/>
+    /// did, and a failure otherwise.</summary>
+    internal static PipelineOutcome FromException(Exception exception, CancellationToken interrupt,
+        CancellationToken cancellationToken) => exception switch
+    {
+        OperationCanceledException when interrupt.IsCancellationRequested => new PipelineOutcome(MessageOutcome.Interrupted),
+        OperationCanceledException when cancellationToken.IsCancellationRequested =>
+            Failed("aborted", "Processing exceeded its time limit"),
+        _ => Failed(exception.GetType().FullName!, exception.Message)
+    };
+
     /// <summary>Maps a pipeline's result to the message's outcome. An aborted pipeline is an
     /// interruption when <paramref name="interrupt"/> caused it, and a failure otherwise (for
     /// example the processing timeout).</summary>

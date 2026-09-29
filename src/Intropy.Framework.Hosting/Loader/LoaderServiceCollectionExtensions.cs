@@ -4,6 +4,7 @@ using Intropy.Framework.Blocks.Loader;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Messaging;
+using Intropy.Framework.Hosting.Messaging.Bulk;
 using Intropy.Framework.Hosting.Messaging.Streaming;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -13,8 +14,9 @@ using Microsoft.Extensions.Logging;
 namespace Intropy.Framework.Hosting.Loader;
 
 /// <summary>
-/// Registers a loader: a long-running worker that consumes one topic through a Dapr streaming
-/// subscription (no HTTP server, no app port) and runs each message through a loader pipeline.
+/// Registers a loader: a long-running worker that consumes one topic and runs its messages through
+/// loader pipelines — one message at a time through a Dapr streaming subscription (no server, no app
+/// port), or in batches through Dapr bulk subscribe on a gRPC app callback when a route batches.
 /// </summary>
 public static class LoaderServiceCollectionExtensions
 {
@@ -38,12 +40,38 @@ public static class LoaderServiceCollectionExtensions
         services.AddLoader(configure, LoaderRoutes.Any(configurePipeline, contextFactory));
 
     /// <summary>
+    /// Registers a batch loader whose single batch pipeline handles every message on the topic. The
+    /// loader receives through Dapr bulk subscribe on a gRPC app callback (see
+    /// <see cref="LoaderOptions.CallbackPort"/>); its idempotency records are keyed on the entity key.
+    /// </summary>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="configurePipeline">Configures the batch pipeline builder, given the batch's scope.</param>
+    /// <param name="contextFactory">Creates the context for each entry.</param>
+    /// <param name="configure">Configures the subscription: pub/sub, topic, batch size, timeouts.</param>
+    /// <typeparam name="TInput">The deserialized event.</typeparam>
+    /// <typeparam name="TEnriched">What the per-entity steps run on: the looked-up state, or
+    /// <typeparamref name="TInput"/> without a lookup.</typeparam>
+    /// <typeparam name="TOutput">What the loader sends to the external system.</typeparam>
+    /// <typeparam name="TCtx">The pipeline context.</typeparam>
+    /// <returns>The service collection, for chaining.</returns>
+    public static IServiceCollection AddBatchLoader<TInput, TEnriched, TOutput, TCtx>(
+        this IServiceCollection services,
+        Func<BatchLoaderBuilder<TInput, TEnriched, TOutput, TCtx>, IServiceProvider, BatchLoaderBuilder<TInput, TEnriched, TOutput, TCtx>> configurePipeline,
+        ContextFactory<TCtx> contextFactory,
+        Action<LoaderOptions> configure) where TCtx : Context =>
+        services.AddLoader(configure, LoaderRoutes.AnyBatch(configurePipeline, contextFactory));
+
+    /// <summary>
     /// Registers a loader that routes each message, by its CloudEvent type, to that type's own
     /// pipeline. Messages no route handles are dropped to the dead-letter topic by default
     /// (<see cref="LoaderOptions.Unrouted"/>).
     /// </summary>
     /// <remarks>
-    /// Each route's pipeline is built in the message's own scope, so its steps may be scoped. The
+    /// With only message routes (<see cref="LoaderRoutes.On{TInput,TOutput,TCtx}"/>) the loader
+    /// consumes through a Dapr streaming subscription and serves nothing. With any batch route
+    /// (<see cref="LoaderRoutes.OnBatch{TInput,TEnriched,TOutput,TCtx}"/>) it receives the whole topic in
+    /// batches through Dapr bulk subscribe, served on a gRPC app callback; message routes then run their
+    /// entries one at a time. Each route's pipeline is built in the message's (or batch's) own scope, so its steps may be scoped. The
     /// loader builds every route's pipeline once before subscribing, so a missing registration stops
     /// the host at startup. Caller-owned: the component identity (<c>AddIntropyFramework</c>),
     /// logging, the platform-service clients, and each route's sender and destination. Only one
@@ -94,13 +122,24 @@ public static class LoaderServiceCollectionExtensions
                 host.ShutdownTimeout = required;
         });
 
-        services.AddDaprPubSubClient();
-        services.TryAddSingleton<IStreamingSubscriber>(provider =>
-            new DaprStreamingSubscriber(provider.GetRequiredService<DaprPublishSubscribeClient>()));
-
         services.AddSingleton(provider => new LoaderMessageHandler(
             provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider),
             provider.GetRequiredService<ILogger<LoaderMessageHandler>>()));
+
+        if (table.HasBatchRoutes)
+            AddBulkTransport(services, table, options);
+        else
+            AddStreamingTransport(services, table, options);
+
+        return services;
+    }
+
+    private static void AddStreamingTransport(IServiceCollection services, LoaderRouteTable table,
+        LoaderOptions options)
+    {
+        services.AddDaprPubSubClient();
+        services.TryAddSingleton<IStreamingSubscriber>(provider =>
+            new DaprStreamingSubscriber(provider.GetRequiredService<DaprPublishSubscribeClient>()));
         services.AddHostedService(provider => new LoaderService(
             provider.GetRequiredService<IStreamingSubscriber>(),
             provider.GetRequiredService<LoaderMessageHandler>(),
@@ -110,8 +149,25 @@ public static class LoaderServiceCollectionExtensions
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<IHostApplicationLifetime>(),
             provider.GetRequiredService<ILogger<LoaderService>>()));
+    }
 
-        return services;
+    private static void AddBulkTransport(IServiceCollection services, LoaderRouteTable table, LoaderOptions options)
+    {
+        if (options.MaxBatchSize < 1)
+            throw new ArgumentOutOfRangeException(nameof(options), options.MaxBatchSize,
+                $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.MaxBatchSize)} must be at least 1.");
+
+        services.AddSingleton(provider => new LoaderBulkDelivery(
+            provider.GetRequiredService<LoaderMessageHandler>(), options, ComponentName(provider),
+            provider.GetRequiredService<ILogger<LoaderBulkDelivery>>()));
+        services.AddHostedService(provider => new BulkLoaderServer(
+            provider.GetRequiredService<LoaderBulkDelivery>(),
+            table,
+            options,
+            ComponentName(provider),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ILoggerFactory>(),
+            provider.GetRequiredService<IHostApplicationLifetime>()));
     }
 
     private static string ComponentName(IServiceProvider provider) =>

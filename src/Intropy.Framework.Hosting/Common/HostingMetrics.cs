@@ -96,6 +96,7 @@ internal static class HostingMetrics
         MessageOutcome.Skipped => "skipped",
         MessageOutcome.Interrupted => "interrupted",
         MessageOutcome.Unrouted => "unrouted",
+        MessageOutcome.Filtered => "filtered",
         _ => "failed"
     };
 
