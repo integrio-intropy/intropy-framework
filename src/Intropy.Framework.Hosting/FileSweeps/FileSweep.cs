@@ -222,7 +222,7 @@ public sealed class FileSweep(
             parentContext: default,
             links: runActivity is null ? null : [new ActivityLink(runActivity.Context)]);
         activity?.SetTag("intropy.source.port", sourcePort);
-        activity?.SetTag("intropy.file.name", fileName);
+        activity?.SetTag("file.name", fileName);
         return activity;
     }
 

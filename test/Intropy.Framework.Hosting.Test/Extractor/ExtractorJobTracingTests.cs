@@ -36,7 +36,7 @@ public class ExtractorJobTracingTests
         Assert.Equal(2, files.Count);
         Assert.All(files, file => Assert.NotEqual(job.TraceId, file.TraceId));
         Assert.NotEqual(files[0].TraceId, files[1].TraceId);
-        Assert.Equal(["order-1.json", "order-2.json"], files.Select(f => f.GetTagItem("intropy.file.name")).Order());
+        Assert.Equal(["order-1.json", "order-2.json"], files.Select(f => f.GetTagItem("file.name")).Order());
         Assert.All(files, file =>
         {
             Assert.Equal("consumed", file.GetTagItem("intropy.sweep.outcome"));
@@ -62,7 +62,7 @@ public class ExtractorJobTracingTests
 
         Assert.All(files, file =>
         {
-            var name = (string)file.GetTagItem("intropy.file.name")!;
+            var name = (string)file.GetTagItem("file.name")!;
             Assert.Equal(file.TraceId, adapter.TraceOf("get", name));
             Assert.Equal(file.TraceId, adapter.TraceOf("delete", name));
         });

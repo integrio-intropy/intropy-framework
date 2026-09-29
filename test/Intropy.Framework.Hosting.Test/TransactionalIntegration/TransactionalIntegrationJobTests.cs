@@ -125,7 +125,7 @@ public class TransactionalIntegrationJobTests
             Arg.Any<CancellationToken>());
         Assert.NotNull(current);
         Assert.StartsWith("process ", current.DisplayName);
-        Assert.Equal("file1.txt", current.GetTagItem("intropy.file.name"));
+        Assert.Equal("file1.txt", current.GetTagItem("file.name"));
     }
 
     [Fact]

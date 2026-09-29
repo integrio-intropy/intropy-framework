@@ -84,9 +84,9 @@ public class JobRunner
                 "Job {JobName} completed: {Processed} processed, {Failed} failed, {Skipped} skipped",
                 _options.JobName, summary.Processed, summary.Failed, summary.Skipped);
 
-            activity?.SetTag("job.processed", summary.Processed);
-            activity?.SetTag("job.failed", summary.Failed);
-            activity?.SetTag("job.skipped", summary.Skipped);
+            activity?.SetTag("intropy.job.processed", summary.Processed);
+            activity?.SetTag("intropy.job.failed", summary.Failed);
+            activity?.SetTag("intropy.job.skipped", summary.Skipped);
 
             if (summary.Failed == 0)
                 return JobExitCodes.Success;
