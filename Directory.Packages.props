@@ -9,8 +9,8 @@
     <PackageVersion Include="CloudNative.CloudEvents.SystemTextJson" Version="2.8.0" />
 
     <!-- Dapr -->
-    <PackageVersion Include="Dapr.Client" Version="1.17.9" />
-    <PackageVersion Include="Dapr.Messaging" Version="1.17.9" />
+    <PackageVersion Include="Dapr.Client" Version="1.18.10" />
+    <PackageVersion Include="Dapr.Messaging" Version="1.18.10" />
 
     <!-- Microsoft Extensions -->
     <PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.8" />

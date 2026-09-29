@@ -33,6 +33,16 @@
         <None Include="$(MSBuildThisFileDirectory)LICENSE" Pack="true" PackagePath="\" Visible="false" />
     </ItemGroup>
 
+    <!-- Dapr.Messaging (1.18.10+) ships a source generator for its [DaprTopic] handler model,
+         which the framework does not use. It emits the same internal types into every project
+         that references the package, so a test project that sees the tested assembly's internals
+         gets them twice (CS0436, an error here). -->
+    <Target Name="RemoveDaprMessagingGenerator" BeforeTargets="CoreCompile">
+        <ItemGroup>
+            <Analyzer Remove="@(Analyzer)" Condition="'%(Filename)' == 'Dapr.Messaging.Generators'" />
+        </ItemGroup>
+    </Target>
+
     <PropertyGroup>
         <PublishRepositoryUrl>true</PublishRepositoryUrl>
         <EmbedUntrackedSources>true</EmbedUntrackedSources>

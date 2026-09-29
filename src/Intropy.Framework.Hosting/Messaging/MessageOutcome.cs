@@ -1,8 +1,8 @@
-namespace Intropy.Framework.Hosting.TransactionalIntegration;
+namespace Intropy.Framework.Hosting.Messaging;
 
 /// <summary>
-/// How one consumed message ended in the run, as mapped by <see cref="MessageProcessor{TCtx}"/>
-/// from the send pipeline's result.
+/// How one consumed message ended, whatever consumed it (a Transactional Integration's send
+/// pipeline or a loader route). The transport maps it to its acknowledgement.
 /// </summary>
 internal enum MessageOutcome
 {
@@ -16,5 +16,9 @@ internal enum MessageOutcome
     Failed,
 
     /// <summary>Interrupted by the host stopping: left for redelivery, but not counted.</summary>
-    Interrupted
+    Interrupted,
+
+    /// <summary>No route handles the message's event type; acknowledged as the loader's
+    /// <see cref="UnroutedPolicy"/> says.</summary>
+    Unrouted
 }

@@ -48,6 +48,9 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     // Optional receipt sender
     private SendStep<TOutput, TCtx>? _receiptSender;
 
+    // The CloudEvent type of the route this pipeline serves in a routing loader; null otherwise.
+    private readonly string? _routeEventType;
+
     /// <summary>
     /// Creates a new instance of <see>
     ///     <cref>LoaderBuilder{TInput,TOutput,TCtx}</cref>
@@ -55,16 +58,18 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// </summary>
     /// <param name="pipelineName">The name of the pipeline.</param>
     /// <param name="serviceProvider">An instance of <see cref="IServiceProvider"/> to get required services from DI</param>
+    /// <param name="routeEventType">The CloudEvent type of the route this pipeline serves in a routing loader; null otherwise.</param>
     /// <exception cref="ArgumentException">Thrown if <b>pipelineName</b> is null or empty</exception>
     /// <exception cref="ArgumentNullException">Thrown if any required parameters are null</exception>
     /// <exception cref="InvalidOperationException">Thrown if any required services are not registered in DI</exception>
-    private LoaderBuilder(string pipelineName, IServiceProvider serviceProvider)
+    private LoaderBuilder(string pipelineName, IServiceProvider serviceProvider, string? routeEventType)
     {
         ArgumentException.ThrowIfNullOrEmpty(pipelineName);
         ArgumentNullException.ThrowIfNull(serviceProvider);
 
         _pipelineName = pipelineName;
         _serviceProvider = serviceProvider;
+        _routeEventType = routeEventType;
 
         _logger = _serviceProvider.GetService<ILoggerFactory>()
                       ?.CreateLogger<Loader<TInput, TOutput, TCtx>>() ??
@@ -85,7 +90,27 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     public static LoaderBuilder<TInput, TOutput, TCtx> Create(string pipelineName,
         IServiceProvider serviceProvider)
     {
-        return new LoaderBuilder<TInput, TOutput, TCtx>(pipelineName, serviceProvider);
+        return new LoaderBuilder<TInput, TOutput, TCtx>(pipelineName, serviceProvider, routeEventType: null);
+    }
+
+    /// <summary>
+    /// Creates a new instance of <see cref="LoaderBuilder{TInput,TOutput,TCtx}"/> for one route of a
+    /// loader that routes several CloudEvent types to their own pipelines.
+    /// </summary>
+    /// <remarks>
+    /// The route's event type scopes its idempotency records (see
+    /// <see cref="WithIdempotency(Func{TInput, string}?, IdempotencyScope)"/>). The hosting layer
+    /// creates route builders; components configure them.
+    /// </remarks>
+    /// <param name="pipelineName">The name of the pipeline.</param>
+    /// <param name="serviceProvider">An instance of <see cref="IServiceProvider"/> used to get required services from DI.</param>
+    /// <param name="routeEventType">The CloudEvent type the route handles.</param>
+    /// <returns></returns>
+    public static LoaderBuilder<TInput, TOutput, TCtx> Create(string pipelineName,
+        IServiceProvider serviceProvider, string routeEventType)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(routeEventType);
+        return new LoaderBuilder<TInput, TOutput, TCtx>(pipelineName, serviceProvider, routeEventType);
     }
 
     /// <summary>
@@ -212,12 +237,23 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// Uses CloudEvent.Subject as the ID and CloudEvent.Time as the date.
     /// The hash is generated from the TInput payload.
     /// </summary>
+    /// <remarks>
+    /// In a loader that routes several event types, <paramref name="scope"/> decides whether this
+    /// route's idempotency records are its own (<see cref="IdempotencyScope.Route"/>, the default:
+    /// the id is <c>{event type}:{subject}</c>) or shared with every route over the same subject
+    /// (<see cref="IdempotencyScope.Entity"/>: the id is the subject, so an event older than one
+    /// already processed for the entity, of any type, is ignored). A loader without routes is
+    /// always keyed on the subject alone.
+    /// </remarks>
     /// <param name="hashGenerator">Optional function to generate a hash of the payload. If not provided, uses a default implementation (property reflection + SHA256).</param>
+    /// <param name="scope">Which records this route's idempotency is checked against.</param>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="IIdempotencyServiceClient"/> is not registered in the service provider.</exception>
     public LoaderBuilder<TInput, TOutput, TCtx> WithIdempotency(
-        Func<TInput, string>? hashGenerator = null)
+        Func<TInput, string>? hashGenerator = null, IdempotencyScope scope = IdempotencyScope.Route)
     {
+        var idPrefix = scope == IdempotencyScope.Route && _routeEventType is not null ? $"{_routeEventType}:" : "";
+
         var client = _serviceProvider.GetService<IIdempotencyServiceClient>()
                      ?? throw new InvalidOperationException(
                          $"{nameof(IIdempotencyServiceClient)} is not registered in the service provider. Please register it using services.AddPipelineIdempotencyService() or register your own implementation.");
@@ -243,7 +279,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         string IdExtractor(TInput _, TCtx context)
         {
             if (!context.Metadata.TryGetValue(CloudEventContextKeys.Subject, out var id) || string.IsNullOrEmpty(id)) throw new InvalidOperationException($"Missing required CloudEvent.Subject in context (key: '{CloudEventContextKeys.Subject}'). " + "Ensure the CloudEvent has a Subject set.");
-            return id;
+            return idPrefix + id;
         }
     }
 

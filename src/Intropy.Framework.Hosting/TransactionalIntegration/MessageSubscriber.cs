@@ -4,6 +4,7 @@ using Dapr.Messaging.PublishSubscribe;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.Logging;
+using Intropy.Framework.Hosting.Messaging;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
 

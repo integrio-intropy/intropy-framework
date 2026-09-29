@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Messaging;
 
 namespace Intropy.Framework.Hosting.Common;
 
@@ -61,15 +62,17 @@ internal static class HostingMetrics
             { "intropy.sweep.outcome", OutcomeName(outcome) }
         });
 
-    /// <summary>Records one message processed through the send pipeline.</summary>
+    /// <summary>Records one message processed through a send pipeline or a loader route.</summary>
     /// <param name="componentName">The component consuming the message.</param>
     /// <param name="topic">The topic the message was consumed from.</param>
-    /// <param name="outcome"><c>processed</c>, <c>skipped</c>, <c>failed</c> or <c>interrupted</c>
-    /// (by the host stopping: left for redelivery, but not a failure).</param>
+    /// <param name="outcome"><c>processed</c>, <c>skipped</c>, <c>failed</c>, <c>interrupted</c>
+    /// (by the host stopping: left for redelivery, but not a failure) or <c>unrouted</c> (no loader
+    /// route handles its event type).</param>
     /// <param name="errorType">Set when <paramref name="outcome"/> is <c>failed</c>.</param>
     /// <param name="duration">How long processing took.</param>
+    /// <param name="route">The loader route that handled the message, if any.</param>
     internal static void RecordProcessedMessage(string componentName, string topic, string outcome, string? errorType,
-        TimeSpan duration)
+        TimeSpan duration, string? route = null)
     {
         var tags = new TagList
         {
@@ -81,9 +84,20 @@ internal static class HostingMetrics
         };
         if (errorType is not null)
             tags.Add("error.type", errorType);
+        if (route is not null)
+            tags.Add("intropy.route", route);
         ConsumedMessages.Add(1, tags);
         ProcessDuration.Record(duration.TotalSeconds, tags);
     }
+
+    internal static string OutcomeName(MessageOutcome outcome) => outcome switch
+    {
+        MessageOutcome.Processed => "processed",
+        MessageOutcome.Skipped => "skipped",
+        MessageOutcome.Interrupted => "interrupted",
+        MessageOutcome.Unrouted => "unrouted",
+        _ => "failed"
+    };
 
     internal static string OutcomeName(FileOutcome outcome) => outcome switch
     {

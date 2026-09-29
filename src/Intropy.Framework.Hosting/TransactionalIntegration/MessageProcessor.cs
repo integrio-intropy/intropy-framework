@@ -5,6 +5,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Microsoft.Extensions.Logging;
+using Intropy.Framework.Hosting.Messaging;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
 
@@ -43,7 +44,7 @@ internal sealed class MessageProcessor<TCtx>(
         using var activity = DaprActivityHelper.StartProcessActivity(message, topicName, run);
         var (response, outcome, errorType) = await ExecutePipelineAsync(message, activity, hostCancellation,
             cancellationToken);
-        HostingMetrics.RecordProcessedMessage(componentName, topicName, OutcomeName(outcome), errorType,
+        HostingMetrics.RecordProcessedMessage(componentName, topicName, HostingMetrics.OutcomeName(outcome), errorType,
             Stopwatch.GetElapsedTime(start));
         return new MessageProcessingResult(response, outcome);
     }
@@ -110,14 +111,6 @@ internal sealed class MessageProcessor<TCtx>(
         activity?.SetStatus(ActivityStatusCode.Error, description);
         return (TopicResponseAction.Retry, MessageOutcome.Failed, errorType);
     }
-
-    private static string OutcomeName(MessageOutcome outcome) => outcome switch
-    {
-        MessageOutcome.Processed => "processed",
-        MessageOutcome.Skipped => "skipped",
-        MessageOutcome.Interrupted => "interrupted",
-        _ => "failed"
-    };
 }
 
 /// <summary>How one handled message ended: the response to return to Dapr and its outcome in the run.</summary>
