@@ -1,9 +1,11 @@
 using System.Text.Json;
+using CloudNative.CloudEvents;
 using Dapr.Messaging.PublishSubscribe;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Loader;
 using Intropy.Framework.Hosting.Messaging;
+using Intropy.Framework.Testing.Delivery;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Action = Intropy.Contracts.IdempotencyService.Action;
@@ -17,20 +19,30 @@ namespace Intropy.Framework.Hosting.Test.Loader;
 /// </summary>
 public class LoaderTests
 {
-    private static string Created(string orderId) =>
-        JsonSerializer.Serialize(new OrderCreated(orderId, "CUST-1"));
+    private static OrderCreated Created(string orderId) => new(orderId, "CUST-1");
 
-    private static string Cancelled(string orderId) =>
-        JsonSerializer.Serialize(new OrderCancelled(orderId, "changed mind"));
+    private static OrderCancelled Cancelled(string orderId) => new(orderId, "changed mind");
+
+    /// <summary>A published event: its payload as JSON data, its subject the order.</summary>
+    private static CloudEvent Event(string type, string subject, object data) => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        Source = new Uri("urn:test:source"),
+        Type = type,
+        Subject = subject,
+        Time = DateTimeOffset.UtcNow,
+        DataContentType = "application/json",
+        Data = data
+    };
 
     [Fact]
     public async Task SingleRoute_LoadsTheMessageAndAcksSuccess()
     {
         await using var host = await LoaderHost.StartSingleAsync();
 
-        var ack = await host.Subscriber.DeliverAsync("any.type", "ORD-1", Created("ORD-1"));
+        var ack = await host.Subscriber.DeliverAsync(Event("any.type", "ORD-1", Created("ORD-1")));
 
-        Assert.Equal(TopicResponseAction.Success, ack);
+        Assert.Equal(DeliveryAck.Success, ack);
         Assert.Equal("ORD-1", Assert.Single(host.CreatedSender.Sent).Value.OrderId);
     }
 
@@ -39,7 +51,7 @@ public class LoaderTests
     {
         await using var host = await LoaderHost.StartSingleAsync();
 
-        await host.Subscriber.DeliverAsync("any.type", "ORD-1", Created("ORD-1"));
+        await host.Subscriber.DeliverAsync(Event("any.type", "ORD-1", Created("ORD-1")));
 
         Assert.Equal("ORD-1", Assert.Single(host.Idempotency.Committed).Id);
     }
@@ -49,11 +61,11 @@ public class LoaderTests
     {
         await using var host = await LoaderHost.StartRoutingAsync();
 
-        var createdAck = await host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1", Created("ORD-1"));
-        var cancelledAck = await host.Subscriber.DeliverAsync(LoaderHost.Cancelled, "ORD-2", Cancelled("ORD-2"));
+        var createdAck = await host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
+        var cancelledAck = await host.Subscriber.DeliverAsync(Event(LoaderHost.Cancelled, "ORD-2", Cancelled("ORD-2")));
 
-        Assert.Equal(TopicResponseAction.Success, createdAck);
-        Assert.Equal(TopicResponseAction.Success, cancelledAck);
+        Assert.Equal(DeliveryAck.Success, createdAck);
+        Assert.Equal(DeliveryAck.Success, cancelledAck);
         Assert.Equal("ORD-1", Assert.Single(host.CreatedSender.Sent).Value.OrderId);
         Assert.Equal("ORD-2", Assert.Single(host.CancelledSender.Sent).Value.OrderId);
     }
@@ -63,21 +75,21 @@ public class LoaderTests
     {
         await using var host = await LoaderHost.StartRoutingAsync();
 
-        await host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1", Created("ORD-1"));
-        await host.Subscriber.DeliverAsync(LoaderHost.Cancelled, "ORD-1", Cancelled("ORD-1"));
+        await host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
+        await host.Subscriber.DeliverAsync(Event(LoaderHost.Cancelled, "ORD-1", Cancelled("ORD-1")));
 
         Assert.Equal(["order.created:ORD-1", "order.cancelled:ORD-1"], host.Idempotency.Committed.Select(m => m.Id));
     }
 
     [Theory]
-    [InlineData(UnroutedPolicy.DeadLetter, TopicResponseAction.Drop)]
-    [InlineData(UnroutedPolicy.Ack, TopicResponseAction.Success)]
-    [InlineData(UnroutedPolicy.Retry, TopicResponseAction.Retry)]
-    public async Task UnroutedMessage_IsAckedAsThePolicySays(UnroutedPolicy policy, TopicResponseAction expected)
+    [InlineData(UnroutedPolicy.DeadLetter, DeliveryAck.Drop)]
+    [InlineData(UnroutedPolicy.Ack, DeliveryAck.Success)]
+    [InlineData(UnroutedPolicy.Retry, DeliveryAck.Retry)]
+    public async Task UnroutedMessage_IsAckedAsThePolicySays(UnroutedPolicy policy, DeliveryAck expected)
     {
         await using var host = await LoaderHost.StartRoutingAsync(o => o.Unrouted = policy);
 
-        var ack = await host.Subscriber.DeliverAsync("order.shipped", "ORD-1", Created("ORD-1"));
+        var ack = await host.Subscriber.DeliverAsync(Event("order.shipped", "ORD-1", Created("ORD-1")));
 
         Assert.Equal(expected, ack);
         Assert.Empty(host.CreatedSender.Sent);
@@ -130,9 +142,9 @@ public class LoaderTests
         await using var host = await LoaderHost.StartRoutingAsync();
         host.Idempotency.NextStatus = new StatusResponse(Action.Ignore, Reason.SameData);
 
-        var ack = await host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1", Created("ORD-1"));
+        var ack = await host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
 
-        Assert.Equal(TopicResponseAction.Success, ack);
+        Assert.Equal(DeliveryAck.Success, ack);
         Assert.Empty(host.CreatedSender.Sent);
         Assert.Empty(host.Idempotency.Committed);
     }
@@ -142,10 +154,10 @@ public class LoaderTests
     {
         await using var host = await LoaderHost.StartSingleAsync(reject: order => order.OrderId == "ORD-BAD");
 
-        var ack = await host.Subscriber.DeliverAsync("any.type", "ORD-BAD", Created("ORD-BAD"));
+        var ack = await host.Subscriber.DeliverAsync(Event("any.type", "ORD-BAD", Created("ORD-BAD")));
 
         // Redelivering a rejected message would loop forever.
-        Assert.Equal(TopicResponseAction.Success, ack);
+        Assert.Equal(DeliveryAck.Success, ack);
         Assert.Single(host.Incidents.Incidents);
         Assert.Empty(host.CreatedSender.Sent);
     }
@@ -156,9 +168,9 @@ public class LoaderTests
         await using var host = await LoaderHost.StartRoutingAsync();
         host.CreatedSender.Failure = new InvalidOperationException("Destination unreachable");
 
-        var ack = await host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1", Created("ORD-1"));
+        var ack = await host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
 
-        Assert.Equal(TopicResponseAction.Retry, ack);
+        Assert.Equal(DeliveryAck.Retry, ack);
         Assert.Empty(host.Idempotency.Committed);
     }
 
@@ -167,7 +179,7 @@ public class LoaderTests
     {
         await using var host = await LoaderHost.StartRoutingAsync();
 
-        await host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1", Created("ORD-1"), redelivery: true);
+        await host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")), redelivery: true);
 
         Assert.True(Assert.Single(host.CreatedSender.Sent).IsRetry);
     }
@@ -178,10 +190,10 @@ public class LoaderTests
         // The framework's extractor publishes its payload as a JSON string inside the CloudEvent.
         await using var host = await LoaderHost.StartRoutingAsync();
 
-        var ack = await host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1",
-            JsonSerializer.Serialize(Created("ORD-1")));
+        var ack = await host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1",
+            JsonSerializer.Serialize(Created("ORD-1"))));
 
-        Assert.Equal(TopicResponseAction.Success, ack);
+        Assert.Equal(DeliveryAck.Success, ack);
         Assert.Equal("ORD-1", Assert.Single(host.CreatedSender.Sent).Value.OrderId);
     }
 
@@ -192,11 +204,11 @@ public class LoaderTests
         var first = host.Subscriber.Current;
 
         first.Break();
-        await host.Subscriber.WaitForSubscriptionsAsync(2);
+        await host.Subscriber.WaitForSubscriptionAsync(2);
 
         Assert.True(first.Disposed);
-        var ack = await host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1", Created("ORD-1"));
-        Assert.Equal(TopicResponseAction.Success, ack);
+        var ack = await host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
+        Assert.Equal(DeliveryAck.Success, ack);
     }
 
     [Fact]
@@ -204,7 +216,7 @@ public class LoaderTests
     {
         await using var host = await LoaderHost.StartAsync((services, fixture) =>
         {
-            fixture.Subscriber.FailNextSubscribes = 2;
+            fixture.Subscriber.FailNextSubscribes(2);
             services.AddLoader<OrderCreated, OrderCreated, Context>(
                 (b, _) => b.WithDeserializer(new JsonDeserializer<OrderCreated>())
                     .WithValidator(new TestValidator<OrderCreated>()).WithIdempotency()
@@ -227,12 +239,12 @@ public class LoaderTests
         var host = await LoaderHost.StartRoutingAsync();
         host.CreatedSender.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        var delivery = host.Subscriber.DeliverAsync(LoaderHost.Created, "ORD-1", Created("ORD-1"));
+        var delivery = host.Subscriber.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
         await host.CreatedSender.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var stopping = host.Host.StopAsync();
         host.CreatedSender.Gate.SetResult();
 
-        Assert.Equal(TopicResponseAction.Success, await delivery);
+        Assert.Equal(DeliveryAck.Success, await delivery);
         await stopping;
         Assert.True(host.Subscriber.Current.Disposed);
         host.Host.Dispose();

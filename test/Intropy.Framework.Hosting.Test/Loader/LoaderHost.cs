@@ -6,6 +6,7 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Loader;
 using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.Messaging.Streaming;
+using Intropy.Framework.Testing.Delivery;
 using Intropy.Framework.Testing.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -79,7 +80,7 @@ public sealed class LoaderHost : IAsyncDisposable
         fixture.Host = builder.Build();
         await fixture.Host.StartAsync();
         if (waitForSubscription)
-            await fixture.Subscriber.WaitForSubscriptionsAsync(1);
+            await fixture.Subscriber.WaitForSubscriptionAsync();
         return fixture;
     }
 

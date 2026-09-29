@@ -1,9 +1,4 @@
-using System.Net;
-using System.Net.Sockets;
-using Dapr.AppCallback.Autogen.Grpc.v1;
-using Google.Protobuf;
-using Google.Protobuf.WellKnownTypes;
-using Grpc.Net.Client;
+using CloudNative.CloudEvents;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.Loader;
@@ -12,6 +7,7 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Loader;
 using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.Messaging.Streaming;
+using Intropy.Framework.Testing.Delivery;
 using Intropy.Framework.Testing.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -51,19 +47,18 @@ public sealed class OrderLookup : BatchLookupStep<OrderState>
 public sealed class BulkLoaderHost : IAsyncDisposable
 {
     public IHost Host { get; private set; } = null!;
-    public AppCallbackTestClient Client { get; private set; } = null!;
+    public AppCallbackDelivery Delivery { get; private set; } = null!;
     public FakeStreamingSubscriber Streaming { get; } = new();
     public FakeIdempotencyServiceClient Idempotency { get; } = new();
     public FakeBusinessIncidentServiceClient Incidents { get; } = new();
     public OrderLookup Lookup { get; } = new();
     public RecordingSender<OrderState> CreatedSender { get; } = new();
     public RecordingSender<OrderCancelled> CancelledSender { get; } = new();
-    private GrpcChannel? _channel;
 
     public static async Task<BulkLoaderHost> StartAsync(Action<LoaderOptions>? configure = null)
     {
         var fixture = new BulkLoaderHost();
-        var port = FreePort();
+        var port = AppCallbackDelivery.AvailablePort();
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(
             new HostApplicationBuilderSettings { DisableDefaults = true });
         builder.Services.AddLogging();
@@ -111,55 +106,27 @@ public sealed class BulkLoaderHost : IAsyncDisposable
 
         fixture.Host = builder.Build();
         await fixture.Host.StartAsync();
-        fixture._channel = GrpcChannel.ForAddress($"http://127.0.0.1:{port}");
-        fixture.Client = new AppCallbackTestClient(fixture._channel.CreateCallInvoker());
+        fixture.Delivery = new AppCallbackDelivery(port);
         return fixture;
     }
 
-    /// <summary>Sends a bulk delivery and returns each entry's status, in order.</summary>
-    public async Task<IReadOnlyList<TopicEventResponse.Types.TopicEventResponseStatus>> DeliverAsync(
-        params TopicEventBulkRequestEntry[] entries)
+    /// <summary>A published event: its payload as JSON data, its subject the order.</summary>
+    public static CloudEvent Event(string id, string type, string subject, object data, int minutes = 0) => new()
     {
-        var request = new TopicEventBulkRequest
-        {
-            Id = Guid.NewGuid().ToString(), PubsubName = LoaderHost.PubSub, Topic = LoaderHost.Topic
-        };
-        request.Entries.AddRange(entries);
-        var response = await Client.OnBulkTopicEventAsync(request);
-        Assert.Equal(entries.Select(e => e.EntryId), response.Statuses.Select(s => s.EntryId));
-        return [.. response.Statuses.Select(s => s.Status)];
-    }
-
-    public static TopicEventBulkRequestEntry Entry(string entryId, string eventType, string subject, string data,
-        int minutes = 0)
-    {
-        var extensions = new Struct();
-        extensions.Fields["subject"] = Value.ForString(subject);
-        extensions.Fields["time"] =
-            Value.ForString(new DateTimeOffset(2026, 9, 29, 10, minutes, 0, TimeSpan.Zero).ToString("O"));
-        return new TopicEventBulkRequestEntry
-        {
-            EntryId = entryId,
-            ContentType = "application/cloudevents+json",
-            CloudEvent = new TopicEventCERequest
-            {
-                Id = entryId, Source = "urn:test", Type = eventType, SpecVersion = "1.0",
-                DataContentType = "application/json", Data = ByteString.CopyFromUtf8(data), Extensions = extensions
-            }
-        };
-    }
+        Id = id,
+        Source = new Uri("urn:test"),
+        Type = type,
+        Subject = subject,
+        Time = new DateTimeOffset(2026, 9, 29, 10, minutes, 0, TimeSpan.Zero),
+        DataContentType = "application/json",
+        Data = data
+    };
 
     public async ValueTask DisposeAsync()
     {
-        _channel?.Dispose();
+        Delivery.Dispose();
         await Host.StopAsync();
         Host.Dispose();
     }
 
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
 }

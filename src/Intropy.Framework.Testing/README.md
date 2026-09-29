@@ -2,12 +2,12 @@
 
 Hand-rolled fakes and delivery helpers for component integration tests against
 the [Intropy framework](https://github.com/integrio-intropy/intropy-framework).
-No mocking-framework dependency, no ASP.NET dependency, no Dapr sidecar
-required.
+No mocking-framework dependency, no Dapr sidecar required. It depends on
+`Intropy.Framework.Hosting` (for the loader delivery fakes), and so on the ASP.NET
+Core shared framework, like every component does.
 
-The package fakes the four edges every component integration test fakes, plus a
-helper for delivering CloudEvents to loader endpoints exactly as a Dapr sidecar
-does:
+The package fakes the four edges every component integration test fakes, plus
+helpers for delivering CloudEvents to loaders exactly as a Dapr sidecar does:
 
 | Helper | Namespace | Fakes |
 |---|---|---|
@@ -16,7 +16,9 @@ does:
 | `FakeEnqueueStep<TCtx>` | `Intropy.Framework.Testing.Topics` | The transactional receive pipeline's queue publish step |
 | `FakeIdempotencyServiceClient` | `Intropy.Framework.Testing.Services` | `IIdempotencyServiceClient` |
 | `FakeBusinessIncidentServiceClient` | `Intropy.Framework.Testing.Services` | `IBusinessIncidentServiceClient` |
-| `DaprDelivery` | `Intropy.Framework.Testing.Delivery` | Sidecar CloudEvents delivery to loader endpoints |
+| `FakeStreamingSubscriber` | `Intropy.Framework.Testing.Delivery` | The sidecar's streaming subscription, for loaders with message routes (`AddLoader`) |
+| `AppCallbackDelivery` | `Intropy.Framework.Testing.Delivery` | The sidecar calling a batch loader's gRPC app callback (`OnBatch`, `AddBatchLoader`) |
+| `DaprDelivery` | `Intropy.Framework.Testing.Delivery` | Sidecar HTTP delivery to ASP.NET subscription endpoints |
 | `PublishedMessageCapture` | `Intropy.Framework.Testing.Dapr` | Publish-call capture for `DaprClient` substitutes |
 
 ## The canonical pattern
@@ -45,13 +47,37 @@ Assert.Equal("order.created", topic.Events[0].Type);
 ```
 
 ```csharp
-// Loader test shape (WebApplicationFactory with DI overrides)
-var client = factory.CreateClient();
-var ack = await client.DeliverAsync("/events/orders", cloudEvent);
+// Loader test shape (message routes: the host consumes through a streaming subscription)
+var subscriber = new FakeStreamingSubscriber();
+var builder = Composition.CreateHostBuilder([], "Development");
+builder.Services.AddSingleton<IStreamingSubscriber>(subscriber);   // plus the edge fakes
+using var host = builder.Build();
+await host.StartAsync();
+await subscriber.WaitForSubscriptionAsync();
+
+var ack = await subscriber.DeliverAsync(cloudEvent);                // redelivery: true marks a retry
 
 Assert.Equal(DeliveryAck.Success, ack);
 Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 ```
+
+```csharp
+// Batch loader test shape (batch routes: the host serves the Dapr gRPC app callback)
+var port = AppCallbackDelivery.AvailablePort();
+// ... build and start the host with LoaderOptions.CallbackPort = port, plus the edge fakes ...
+using var delivery = new AppCallbackDelivery(port);
+
+var subscription = Assert.Single(await delivery.GetSubscriptionsAsync());   // the announced bulk settings
+var acks = await delivery.DeliverBatchAsync(created1, created2, cancelled1); // one ack per entry, in order
+
+Assert.All(acks, ack => Assert.Equal(DeliveryAck.Success, ack));
+```
+
+Both loader fakes encode events the way the sidecar hands them over — the
+payload as the envelope's `data` member (a payload published as a JSON string
+arrives quoted, as it does for real), every other attribute as an extension — and
+return the loader's ack as a `DeliveryAck`. `DaprDelivery` is for ASP.NET
+components that still receive over HTTP delivery.
 
 ## Fake semantics (fail like production)
 
@@ -118,7 +144,7 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 
 > This matrix describes the behavior of framework-composed loader and
 > transactional pipelines (which acks their endpoints/handlers produce), not
-> of this package. `DaprDelivery` only delivers the envelope and parses the
+> of this package. The delivery helpers only deliver the event and report the
 > ack.
 
 | Scenario | Ack | Side effects |
@@ -129,6 +155,9 @@ Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 | Destination throws | `RETRY` | Nothing written |
 | Idempotency service down (`StatusException`) | `RETRY` | Technical failure |
 | Malformed envelope | `RETRY` | No incident routed |
+| No route for the event type (routing loader) | `DROP` (default `UnroutedPolicy.DeadLetter`) | Sent to the dead-letter topic |
+| Filtered out by a batch route's `Where` | `SUCCESS` | Nothing looked up or written |
+| Batch lookup fails | `RETRY` for that chunk's entries | Other chunks and message routes unaffected |
 
 > **Business failures are consumed.** When a business step fails, the
 > framework's incident-router finalizer triggers the incident and returns

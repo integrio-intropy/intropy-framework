@@ -8,10 +8,12 @@
   <ItemGroup>
     <ProjectReference Include="..\Intropy.Framework.Adapters\Intropy.Framework.Adapters.csproj" />
     <ProjectReference Include="..\Intropy.Framework.Blocks\Intropy.Framework.Blocks.csproj" />
+    <ProjectReference Include="..\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Dapr.Client" />
+    <PackageReference Include="Grpc.Net.Client" />
     <PackageReference Include="Intropy.Contracts" />
   </ItemGroup>
 
