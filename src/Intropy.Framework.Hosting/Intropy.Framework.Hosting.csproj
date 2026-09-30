@@ -5,11 +5,6 @@
     <PackageTags>intropy;pipeline;integration;framework;hosting;dapr</PackageTags>
   </PropertyGroup>
 
-  <!-- Kestrel hosts the gRPC app callback a batch loader receives its bulk deliveries on. -->
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\Intropy.Framework.Blocks\Intropy.Framework.Blocks.csproj" />
     <ProjectReference Include="..\Intropy.Framework.Adapters\Intropy.Framework.Adapters.csproj" />
@@ -18,7 +13,7 @@
   <ItemGroup>
     <PackageReference Include="Dapr.Client" />
     <PackageReference Include="Dapr.Messaging" />
-    <PackageReference Include="Grpc.AspNetCore" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
 </Project>

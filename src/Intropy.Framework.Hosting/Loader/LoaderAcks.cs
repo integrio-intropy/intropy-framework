@@ -8,7 +8,7 @@ internal static class LoaderAcks
 {
     internal static TopicResponseAction ToResponse(MessageOutcome outcome, UnroutedPolicy unrouted) => outcome switch
     {
-        MessageOutcome.Processed or MessageOutcome.Skipped or MessageOutcome.Filtered => TopicResponseAction.Success,
+        MessageOutcome.Processed or MessageOutcome.Skipped => TopicResponseAction.Success,
         MessageOutcome.Unrouted => unrouted switch
         {
             // Drop hands the message to the subscription's dead-letter topic.

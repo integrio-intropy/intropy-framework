@@ -13,7 +13,6 @@
 
   <ItemGroup>
     <PackageReference Include="Dapr.Client" />
-    <PackageReference Include="Grpc.Net.Client" />
     <PackageReference Include="Intropy.Contracts" />
   </ItemGroup>
 

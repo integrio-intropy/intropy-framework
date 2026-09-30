@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using CloudNative.CloudEvents;
 using Dapr.Messaging.PublishSubscribe;
@@ -146,16 +144,6 @@ public class FakeStreamingSubscriberTests
 
         Assert.True(subscriber.Current.Disposed);
         Assert.True(subscriber.Current.Completion.IsCompletedSuccessfully);
-    }
-
-    [Fact]
-    public void AvailablePort_IsAPortThatCanBeListenedOn()
-    {
-        var port = AppCallbackDelivery.AvailablePort();
-
-        using var listener = new TcpListener(IPAddress.Loopback, port);
-        listener.Start();
-        Assert.Equal(port, ((IPEndPoint)listener.LocalEndpoint).Port);
     }
 
     private static async Task<FakeStreamingSubscriber> SubscribedAsync(Action<TopicMessage> onMessage)

@@ -8,7 +8,7 @@ using Google.Protobuf.WellKnownTypes;
 namespace Intropy.Framework.Hosting.Messaging.Streaming;
 
 /// <summary>
-/// Reads a message delivered over a streaming subscription (or the gRPC app callback) into the transport-independent
+/// Reads a message delivered over a streaming subscription into the transport-independent
 /// <see cref="IncomingMessage"/>. The stream carries the CloudEvent's core attributes as fields and
 /// everything else (subject, time, trace context, the sidecar's <c>retrycount</c>) as extensions.
 /// </summary>
@@ -20,8 +20,8 @@ internal static class TopicMessageReader
         Read(message.Id, message.Source, message.Type, message.DataContentType, message.Data, message.Extensions,
             message.Extensions.ContainsKey(RetryCountKey));
 
-    /// <summary>Reads a CloudEvent delivered as its attributes, data and extensions — the shape both
-    /// the streaming subscription and the gRPC app callback use.</summary>
+    /// <summary>Reads a CloudEvent delivered as its attributes, data and extensions — the shape the
+    /// streaming subscription delivers it in.</summary>
     internal static IncomingMessage Read(string id, string? source, string? type, string? dataContentType,
         ReadOnlyMemory<byte> data, IReadOnlyDictionary<string, Value> extensions, bool isRetry)
     {

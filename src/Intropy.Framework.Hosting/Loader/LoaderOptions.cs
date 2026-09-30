@@ -19,8 +19,8 @@ public sealed class LoaderOptions
     /// <see cref="UnroutedPolicy.DeadLetter"/>, which requires <see cref="DeadLetterTopic"/>.</summary>
     public UnroutedPolicy Unrouted { get; set; } = UnroutedPolicy.DeadLetter;
 
-    /// <summary>How long one message (or, for a batch loader, one batch) may run before its pipeline
-    /// is cancelled and the message is left for redelivery.</summary>
+    /// <summary>How long one message may run before its pipeline is cancelled and the message is
+    /// left for redelivery.</summary>
     public TimeSpan MaxMessageProcessingTime { get; set; } = TimeSpan.FromMinutes(1);
 
     /// <summary>How long the message in flight may finish after the host is asked to stop, before it
@@ -34,16 +34,4 @@ public sealed class LoaderOptions
 
     /// <summary>How long to wait before reopening a subscription whose stream broke.</summary>
     public TimeSpan ReconnectDelay { get; set; } = TimeSpan.FromSeconds(5);
-
-    /// <summary>A batch loader's largest delivery: the most messages the sidecar collects into one
-    /// batch. Independent of a lookup's chunk size.</summary>
-    public int MaxBatchSize { get; set; } = 100;
-
-    /// <summary>How long the sidecar waits to fill a batch before delivering what it has.</summary>
-    public TimeSpan MaxBatchWait { get; set; } = TimeSpan.FromSeconds(1);
-
-    /// <summary>The port a batch loader serves the Dapr gRPC app callback on — the sidecar's
-    /// <c>app-port</c>, with <c>app-protocol</c> <c>grpc</c>. Defaults to <c>APP_PORT</c> from the
-    /// environment, or 8080.</summary>
-    public int? CallbackPort { get; set; }
 }

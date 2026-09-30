@@ -24,9 +24,6 @@ internal sealed class LoaderRouteTable
     /// <summary>Every route, in registration order.</summary>
     internal IReadOnlyList<ILoaderRoute> Routes { get; }
 
-    /// <summary>Whether any route runs batches: the loader then receives through Dapr bulk subscribe.</summary>
-    internal bool HasBatchRoutes => Routes.Any(r => r.IsBatch);
-
     /// <summary>Whether the loader routes by event type (and so can receive unrouted messages).</summary>
     internal bool IsRouting => _catchAll is null;
 
