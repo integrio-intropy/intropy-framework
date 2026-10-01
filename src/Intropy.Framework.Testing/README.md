@@ -3,7 +3,7 @@
 Hand-rolled fakes and delivery helpers for component integration tests against
 the [Intropy framework](https://github.com/integrio-intropy/intropy-framework).
 No mocking-framework dependency, no Dapr sidecar required. It depends on
-`Intropy.Framework.Hosting` (for the loader delivery fake).
+`Intropy.Framework.Hosting` (for the loader delivery helpers).
 
 The package fakes the four edges every component integration test fakes, plus
 helpers for delivering CloudEvents to loaders exactly as a Dapr sidecar does:
@@ -16,6 +16,7 @@ helpers for delivering CloudEvents to loaders exactly as a Dapr sidecar does:
 | `FakeIdempotencyServiceClient` | `Intropy.Framework.Testing.Services` | `IIdempotencyServiceClient` |
 | `FakeBusinessIncidentServiceClient` | `Intropy.Framework.Testing.Services` | `IBusinessIncidentServiceClient` |
 | `FakeStreamingSubscriber` | `Intropy.Framework.Testing.Delivery` | The sidecar's streaming subscription, for loaders (`AddLoader`) |
+| `AppCallbackDelivery` | `Intropy.Framework.Testing.Delivery` | The sidecar's pushes to a loader's gRPC app callback (`LoaderTransport.AppCallback`, experimental) |
 | `DaprDelivery` | `Intropy.Framework.Testing.Delivery` | Sidecar HTTP delivery to ASP.NET subscription endpoints |
 | `PublishedMessageCapture` | `Intropy.Framework.Testing.Dapr` | Publish-call capture for `DaprClient` substitutes |
 
@@ -59,11 +60,39 @@ Assert.Equal(DeliveryAck.Success, ack);
 Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 ```
 
-`FakeStreamingSubscriber` encodes events the way the sidecar hands them over — the
-payload as the envelope's `data` member (a payload published as a JSON string
-arrives quoted, as it does for real), every other attribute as an extension — and
-return the loader's ack as a `DeliveryAck`. `DaprDelivery` is for ASP.NET
-components that still receive over HTTP delivery.
+```csharp
+// Loader test shape under the app-callback transport (experimental): the loader serves
+// the Dapr gRPC app callback on a port, and the delivery plays the sidecar over it.
+var port = AppCallbackDelivery.AvailablePort();
+builder.Services.AddLoader(options =>
+{
+    options.PubSubName = "pubsub";
+    options.TopicName = "orders";
+    options.Transport = LoaderTransport.AppCallback;
+    options.CallbackPort = port;
+}, routes => /* the component's routes */);                          // plus the edge fakes
+using var host = builder.Build();
+await host.StartAsync();
+using var delivery = new AppCallbackDelivery(port, "pubsub", "orders");
+
+var ack = await delivery.DeliverAsync(cloudEvent);                  // redelivery: true marks a retry
+
+Assert.Equal(DeliveryAck.Success, ack);
+```
+
+`FakeStreamingSubscriber` and `AppCallbackDelivery` encode events the way the
+sidecar hands them over — the payload as the envelope's `data` member (a payload
+published as a JSON string arrives quoted, as it does for real), every other
+attribute as an extension — and return the loader's ack as a `DeliveryAck`.
+`DeliverAsync` has the same shape on both, so a loader test can run against
+either transport.
+
+A loader on the app callback announces no subscription (a declarative Dapr
+`Subscription` resource owns it), so `AppCallbackDelivery` is told the pub/sub
+and topic it delivers on, as the resource tells the sidecar. An overload of
+`DeliverAsync` delivers from another pub/sub or topic, to test a resource that
+disagrees with the loader. `DaprDelivery` is for ASP.NET components that still
+receive over HTTP delivery.
 
 ## Fake semantics (fail like production)
 
@@ -142,6 +171,9 @@ components that still receive over HTTP delivery.
 | Idempotency service down (`StatusException`) | `RETRY` | Technical failure |
 | Malformed envelope | `RETRY` | No incident routed |
 | No route for the event type (routing loader) | `DROP` (default `UnroutedPolicy.DeadLetter`) | Sent to the dead-letter topic |
+| Processing exceeds `MaxMessageProcessingTime` | `RETRY` | Pipeline cancelled |
+| Delivered after the host began stopping | `RETRY` | Not processed |
+| Delivered from another pub/sub or topic (app callback) | `RETRY` | Not processed; error logged |
 
 > **Business failures are consumed.** When a business step fails, the
 > framework's incident-router finalizer triggers the incident and returns
