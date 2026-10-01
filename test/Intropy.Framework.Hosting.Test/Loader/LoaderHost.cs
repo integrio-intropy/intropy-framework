@@ -1,3 +1,4 @@
+using CloudNative.CloudEvents;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.Loader;
@@ -38,11 +39,12 @@ public sealed class LoaderHost : IAsyncDisposable
 
     /// <summary>A loader routing <see cref="Created"/> and <see cref="Cancelled"/>.</summary>
     public static Task<LoaderHost> StartRoutingAsync(Action<LoaderOptions>? configure = null,
-        Action<LoaderRoutes, LoaderHost>? extraRoutes = null, bool waitForSubscription = true) =>
+        Action<LoaderRoutes, LoaderHost>? extraRoutes = null, bool waitForSubscription = true,
+        LoaderTransport transport = LoaderTransport.Streaming) =>
         StartAsync((services, fixture) => services.AddLoader(
             options =>
             {
-                Defaults(options);
+                Defaults(options, transport);
                 options.DeadLetterTopic = "orders.dead";
                 configure?.Invoke(options);
             },
@@ -60,13 +62,13 @@ public sealed class LoaderHost : IAsyncDisposable
 
     /// <summary>A loader without routes: one pipeline for every event type.</summary>
     public static Task<LoaderHost> StartSingleAsync(Func<OrderCreated, bool>? reject = null,
-        Action<LoaderOptions>? configure = null) =>
+        Action<LoaderOptions>? configure = null, LoaderTransport transport = LoaderTransport.Streaming) =>
         StartAsync((services, fixture) => services.AddLoader<OrderCreated, OrderCreated, Context>(
             (builder, _) => Pipeline(builder, fixture.CreatedSender, reject),
             (metadata, isRetry) => new Context(metadata, isRetry),
             options =>
             {
-                Defaults(options);
+                Defaults(options, transport);
                 configure?.Invoke(options);
             }));
 
@@ -108,10 +110,18 @@ public sealed class LoaderHost : IAsyncDisposable
         Callback?.Dispose();
     }
 
-    private static void Defaults(LoaderOptions options)
+    /// <summary>Delivers <paramref name="cloudEvent"/> through whichever transport the loader runs —
+    /// its app callback or its streaming subscription — and returns the loader's ack.</summary>
+    public Task<DeliveryAck> DeliverAsync(CloudEvent cloudEvent, bool redelivery = false) =>
+        Callback is not null ? Callback.DeliverAsync(cloudEvent, redelivery) : Subscriber.DeliverAsync(cloudEvent, redelivery);
+
+    private static void Defaults(LoaderOptions options, LoaderTransport transport = LoaderTransport.Streaming)
     {
         options.PubSubName = PubSub;
         options.TopicName = Topic;
+        options.Transport = transport;
+        if (transport == LoaderTransport.AppCallback)
+            options.CallbackPort = AppCallbackDelivery.AvailablePort();
         options.ReconnectDelay = TimeSpan.FromMilliseconds(10);
         options.ShutdownGracePeriod = TimeSpan.FromSeconds(5);
     }
