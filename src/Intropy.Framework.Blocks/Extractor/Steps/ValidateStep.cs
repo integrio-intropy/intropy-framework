@@ -12,6 +12,4 @@ public abstract class ValidateStep<T, TCtx> : BusinessStep<T, T, TCtx> where TCt
 {
     /// <inheritdoc/>
     public override string StepName => "Validate";
-
-    public override bool IsRetryable => false;
 }

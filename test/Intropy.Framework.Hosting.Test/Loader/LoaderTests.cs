@@ -17,6 +17,7 @@ namespace Intropy.Framework.Hosting.Test.Loader;
 /// CloudEvent type, each route's pipeline result becomes the message's ack, unrouted messages follow
 /// the unrouted policy, and the subscription survives a broken stream and drains on shutdown.
 /// </summary>
+[Collection(ProcessStateCollection.Name)]
 public class LoaderTests
 {
     private static OrderCreated Created(string orderId) => new(orderId, "CUST-1");

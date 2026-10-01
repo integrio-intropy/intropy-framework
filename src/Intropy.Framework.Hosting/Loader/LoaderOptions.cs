@@ -29,9 +29,19 @@ public sealed class LoaderOptions
     public TimeSpan ShutdownGracePeriod { get; set; } = TimeSpan.FromSeconds(20);
 
     /// <summary>How long to keep trying to open the subscription (the sidecar may start after the
-    /// app) before the loader gives up and stops the host with exit code 1.</summary>
+    /// app) before the loader gives up and stops the host with exit code 1. Streaming only.</summary>
     public TimeSpan SubscribeTimeout { get; set; } = TimeSpan.FromMinutes(1);
 
-    /// <summary>How long to wait before reopening a subscription whose stream broke.</summary>
+    /// <summary>How long to wait before reopening a subscription whose stream broke. Streaming
+    /// only.</summary>
     public TimeSpan ReconnectDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>How the sidecar delivers the loader's messages. Defaults to
+    /// <see cref="LoaderTransport.Streaming"/>. Experimental: see <see cref="LoaderTransport"/>.</summary>
+    public LoaderTransport Transport { get; set; } = LoaderTransport.Streaming;
+
+    /// <summary>The port the loader serves the Dapr gRPC app callback on under
+    /// <see cref="LoaderTransport.AppCallback"/>: the sidecar's <c>app-port</c>. Defaults to
+    /// <c>APP_PORT</c> from the environment, or 8080.</summary>
+    public int? CallbackPort { get; set; }
 }

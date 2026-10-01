@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Intropy.Framework.Hosting.Messaging;
 
 /// <summary>Finds the route for a message's CloudEvent type. Built once, at registration.</summary>
@@ -26,6 +28,15 @@ internal sealed class LoaderRouteTable
 
     /// <summary>Whether the loader routes by event type (and so can receive unrouted messages).</summary>
     internal bool IsRouting => _catchAll is null;
+
+    /// <summary>Builds every route's pipeline once, so a missing registration fails at startup instead
+    /// of failing every message.</summary>
+    internal void Verify(IServiceScopeFactory scopes, string componentName)
+    {
+        using var scope = scopes.CreateScope();
+        foreach (var route in Routes)
+            route.Verify(scope.ServiceProvider, componentName);
+    }
 
     /// <summary>The route for <paramref name="eventType"/>, or null when none handles it.</summary>
     internal ILoaderRoute? Find(string? eventType) =>

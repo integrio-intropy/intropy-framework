@@ -4,6 +4,7 @@ using Intropy.Framework.Blocks.Loader;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Messaging;
+using Intropy.Framework.Hosting.Messaging.Callback;
 using Intropy.Framework.Hosting.Messaging.Streaming;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -13,8 +14,9 @@ using Microsoft.Extensions.Logging;
 namespace Intropy.Framework.Hosting.Loader;
 
 /// <summary>
-/// Registers a loader: a long-running worker that consumes one topic through a Dapr streaming
-/// subscription (no server, no app port) and runs each message through a loader pipeline.
+/// Registers a loader: a long-running worker that consumes one topic and runs each message through a
+/// loader pipeline — through a Dapr streaming subscription (no server, no app port) by default, or
+/// through the Dapr gRPC app callback (<see cref="LoaderOptions.Transport"/>).
 /// </summary>
 public static class LoaderServiceCollectionExtensions
 {
@@ -43,7 +45,8 @@ public static class LoaderServiceCollectionExtensions
     /// (<see cref="LoaderOptions.Unrouted"/>).
     /// </summary>
     /// <remarks>
-    /// The loader consumes through a Dapr streaming subscription and serves nothing. Each route's
+    /// The loader consumes through a Dapr streaming subscription and serves nothing, unless
+    /// <see cref="LoaderOptions.Transport"/> selects the app callback. Each route's
     /// pipeline is built in the message's own scope, so its steps may be scoped. The
     /// loader builds every route's pipeline once before subscribing, so a missing registration stops
     /// the host at startup. Caller-owned: the component identity (<c>AddIntropyFramework</c>),
@@ -99,7 +102,10 @@ public static class LoaderServiceCollectionExtensions
             provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider),
             provider.GetRequiredService<ILogger<LoaderMessageHandler>>()));
 
-        AddStreamingTransport(services, table, options);
+        if (options.Transport == LoaderTransport.AppCallback)
+            AddCallbackTransport(services, table, options);
+        else
+            AddStreamingTransport(services, table, options);
 
         return services;
     }
@@ -119,6 +125,26 @@ public static class LoaderServiceCollectionExtensions
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<IHostApplicationLifetime>(),
             provider.GetRequiredService<ILogger<LoaderService>>()));
+    }
+
+    private static void AddCallbackTransport(IServiceCollection services, LoaderRouteTable table,
+        LoaderOptions options)
+    {
+        if (options.CallbackPort is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(options), options.CallbackPort,
+                $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.CallbackPort)} must be a port number (1-65535).");
+
+        services.AddSingleton(provider => new LoaderCallbackDelivery(
+            provider.GetRequiredService<LoaderMessageHandler>(), options, ComponentName(provider),
+            provider.GetRequiredService<ILogger<LoaderCallbackDelivery>>()));
+        services.AddHostedService(provider => new LoaderCallbackServer(
+            provider.GetRequiredService<LoaderCallbackDelivery>(),
+            table,
+            options,
+            ComponentName(provider),
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ILoggerFactory>(),
+            provider.GetRequiredService<IHostApplicationLifetime>()));
     }
 
     private static string ComponentName(IServiceProvider provider) =>

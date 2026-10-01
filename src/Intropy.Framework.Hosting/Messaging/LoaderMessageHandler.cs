@@ -1,3 +1,7 @@
+using System.Diagnostics;
+using Google.Protobuf.WellKnownTypes;
+using Intropy.Framework.Hosting.Common;
+using Intropy.Framework.Hosting.TransactionalIntegration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -14,6 +18,38 @@ internal sealed class LoaderMessageHandler(
     string componentName,
     ILogger<LoaderMessageHandler> logger)
 {
+    /// <summary>Handles one message in its own consumer span and records it in the consumed-messages
+    /// metrics — what every transport does with a delivered message before acknowledging it.</summary>
+    /// <param name="message">The consumed message.</param>
+    /// <param name="extensions">The CloudEvent extensions it was delivered with (trace context,
+    /// <c>retrycount</c>).</param>
+    /// <param name="topic">The topic it was consumed from.</param>
+    /// <param name="interrupt">Cancelled when the host interrupts in-flight work.</param>
+    /// <param name="cancellationToken">Cancels the pipeline (the interrupt or the per-message
+    /// timeout).</param>
+    internal async Task<PipelineOutcome> ProcessAsync(IncomingMessage message,
+        IReadOnlyDictionary<string, Value> extensions, string topic, CancellationToken interrupt,
+        CancellationToken cancellationToken)
+    {
+        var start = Stopwatch.GetTimestamp();
+        using var activity = DaprActivityHelper.StartProcessActivity(message.MessageId, extensions, topic, default);
+        activity?.SetTag("cloudevents.event_type", message.CloudEvent.Type);
+
+        var (route, outcome) = await HandleAsync(message, interrupt, cancellationToken);
+
+        if (route is not null)
+            activity?.SetTag("intropy.route", route.Name);
+        if (outcome.ErrorType is not null)
+        {
+            activity?.SetTag("error.type", outcome.ErrorType);
+            activity?.SetStatus(ActivityStatusCode.Error, outcome.Description);
+        }
+
+        HostingMetrics.RecordProcessedMessage(componentName, topic, HostingMetrics.OutcomeName(outcome.Outcome),
+            outcome.ErrorType, Stopwatch.GetElapsedTime(start), route?.Name);
+        return outcome;
+    }
+
     /// <summary>Handles one message.</summary>
     /// <param name="message">The consumed message.</param>
     /// <param name="interrupt">Cancelled when the host interrupts in-flight work.</param>

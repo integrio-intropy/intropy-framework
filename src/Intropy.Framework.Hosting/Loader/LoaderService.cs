@@ -1,9 +1,7 @@
 using System.Diagnostics;
 using Dapr.Messaging.PublishSubscribe;
-using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.Messaging.Streaming;
-using Intropy.Framework.Hosting.TransactionalIntegration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -44,7 +42,7 @@ internal sealed class LoaderService(
 
         try
         {
-            VerifyRoutes();
+            routes.Verify(scopes, componentName);
             logger.LogInformation(
                 "Loader {Component} consuming topic {Topic} on {PubSub}; routes: {Routes}; unrouted messages: {Unrouted}",
                 componentName, options.TopicName, options.PubSubName, string.Join(", ", routes.Routes.Select(r => r.Name)),
@@ -70,15 +68,6 @@ internal sealed class LoaderService(
     {
         _interrupt.Dispose();
         base.Dispose();
-    }
-
-    /// <summary>Builds every route's pipeline once before subscribing, so a missing registration
-    /// stops the process at startup instead of failing every message.</summary>
-    private void VerifyRoutes()
-    {
-        using var scope = scopes.CreateScope();
-        foreach (var route in routes.Routes)
-            route.Verify(scope.ServiceProvider, componentName);
     }
 
     private async Task ConsumeUntilStoppedOrBrokenAsync(CancellationToken stoppingToken)
@@ -151,27 +140,10 @@ internal sealed class LoaderService(
         Interlocked.Increment(ref _inFlight);
         try
         {
-            var start = Stopwatch.GetTimestamp();
-            using var activity = DaprActivityHelper.StartProcessActivity(message, options.TopicName, default);
             using var cancellation =
                 CancellationTokenSource.CreateLinkedTokenSource(_interrupt.Token, messageCancellation);
-
-            var incoming = TopicMessageReader.Read(message);
-            activity?.SetTag("cloudevents.event_type", incoming.CloudEvent.Type);
-
-            var (route, outcome) = await handler.HandleAsync(incoming, _interrupt.Token, cancellation.Token);
-
-            if (route is not null)
-                activity?.SetTag("intropy.route", route.Name);
-            if (outcome.ErrorType is not null)
-            {
-                activity?.SetTag("error.type", outcome.ErrorType);
-                activity?.SetStatus(ActivityStatusCode.Error, outcome.Description);
-            }
-
-            HostingMetrics.RecordProcessedMessage(componentName, options.TopicName,
-                HostingMetrics.OutcomeName(outcome.Outcome), outcome.ErrorType, Stopwatch.GetElapsedTime(start),
-                route?.Name);
+            var outcome = await handler.ProcessAsync(TopicMessageReader.Read(message), message.Extensions,
+                options.TopicName, _interrupt.Token, cancellation.Token);
             return LoaderAcks.ToResponse(outcome.Outcome, options.Unrouted);
         }
         finally

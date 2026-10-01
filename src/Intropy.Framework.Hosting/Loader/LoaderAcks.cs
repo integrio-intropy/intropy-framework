@@ -1,3 +1,4 @@
+using Dapr.AppCallback.Autogen.Grpc.v1;
 using Dapr.Messaging.PublishSubscribe;
 using Intropy.Framework.Hosting.Messaging;
 
@@ -17,5 +18,14 @@ internal static class LoaderAcks
             _ => TopicResponseAction.Retry
         },
         _ => TopicResponseAction.Retry
+    };
+
+    /// <summary>The same ack, as the app callback's response status.</summary>
+    internal static TopicEventResponse.Types.TopicEventResponseStatus ToStatus(MessageOutcome outcome,
+        UnroutedPolicy unrouted) => ToResponse(outcome, unrouted) switch
+    {
+        TopicResponseAction.Success => TopicEventResponse.Types.TopicEventResponseStatus.Success,
+        TopicResponseAction.Drop => TopicEventResponse.Types.TopicEventResponseStatus.Drop,
+        _ => TopicEventResponse.Types.TopicEventResponseStatus.Retry
     };
 }

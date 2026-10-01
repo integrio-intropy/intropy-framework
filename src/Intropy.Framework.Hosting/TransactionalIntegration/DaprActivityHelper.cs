@@ -20,9 +20,15 @@ internal static class DaprActivityHelper
     /// is its own unit of work. It is linked to <paramref name="run"/>, the span of the run that
     /// consumed it, so the run's messages can be found from it and vice versa.
     /// </summary>
-    internal static Activity? StartProcessActivity(TopicMessage message, string topic, ActivityContext run)
+    internal static Activity? StartProcessActivity(TopicMessage message, string topic, ActivityContext run) =>
+        StartProcessActivity(message.Id, message.Extensions, topic, run);
+
+    /// <summary>Starts the consumer span for a received message, from its id and the CloudEvent
+    /// extensions it was delivered with (trace context, <c>retrycount</c>). See
+    /// <see cref="StartProcessActivity(TopicMessage, string, ActivityContext)"/>.</summary>
+    internal static Activity? StartProcessActivity(string messageId, IReadOnlyDictionary<string, Value> extensions,
+        string topic, ActivityContext run)
     {
-        var extensions = message.Extensions;
         var traceParent = extensions.TryGetValue(TraceParentKey, out var parentValue)
             ? parentValue.StringValue
             : null;
@@ -51,7 +57,7 @@ internal static class DaprActivityHelper
         activity.SetTag("messaging.operation.type", "process");
         activity.SetTag("messaging.operation.name", "process");
         activity.SetTag("messaging.destination.name", topic);
-        activity.SetTag("messaging.message.id", message.Id);
+        activity.SetTag("messaging.message.id", messageId);
         if (TryGetRetryCount(extensions, out var retryCount))
             activity.SetTag("intropy.message.retry_count", retryCount);
         return activity;

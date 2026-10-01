@@ -15,7 +15,8 @@ namespace Intropy.Framework.Hosting.Test.Loader;
 
 /// <summary>
 /// A generic host running a loader against fakes: the sidecar's subscription
-/// (<see cref="FakeStreamingSubscriber"/>), both platform-service clients, and recording senders.
+/// (<see cref="FakeStreamingSubscriber"/>) or, under the app-callback transport, the sidecar's pushes
+/// (<see cref="Callback"/>), both platform-service clients, and recording senders.
 /// </summary>
 public sealed class LoaderHost : IAsyncDisposable
 {
@@ -26,6 +27,10 @@ public sealed class LoaderHost : IAsyncDisposable
 
     public IHost Host { get; private set; } = null!;
     public FakeStreamingSubscriber Subscriber { get; } = new();
+
+    /// <summary>Delivers to the loader's app callback; set when the loader runs
+    /// <see cref="LoaderTransport.AppCallback"/> on an explicit <see cref="LoaderOptions.CallbackPort"/>.</summary>
+    public AppCallbackDelivery? Callback { get; private set; }
     public FakeIdempotencyServiceClient Idempotency { get; } = new();
     public FakeBusinessIncidentServiceClient Incidents { get; } = new();
     public RecordingSender<OrderCreated> CreatedSender { get; } = new();
@@ -33,7 +38,7 @@ public sealed class LoaderHost : IAsyncDisposable
 
     /// <summary>A loader routing <see cref="Created"/> and <see cref="Cancelled"/>.</summary>
     public static Task<LoaderHost> StartRoutingAsync(Action<LoaderOptions>? configure = null,
-        Action<LoaderRoutes, LoaderHost>? extraRoutes = null) =>
+        Action<LoaderRoutes, LoaderHost>? extraRoutes = null, bool waitForSubscription = true) =>
         StartAsync((services, fixture) => services.AddLoader(
             options =>
             {
@@ -51,14 +56,19 @@ public sealed class LoaderHost : IAsyncDisposable
                         (builder, _) => Pipeline(builder, fixture.CancelledSender),
                         (metadata, isRetry) => new Context(metadata, isRetry));
                 extraRoutes?.Invoke(routes, fixture);
-            }));
+            }), waitForSubscription);
 
     /// <summary>A loader without routes: one pipeline for every event type.</summary>
-    public static Task<LoaderHost> StartSingleAsync(Func<OrderCreated, bool>? reject = null) =>
+    public static Task<LoaderHost> StartSingleAsync(Func<OrderCreated, bool>? reject = null,
+        Action<LoaderOptions>? configure = null) =>
         StartAsync((services, fixture) => services.AddLoader<OrderCreated, OrderCreated, Context>(
             (builder, _) => Pipeline(builder, fixture.CreatedSender, reject),
             (metadata, isRetry) => new Context(metadata, isRetry),
-            Defaults));
+            options =>
+            {
+                Defaults(options);
+                configure?.Invoke(options);
+            }));
 
     public static async Task<LoaderHost> StartAsync(Action<IServiceCollection, LoaderHost> addLoader,
         bool waitForSubscription = true)
@@ -79,7 +89,14 @@ public sealed class LoaderHost : IAsyncDisposable
 
         fixture.Host = builder.Build();
         await fixture.Host.StartAsync();
-        if (waitForSubscription)
+
+        var options = fixture.Host.Services.GetRequiredService<LoaderOptions>();
+        if (options.Transport == LoaderTransport.AppCallback)
+        {
+            if (options.CallbackPort is { } port)
+                fixture.Callback = new AppCallbackDelivery(port, options.PubSubName, options.TopicName);
+        }
+        else if (waitForSubscription)
             await fixture.Subscriber.WaitForSubscriptionAsync();
         return fixture;
     }
@@ -88,6 +105,7 @@ public sealed class LoaderHost : IAsyncDisposable
     {
         await Host.StopAsync();
         Host.Dispose();
+        Callback?.Dispose();
     }
 
     private static void Defaults(LoaderOptions options)

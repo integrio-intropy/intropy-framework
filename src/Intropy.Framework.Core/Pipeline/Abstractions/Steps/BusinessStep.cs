@@ -18,8 +18,6 @@ public abstract class BusinessStep<TIn, TOut, TCtx>
     /// </summary>
     public abstract string StepName { get; }
 
-    public abstract bool IsRetryable { get; }
-
     /// <summary>
     /// The method that will be executed once the step is run.
     /// </summary>
