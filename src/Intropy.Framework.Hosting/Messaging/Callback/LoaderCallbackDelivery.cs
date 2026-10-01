@@ -10,7 +10,7 @@ namespace Intropy.Framework.Hosting.Messaging.Callback;
 /// <summary>
 /// Handles the messages the sidecar pushes to a loader's app callback, one per call: reads the
 /// delivery, runs it through the loader under <see cref="LoaderOptions.MaxMessageProcessingTime"/>,
-/// and answers with its ack.
+/// and answers with its ack. Once stopping begins (<see cref="StopAsync"/>) it takes no new message.
 /// </summary>
 internal sealed class LoaderCallbackDelivery(
     LoaderMessageHandler handler,
@@ -21,9 +21,13 @@ internal sealed class LoaderCallbackDelivery(
     private const string RetryCountKey = "retrycount";
     private static readonly IReadOnlyDictionary<string, Value> s_noExtensions = new Dictionary<string, Value>();
 
-    private readonly CancellationTokenSource _interrupt = new();
+    private readonly InFlightMessages _inFlight = new();
 
-    public void Dispose() => _interrupt.Dispose();
+    public void Dispose() => _inFlight.Dispose();
+
+    /// <summary>Stops taking messages and waits for those in flight, interrupting them after the
+    /// grace period. Their acks still reach the sidecar: the server stops only after this.</summary>
+    internal Task StopAsync() => _inFlight.StopAsync(options.ShutdownGracePeriod, logger);
 
     internal async Task<TopicEventResponse> HandleAsync(TopicEventRequest request, CancellationToken callCancellation)
     {
@@ -40,15 +44,31 @@ internal sealed class LoaderCallbackDelivery(
             return Response(TopicEventResponse.Types.TopicEventResponseStatus.Retry);
         }
 
+        // Delivered after stop began: leave it for the next consumer.
+        if (!_inFlight.TryEnter())
+            return Response(TopicEventResponse.Types.TopicEventResponseStatus.Retry);
+
+        try
+        {
+            return await ProcessAsync(request, callCancellation);
+        }
+        finally
+        {
+            _inFlight.Exit();
+        }
+    }
+
+    private async Task<TopicEventResponse> ProcessAsync(TopicEventRequest request, CancellationToken callCancellation)
+    {
         IReadOnlyDictionary<string, Value> extensions = request.Extensions?.Fields ?? s_noExtensions;
         var message = TopicMessageReader.Read(request.Id, request.Source, request.Type, request.DataContentType,
             request.Data.Memory, extensions, extensions.ContainsKey(RetryCountKey));
 
         // The sidecar sets no processing deadline on a pushed message: the loader enforces its own.
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_interrupt.Token, callCancellation);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_inFlight.Interrupt, callCancellation);
         cancellation.CancelAfter(options.MaxMessageProcessingTime);
 
-        var outcome = await handler.ProcessAsync(message, extensions, options.TopicName, _interrupt.Token,
+        var outcome = await handler.ProcessAsync(message, extensions, options.TopicName, _inFlight.Interrupt,
             cancellation.Token);
         return Response(LoaderAcks.ToStatus(outcome.Outcome, options.Unrouted));
     }

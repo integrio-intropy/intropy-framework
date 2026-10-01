@@ -274,4 +274,68 @@ public class LoaderCallbackTests
         Assert.Equal(LoaderHost.Created, activity.GetTagItem("intropy.route"));
         Assert.Equal(cloudEvent.Id, activity.GetTagItem("messaging.message.id"));
     }
+
+    [Fact]
+    public async Task Shutdown_LetsTheMessageInFlightFinishBeforeTheServerStops()
+    {
+        var host = await StartRoutingAsync();
+        host.CreatedSender.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var delivery = host.Callback!.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
+        await host.CreatedSender.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var stopping = host.Host.StopAsync();
+        host.CreatedSender.Gate.SetResult();
+
+        Assert.Equal(DeliveryAck.Success, await delivery.WaitAsync(TimeSpan.FromSeconds(10)));
+        await stopping;
+        Assert.Equal("ORD-1", Assert.Single(host.CreatedSender.Sent).Value.OrderId);
+        await host.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Shutdown_LeavesMessagesDeliveredAfterStopBeganForRedelivery()
+    {
+        // Unrouted messages are acked without side effects, so they can probe whether stop has begun.
+        var host = await StartRoutingAsync(o => o.Unrouted = UnroutedPolicy.Ack);
+        host.CreatedSender.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var inFlight = host.Callback!.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
+        await host.CreatedSender.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The message in flight holds the server open while it drains.
+        var stopping = host.Host.StopAsync();
+        var probe = DeliveryAck.Success;
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (probe == DeliveryAck.Success && DateTime.UtcNow < deadline)
+            probe = await host.Callback.DeliverAsync(Event("order.shipped", "ORD-0", Created("ORD-0")));
+        var late = await host.Callback.DeliverAsync(Event(LoaderHost.Cancelled, "ORD-2",
+            new OrderCancelled("ORD-2", "changed mind")));
+        host.CreatedSender.Gate.SetResult();
+
+        Assert.Equal(DeliveryAck.Retry, probe);
+        Assert.Equal(DeliveryAck.Retry, late);
+        Assert.Empty(host.CancelledSender.Sent);
+        Assert.Equal(DeliveryAck.Success, await inFlight.WaitAsync(TimeSpan.FromSeconds(10)));
+        await stopping;
+        await host.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Shutdown_InterruptsAMessageOutlivingTheGracePeriodWithoutCountingItAsFailed()
+    {
+        using var metrics = new MetricCapture();
+        var host = await StartRoutingAsync(o => o.ShutdownGracePeriod = TimeSpan.FromMilliseconds(200));
+        // The sender never finishes on its own: only the interruption ends it.
+        host.CreatedSender.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delivery = host.Callback!.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
+        await host.CreatedSender.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        await host.Host.StopAsync().WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(DeliveryAck.Retry, await delivery.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Empty(host.CreatedSender.Sent);
+        var outcomes = metrics.Of("messaging.client.consumed.messages", "intropy.route", LoaderHost.Created)
+            .Select(m => m.Tags["intropy.message.outcome"]);
+        Assert.Equal(["interrupted"], outcomes);
+        await host.DisposeAsync();
+    }
 }

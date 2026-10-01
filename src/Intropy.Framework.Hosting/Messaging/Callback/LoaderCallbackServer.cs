@@ -14,7 +14,9 @@ namespace Intropy.Framework.Hosting.Messaging.Callback;
 /// app callback on <see cref="LoaderOptions.CallbackPort"/>, through which the sidecar delivers the
 /// loader's messages. The component stays a generic host; this runs its own small Kestrel server
 /// inside it. A route that cannot be composed stops the host with exit code 1 before the server
-/// listens.
+/// listens. On stop, messages in flight get <see cref="LoaderOptions.ShutdownGracePeriod"/> to finish
+/// before they are interrupted and left for redelivery; deliveries arriving meanwhile are left for
+/// redelivery too. Only then does the server stop.
 /// </summary>
 internal sealed class LoaderCallbackServer(
     LoaderCallbackDelivery delivery,
@@ -66,8 +68,11 @@ internal sealed class LoaderCallbackServer(
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_server is not null)
-            await _server.StopAsync(cancellationToken);
+        if (_server is null)
+            return;
+
+        await delivery.StopAsync();
+        await _server.StopAsync(cancellationToken);
     }
 
     public async ValueTask DisposeAsync()

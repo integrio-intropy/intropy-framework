@@ -26,15 +26,10 @@ internal sealed class LoaderService(
     IHostApplicationLifetime lifetime,
     ILogger<LoaderService> logger) : BackgroundService
 {
-    /// <summary>After the grace period, interrupted messages get this long to return their ack.</summary>
-    private static readonly TimeSpan s_interruptTimeout = TimeSpan.FromSeconds(5);
-
     /// <summary>Subscription teardown happens while the sidecar may be going away; bound it.</summary>
     private static readonly TimeSpan s_closeTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly CancellationTokenSource _interrupt = new();
-    private int _inFlight;
-    private volatile bool _stopping;
+    private readonly InFlightMessages _inFlight = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -66,7 +61,7 @@ internal sealed class LoaderService(
 
     public override void Dispose()
     {
-        _interrupt.Dispose();
+        _inFlight.Dispose();
         base.Dispose();
     }
 
@@ -98,11 +93,9 @@ internal sealed class LoaderService(
         }
         finally
         {
+            // Drain while the stream is still open, so the acks of messages in flight reach the sidecar.
             if (stoppingToken.IsCancellationRequested)
-            {
-                _stopping = true;
-                await DrainAsync();
-            }
+                await _inFlight.StopAsync(options.ShutdownGracePeriod, logger);
 
             await CloseAsync(subscription);
         }
@@ -134,48 +127,21 @@ internal sealed class LoaderService(
     private async Task<TopicResponseAction> HandleAsync(TopicMessage message, CancellationToken messageCancellation)
     {
         // Delivered after stop began: leave it for the next consumer.
-        if (_stopping)
+        if (!_inFlight.TryEnter())
             return TopicResponseAction.Retry;
 
-        Interlocked.Increment(ref _inFlight);
         try
         {
             using var cancellation =
-                CancellationTokenSource.CreateLinkedTokenSource(_interrupt.Token, messageCancellation);
+                CancellationTokenSource.CreateLinkedTokenSource(_inFlight.Interrupt, messageCancellation);
             var outcome = await handler.ProcessAsync(TopicMessageReader.Read(message), message.Extensions,
-                options.TopicName, _interrupt.Token, cancellation.Token);
+                options.TopicName, _inFlight.Interrupt, cancellation.Token);
             return LoaderAcks.ToResponse(outcome.Outcome, options.Unrouted);
         }
         finally
         {
-            Interlocked.Decrement(ref _inFlight);
+            _inFlight.Exit();
         }
-    }
-
-    /// <summary>Waits for the message in flight while the stream is still open, so its ack reaches
-    /// the sidecar; interrupts it when it outlives the grace period.</summary>
-    private async Task DrainAsync()
-    {
-        if (await WaitForInFlightAsync(options.ShutdownGracePeriod))
-            return;
-
-        logger.LogWarning("{Count} message(s) still in flight after the shutdown grace period; interrupting them",
-            Volatile.Read(ref _inFlight));
-        await _interrupt.CancelAsync();
-        await WaitForInFlightAsync(s_interruptTimeout);
-    }
-
-    private async Task<bool> WaitForInFlightAsync(TimeSpan timeout)
-    {
-        var elapsed = Stopwatch.StartNew();
-        while (Volatile.Read(ref _inFlight) > 0)
-        {
-            if (elapsed.Elapsed >= timeout)
-                return false;
-            await Task.Delay(TimeSpan.FromMilliseconds(50), CancellationToken.None);
-        }
-
-        return true;
     }
 
     private async Task CloseAsync(IDaprSubscription subscription)
