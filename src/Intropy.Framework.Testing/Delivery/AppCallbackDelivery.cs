@@ -14,7 +14,7 @@ namespace Intropy.Framework.Testing.Delivery;
 /// sidecar does, one message per <c>OnTopicEvent</c> call, and returns the loader's acks.
 /// </summary>
 /// <remarks>
-/// Start the loader's host with <c>LoaderOptions.Transport</c> set to <c>AppCallback</c> and
+/// The loader always serves the Dapr gRPC app callback: start its host with
 /// <c>LoaderOptions.CallbackPort</c> set to a free port (<see cref="AvailablePort"/>), then point the
 /// delivery at it. The loader announces no subscription — its subscription is a declarative
 /// resource — so the delivery is told which pub/sub and topic it delivers on, as the resource tells
