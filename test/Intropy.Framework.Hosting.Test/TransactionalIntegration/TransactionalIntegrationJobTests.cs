@@ -153,7 +153,7 @@ public class TransactionalIntegrationJobTests
         };
         var lifecycle = new TransactionalIntegrationJob<OrderContext>(
             new TransactionalIntegrationReceiver<OrderContext>(provider, Identity, factory, _loggerFactory),
-            new MessageSubscriber<OrderContext>(sendProcessor, options, "test-integration", _loggerFactory),
+            new SendSideRun<OrderContext>(sendProcessor, options, "test-integration", _loggerFactory),
             _loggerFactory);
 
         await lifecycle.ExecuteAsync(CancellationToken.None);
@@ -392,7 +392,7 @@ public class TransactionalIntegrationJobTests
 
     /// <summary>Builds the send side around the shared substitutes, composing the processor the
     /// way the DI registration does.</summary>
-    private MessageSubscriber<Context> Subscriber(TransactionalIntegrationOptions options) =>
+    private SendSideRun<Context> Subscriber(TransactionalIntegrationOptions options) =>
         new(new MessageProcessor<Context>(_sendPipeline, NewContext, "test-integration",
                 Substitute.For<ILogger<MessageProcessor<Context>>>()),
             options, "test-integration", _loggerFactory);

@@ -96,14 +96,12 @@ public static class LoaderServiceCollectionExtensions
             provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider),
             provider.GetRequiredService<ILogger<LoaderMessageHandler>>()));
 
-        services.AddSingleton(provider => new MessageConsumer(
-            new MessageConsumerSettings(options.PubSubName, options.TopicName, options.MaxMessageProcessingTime,
-                options.ShutdownGracePeriod, AcknowledgeUnrouted: options.Unrouted == UnroutedPolicy.Ack),
-            provider.GetRequiredService<LoaderMessageHandler>().HandleAsync,
-            ComponentName(provider),
-            provider.GetRequiredService<ILoggerFactory>().CreateLogger<MessageConsumer>()));
+        services.AddSingleton(new MessageConsumerSettings(options.PubSubName, options.TopicName,
+            options.MaxMessageProcessingTime, options.ShutdownGracePeriod,
+            AcknowledgeUnrouted: options.Unrouted == UnroutedPolicy.Ack));
         services.AddHostedService(provider => new LoaderService(
-            provider.GetRequiredService<MessageConsumer>(),
+            provider.GetRequiredService<MessageConsumerSettings>(),
+            provider.GetRequiredService<LoaderMessageHandler>(),
             table,
             options,
             ComponentName(provider),

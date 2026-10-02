@@ -15,7 +15,8 @@ namespace Intropy.Framework.Hosting.Loader;
 /// callback stop.
 /// </summary>
 internal sealed class LoaderService(
-    MessageConsumer consumer,
+    MessageConsumerSettings settings,
+    LoaderMessageHandler handler,
     LoaderRouteTable routes,
     LoaderOptions options,
     string componentName,
@@ -24,7 +25,7 @@ internal sealed class LoaderService(
     IHostApplicationLifetime lifetime) : IHostedService, IAsyncDisposable
 {
     private readonly ILogger _logger = loggerFactory.CreateLogger<LoaderService>();
-    private MessageCallbackServer? _server;
+    private SubscriptionHost? _subscription;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -40,28 +41,24 @@ internal sealed class LoaderService(
             return;
         }
 
-        _server = new MessageCallbackServer(consumer, options.CallbackPort, loggerFactory);
-        var port = await _server.StartAsync(cancellationToken);
+        _subscription = await SubscriptionHost.StartAsync(settings, handler.HandleAsync,
+            options.CallbackPort, componentName, loggerFactory, cancellationToken: cancellationToken);
 
         _logger.LogInformation(
             "Loader {Component} serving the Dapr app callback on port {Port} for topic {Topic} on {PubSub}; routes: {Routes}; unrouted messages: {Unrouted}",
-            componentName, port, options.TopicName, options.PubSubName,
+            componentName, _subscription.Port, options.TopicName, options.PubSubName,
             string.Join(", ", routes.Routes.Select(r => r.Name)), routes.IsRouting ? options.Unrouted.ToString() : "n/a");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_server is null)
-            return;
-
-        await consumer.StopAsync();
-        await _server.StopAsync(cancellationToken);
+        if (_subscription is not null)
+            await _subscription.StopAsync(cancellationToken);
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_server is not null)
-            await _server.DisposeAsync();
-        consumer.Dispose();
+        if (_subscription is not null)
+            await _subscription.DisposeAsync();
     }
 }

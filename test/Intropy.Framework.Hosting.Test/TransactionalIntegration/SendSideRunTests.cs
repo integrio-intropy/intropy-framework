@@ -20,14 +20,14 @@ namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
 /// the callback while the run lasts, waits for publishing before the idle timeout can end the run,
 /// tallies each message's latest outcome, and drains before it stops.
 /// </summary>
-public class MessageSubscriberTests
+public class SendSideRunTests
 {
     private const string PubSub = "internal-test-integration";
     private const string Topic = "hop";
 
     private readonly ISendPipeline<Context> _pipeline = Substitute.For<ISendPipeline<Context>>();
 
-    public MessageSubscriberTests() => PipelineReturns(_ => new StepResult<string>.Success(""));
+    public SendSideRunTests() => PipelineReturns(_ => new StepResult<string>.Success(""));
 
     private static TransactionalIntegrationOptions Options(TimeSpan? idleTimeout = null,
         TimeSpan? gracePeriod = null) => new()
@@ -40,12 +40,12 @@ public class MessageSubscriberTests
         CallbackPort = AppCallbackDelivery.AvailablePort()
     };
 
-    private MessageSubscriber<Context> Subscriber(TransactionalIntegrationOptions options,
+    private SendSideRun<Context> Subscriber(TransactionalIntegrationOptions options,
         TimeProvider? time = null)
     {
         var processor = new MessageProcessor<Context>(_pipeline, (metadata, isRetry) => new Context(metadata, isRetry),
             "test-integration", NullLogger<MessageProcessor<Context>>.Instance);
-        return new MessageSubscriber<Context>(processor, options, "test-integration", NullLoggerFactory.Instance, time);
+        return new SendSideRun<Context>(processor, options, "test-integration", NullLoggerFactory.Instance, time);
     }
 
     /// <summary>The send pipeline's result for each message, by its message id.</summary>
@@ -165,7 +165,7 @@ public class MessageSubscriberTests
     [Fact]
     public async Task ExecuteAsync_LinksEachMessagesSpanToTheRun()
     {
-        using var jobSource = new ActivitySource($"subscriber-link-test-{Guid.NewGuid()}");
+        using var jobSource = new ActivitySource($"send-side-link-test-{Guid.NewGuid()}");
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => source == jobSource || source.Name == "Intropy.Framework.Hosting",

@@ -63,7 +63,7 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
     }
 
     private Loader<TInput, TOutput, TCtx> Build(IServiceProvider scope, string componentName) =>
-        RouteComposition.Build(eventType, componentName, () =>
+        RouteComposition.Build("Loader", eventType, componentName, () =>
         {
             var builder = eventType is null
                 ? LoaderBuilder<TInput, TOutput, TCtx>.Create($"{componentName}.Process", scope)
@@ -74,8 +74,9 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
 
 internal static class RouteComposition
 {
-    /// <summary>Builds a route's pipeline, naming the component and route in a composition error.</summary>
-    internal static T Build<T>(string? eventType, string componentName, Func<T> build)
+    /// <summary>Builds a route's pipeline, naming the block kind, the component and the route in a
+    /// composition error.</summary>
+    internal static T Build<T>(string blockKind, string? eventType, string componentName, Func<T> build)
     {
         try
         {
@@ -84,7 +85,7 @@ internal static class RouteComposition
         catch (InvalidOperationException error)
         {
             var route = eventType is null ? "" : $" route '{eventType}'";
-            throw new InvalidOperationException($"Loader '{componentName}'{route} composition failed: {error.Message}",
+            throw new InvalidOperationException($"{blockKind} '{componentName}'{route} composition failed: {error.Message}",
                 error);
         }
     }

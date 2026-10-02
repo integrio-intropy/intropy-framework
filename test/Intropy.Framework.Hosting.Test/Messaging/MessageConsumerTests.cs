@@ -18,9 +18,10 @@ public class MessageConsumerTests
     private const string PubSub = "pubsub";
 
     private static MessageConsumer Consumer(MessageHandler handler, string topic = "orders",
-        TimeSpan? maxProcessingTime = null, bool acknowledgeUnrouted = false) =>
+        TimeSpan? maxProcessingTime = null, bool acknowledgeUnrouted = false, ActivityContext run = default) =>
         new(new MessageConsumerSettings(PubSub, topic, maxProcessingTime ?? TimeSpan.FromSeconds(30),
-            TimeSpan.FromSeconds(5), acknowledgeUnrouted), handler, "test-component", NullLogger.Instance);
+            TimeSpan.FromSeconds(5), acknowledgeUnrouted), handler, "test-component", NullLogger.Instance,
+            run: run);
 
     private static MessageHandler Returns(MessageOutcome outcome, string? errorType = null, string? route = null) =>
         (_, _, _, _) => Task.FromResult(new HandledMessage(new PipelineOutcome(outcome, errorType, errorType), route));
@@ -95,18 +96,21 @@ public class MessageConsumerTests
     [Fact]
     public async Task HandleAsync_CancelsAMessageExceedingItsTimeLimitAndLeavesItForRedelivery()
     {
-        HandledMessage? reported = null;
+        using var listener = Listen();
+        var stopped = CaptureStopped(listener);
         using var consumer = Consumer(async (_, _, _, ct) =>
         {
             await Task.Delay(Timeout.Infinite, ct);
             return new HandledMessage(new PipelineOutcome(MessageOutcome.Processed));
         }, maxProcessingTime: TimeSpan.FromMilliseconds(100));
-        consumer.Handled = (_, outcome) => reported = new HandledMessage(new PipelineOutcome(outcome));
 
-        var response = await consumer.HandleAsync(Request(), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+        var response = await consumer.HandleAsync(Request("msg-timeout"), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(Status.Retry, response.Status);
-        Assert.Equal(MessageOutcome.Failed, reported?.Outcome.Outcome);
+        var span = Assert.Single(stopped(), a => (string?)a.GetTagItem("messaging.message.id") == "msg-timeout");
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Equal("aborted", span.GetTagItem("error.type"));
     }
 
     [Fact]
@@ -124,18 +128,6 @@ public class MessageConsumerTests
 
         Assert.Equal(Status.Retry, response.Status);
         Assert.False(handled);
-    }
-
-    [Fact]
-    public async Task HandleAsync_ReportsEachMessagesOutcome()
-    {
-        var reported = new List<(string, MessageOutcome)>();
-        using var consumer = Consumer(Returns(MessageOutcome.Skipped));
-        consumer.Handled = (message, outcome) => reported.Add((message.MessageId, outcome));
-
-        await consumer.HandleAsync(Request("msg-7"), CancellationToken.None);
-
-        Assert.Equal([("msg-7", MessageOutcome.Skipped)], reported);
     }
 
     [Fact]
@@ -202,19 +194,18 @@ public class MessageConsumerTests
     {
         using var jobSource = new ActivitySource($"consumer-link-test-{Guid.NewGuid()}");
         using var listener = Listen(jobSource);
+        using var job = jobSource.StartActivity("job")!;
         Activity? span = null;
         using var consumer = Consumer((_, activity, _, _) =>
         {
             span = activity;
             return Task.FromResult(new HandledMessage(new PipelineOutcome(MessageOutcome.Processed)));
-        });
-        using (var job = jobSource.StartActivity("job")!)
-            consumer.Run = job.Context;
+        }, run: job.Context);
 
         await consumer.HandleAsync(Request(), CancellationToken.None);
 
         Assert.NotNull(span);
-        Assert.Contains(span.Links, l => l.Context.SpanId == consumer.Run.SpanId);
+        Assert.Contains(span.Links, l => l.Context.SpanId == job.Context.SpanId);
     }
 
     [Fact]

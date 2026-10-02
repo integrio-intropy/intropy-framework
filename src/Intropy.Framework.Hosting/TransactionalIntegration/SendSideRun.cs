@@ -16,18 +16,18 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <param name="processor">Processes each consumed message through the send pipeline.</param>
 /// <param name="options">Configuration options for the integration.</param>
 /// <param name="componentName">The component name, for logs, spans and metrics.</param>
-/// <param name="loggerFactory">Creates the subscriber's and the consumer's loggers.</param>
+/// <param name="loggerFactory">Creates the send side's and the consumer's loggers.</param>
 /// <param name="timeProvider">Time source for the idle clock. Defaults to
 /// <see cref="TimeProvider.System"/>. Override in tests to control time.</param>
 /// <typeparam name="TCtx">The send pipeline's context type.</typeparam>
-internal class MessageSubscriber<TCtx>(
+internal class SendSideRun<TCtx>(
     MessageProcessor<TCtx> processor,
     TransactionalIntegrationOptions options,
     string componentName,
     ILoggerFactory loggerFactory,
     TimeProvider? timeProvider = null) where TCtx : Context
 {
-    private readonly ILogger _logger = loggerFactory.CreateLogger<MessageSubscriber<TCtx>>();
+    private readonly ILogger _logger = loggerFactory.CreateLogger<SendSideRun<TCtx>>();
 
     /// <summary>
     /// Serves the callback and waits for completion: until publishing is done and the queue has
@@ -46,27 +46,28 @@ internal class MessageSubscriber<TCtx>(
         ArgumentNullException.ThrowIfNull(publishingCompleteSignal);
         var outcomes = new ConcurrentDictionary<string, MessageOutcome>();
 
-        // The run's state is the run's, not the singleton subscriber's: the consumer, its outcome
-        // tally and idle clock live and die with ExecuteAsync, so two runs can never see each other.
-        using var consumer = new MessageConsumer(
+        // The latest outcome in the run counts; an interruption by the host stopping does not
+        // replace an earlier one.
+        async Task<HandledMessage> Tally(IncomingMessage message, Activity? activity,
+            CancellationToken interrupt, CancellationToken cancellationToken)
+        {
+            var handled = await processor.HandleAsync(message, activity, interrupt, cancellationToken);
+            if (handled.Outcome.Outcome is not MessageOutcome.Interrupted)
+                outcomes[message.MessageId] = handled.Outcome.Outcome;
+            return handled;
+        }
+
+        // The run's state is the run's, not the singleton run's: the subscription, its
+        // outcome tally and idle clock live and die with ExecuteAsync, so two runs can never see
+        // each other.
+        await using var subscription = await SubscriptionHost.StartAsync(
             new MessageConsumerSettings(options.DaprPubSubName, options.DaprTopicName,
                 options.MaxMessageProcessingTime, options.PostIdleGracePeriod),
-            processor.HandleAsync, componentName, loggerFactory.CreateLogger<MessageConsumer>(), timeProvider)
-        {
-            Run = Activity.Current?.Context ?? default,
-            // The latest outcome in the run counts; an interruption by the host stopping does not
-            // replace an earlier one.
-            Handled = (message, outcome) =>
-            {
-                if (outcome is not MessageOutcome.Interrupted)
-                    outcomes[message.MessageId] = outcome;
-            }
-        };
-
-        await using var server = new MessageCallbackServer(consumer, options.CallbackPort, loggerFactory);
-        var port = await server.StartAsync(CancellationToken.None);
-        _logger.LogInformation("Serving the Dapr app callback on port {Port} for topic {Topic} on {PubSub}", port,
-            options.DaprTopicName, options.DaprPubSubName);
+            Tally, options.CallbackPort, componentName, loggerFactory,
+            run: Activity.Current?.Context ?? default, timeProvider: timeProvider,
+            cancellationToken: CancellationToken.None);
+        _logger.LogInformation("Serving the Dapr app callback on port {Port} for topic {Topic} on {PubSub}",
+            subscription.Port, options.DaprTopicName, options.DaprPubSubName);
 
         var unfinished = 0;
         try
@@ -78,8 +79,8 @@ internal class MessageSubscriber<TCtx>(
             // The idle window measures quiet time after the sweep, not the process's whole
             // lifetime: the clock restarts here so a sweep longer than IdleTimeout cannot make
             // the first poll look already-idle and exit with messages still on the queue.
-            consumer.InFlight.RestartIdleClock();
-            await new IdleTimeoutMonitor(consumer.InFlight, options.IdleTimeout, _logger, timeProvider)
+            subscription.Consumer.InFlight.RestartIdleClock();
+            await new IdleTimeoutMonitor(subscription.Consumer.InFlight, options.IdleTimeout, _logger, timeProvider)
                 .WaitForIdleTimeoutAsync(ct);
 
             _logger.LogInformation("Idle timeout triggered. Beginning graceful shutdown.");
@@ -91,9 +92,8 @@ internal class MessageSubscriber<TCtx>(
         finally
         {
             // Drain while the callback still listens, so the acks of messages in flight reach
-            // the sidecar; only then stop it.
-            unfinished = await consumer.StopAsync();
-            await server.StopAsync(CancellationToken.None);
+            // the sidecar; only then does it stop.
+            unfinished = await subscription.StopAsync(CancellationToken.None);
         }
 
         return Summarize(ct.IsCancellationRequested ? 0 : unfinished, outcomes);

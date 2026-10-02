@@ -100,7 +100,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             contextFactory,
             sp.GetRequiredService<FrameworkOptions>().ComponentName,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<MessageProcessor<TCtx>>()));
-        services.AddSingleton(sp => new MessageSubscriber<TCtx>(
+        services.AddSingleton(sp => new SendSideRun<TCtx>(
             sp.GetRequiredService<MessageProcessor<TCtx>>(),
             sp.GetRequiredService<TransactionalIntegrationOptions>(),
             sp.GetRequiredService<FrameworkOptions>().ComponentName,
@@ -111,7 +111,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             sp.GetRequiredService<FrameworkOptions>(), contextFactory, sp.GetRequiredService<ILoggerFactory>()));
         services.AddSingleton(sp => new TransactionalIntegrationJob<TCtx>(
             sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
-            sp.GetRequiredService<MessageSubscriber<TCtx>>(),
+            sp.GetRequiredService<SendSideRun<TCtx>>(),
             sp.GetRequiredService<ILoggerFactory>()));
 
         services.AddJob<TransactionalIntegrationJob<TCtx>>(configureJob);

@@ -48,16 +48,10 @@ internal sealed class MessageConsumer(
     MessageHandler handler,
     string componentName,
     ILogger logger,
-    TimeProvider? time = null) : IDisposable
+    TimeProvider? time = null,
+    ActivityContext run = default) : IDisposable
 {
     private readonly InFlightMessages _inFlight = new(time);
-
-    /// <summary>The span of the run consuming the messages, linked from each message's span; none
-    /// for a long-running consumer.</summary>
-    internal ActivityContext Run { get; set; }
-
-    /// <summary>Called with each processed message's outcome, for consumers that tally a run.</summary>
-    internal Action<IncomingMessage, MessageOutcome>? Handled { get; set; }
 
     /// <summary>The messages in flight and the idle clock.</summary>
     internal InFlightMessages InFlight => _inFlight;
@@ -103,7 +97,7 @@ internal sealed class MessageConsumer(
     private async Task<TopicEventResponse> ProcessAsync(IncomingMessage message, CancellationToken callCancellation)
     {
         var start = Stopwatch.GetTimestamp();
-        using var activity = MessageActivity.StartProcessActivity(message, Run);
+        using var activity = MessageActivity.StartProcessActivity(message, run);
         activity?.SetTag("cloudevents.event_type", message.Type);
 
         // The sidecar sets no processing deadline on a pushed message: the consumer enforces its own.
@@ -134,7 +128,6 @@ internal sealed class MessageConsumer(
         HostingMetrics.RecordProcessedMessage(componentName, settings.TopicName,
             HostingMetrics.OutcomeName(outcome.Outcome), outcome.ErrorType, Stopwatch.GetElapsedTime(start),
             handled.Route);
-        Handled?.Invoke(message, outcome.Outcome);
         return Acknowledges(outcome.Outcome) ? Success : Retry;
     }
 

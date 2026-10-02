@@ -8,14 +8,15 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <summary>
 /// The Transactional Integration's run-to-completion job: in one run it sweeps the source,
 /// publishing each file to the integration's queue through the receive pipeline, while the
-/// subscriber consumes the queue through the send pipeline. Hosted by the <see cref="JobRunner"/>,
+/// send side (<see cref="SendSideRun{TCtx}"/>) consumes the queue through the send pipeline. Hosted
+/// by the <see cref="JobRunner"/>,
 /// which owns the process around it: the sidecar lifecycle, job tracing, and exit-code mapping.
 /// </summary>
 /// <typeparam name="TCtx">The integration's context type, shared by the receive and send pipelines.</typeparam>
 public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
 {
     private readonly TransactionalIntegrationReceiver<TCtx> _receiver;
-    private readonly MessageSubscriber<TCtx> _messageSubscriber;
+    private readonly SendSideRun<TCtx> _sendSideRun;
     private readonly ILogger<TransactionalIntegrationJob<TCtx>> _logger;
 
     /// <summary>
@@ -23,16 +24,16 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     /// </summary>
     /// <param name="receiver">The receive side: sweeps the integration's source through the
     /// receive pipeline, completing a file (delete or archive) only after it is on the queue.</param>
-    /// <param name="messageSubscriber">The send side: consumes the integration's queue through the
+    /// <param name="sendSideRun">The send side: consumes the integration's queue through the
     /// send pipeline, until the subscription goes idle.</param>
     /// <param name="loggerFactory">An instance of <see cref="ILoggerFactory"/>.</param>
     internal TransactionalIntegrationJob(
         TransactionalIntegrationReceiver<TCtx> receiver,
-        MessageSubscriber<TCtx> messageSubscriber,
+        SendSideRun<TCtx> sendSideRun,
         ILoggerFactory loggerFactory)
     {
         _receiver = receiver;
-        _messageSubscriber = messageSubscriber;
+        _sendSideRun = sendSideRun;
         _logger = loggerFactory.CreateLogger<TransactionalIntegrationJob<TCtx>>();
     }
 
@@ -66,7 +67,7 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
             }
         });
 
-        var subscriberTask = _messageSubscriber.ExecuteAsync(coordinator.PublishingCompleteSignal, ct);
+        var subscriberTask = _sendSideRun.ExecuteAsync(coordinator.PublishingCompleteSignal, ct);
 
         await Task.WhenAll(publisherTask, subscriberTask);
         var files = await publisherTask;
