@@ -130,7 +130,7 @@ public class LoaderCallbackDaprTests(LoaderDaprFixture dapr) : IClassFixture<Loa
 
         Activity activity;
         lock (processed) activity = Assert.Single(processed);
-        Assert.Equal(LoaderHost.Created, activity.GetTagItem("intropy.route"));
+        Assert.Equal(LoaderHost.Created, activity.GetTagItem("intropy.loader.route"));
     }
 
     private int SentTo(string orderId) => Sender.Sent.Count(s => s.Value.OrderId == orderId);

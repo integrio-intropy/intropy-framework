@@ -22,8 +22,7 @@ public class MessageProcessorTests
     private readonly ISendPipeline<OrderContext> _pipeline = Substitute.For<ISendPipeline<OrderContext>>();
 
     private MessageProcessor<OrderContext> Processor() =>
-        new(_pipeline, (metadata, isRetry) => new OrderContext(metadata, isRetry), "test-integration",
-            NullLogger<MessageProcessor<OrderContext>>.Instance);
+        new(_pipeline, (metadata, isRetry) => new OrderContext(metadata, isRetry), "test-integration");
 
     private static IncomingMessage Message(string id = "msg-1", IDictionary<string, string>? extensions = null) =>
         IncomingMessage.From(MessageConsumerTests.Request(id, extensions: extensions));

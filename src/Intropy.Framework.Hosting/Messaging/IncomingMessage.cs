@@ -16,6 +16,7 @@ namespace Intropy.Framework.Hosting.Messaging;
 /// <param name="TopicName">The topic it was delivered from.</param>
 /// <param name="Source">The CloudEvent source.</param>
 /// <param name="Type">The CloudEvent type.</param>
+/// <param name="SpecVersion">The CloudEvents spec version the event conforms to.</param>
 /// <param name="DataContentType">The CloudEvent data content type.</param>
 /// <param name="Data">The CloudEvent data, as the sidecar encoded it.</param>
 /// <param name="Extensions">The CloudEvent's other attributes.</param>
@@ -29,6 +30,7 @@ internal sealed record IncomingMessage(
     string TopicName,
     string? Source,
     string? Type,
+    string? SpecVersion,
     string? DataContentType,
     ReadOnlyMemory<byte> Data,
     IReadOnlyDictionary<string, Value> Extensions,
@@ -49,9 +51,12 @@ internal sealed record IncomingMessage(
     {
         IReadOnlyDictionary<string, Value> extensions = request.Extensions?.Fields ?? s_noExtensions;
         return new IncomingMessage(request.Id, request.PubsubName, request.Topic, request.Source, request.Type,
-            request.DataContentType, request.Data.Memory, extensions, extensions.ContainsKey(RetryCountKey),
-            string.IsNullOrEmpty(request.Path) ? null : request.Path);
+            NullIfEmpty(request.SpecVersion), request.DataContentType, request.Data.Memory, extensions,
+            extensions.ContainsKey(RetryCountKey), NullIfEmpty(request.Path));
     }
+
+    /// <summary>The CloudEvent subject, if it has one.</summary>
+    internal string? Subject => NullIfEmpty(GetExtension("subject"));
 
     /// <summary>Whether the subscription's rules selected none of its routes for this message.</summary>
     internal bool IsUnhandled => string.Equals(Path, UnhandledPath, StringComparison.Ordinal);
@@ -79,7 +84,7 @@ internal sealed record IncomingMessage(
         if (Uri.TryCreate(Source, UriKind.RelativeOrAbsolute, out var source))
             cloudEvent.Source = source;
 
-        if (GetExtension("subject") is { Length: > 0 } subject)
+        if (Subject is { } subject)
             cloudEvent.Subject = subject;
 
         if (DateTimeOffset.TryParse(GetExtension("time"), CultureInfo.InvariantCulture,
@@ -88,6 +93,8 @@ internal sealed record IncomingMessage(
 
         return cloudEvent;
     }
+
+    private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
     private static string DecodeData(ReadOnlyMemory<byte> data)
     {

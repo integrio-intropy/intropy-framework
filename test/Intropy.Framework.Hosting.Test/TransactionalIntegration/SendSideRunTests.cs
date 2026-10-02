@@ -44,7 +44,7 @@ public class SendSideRunTests
         TimeProvider? time = null)
     {
         var processor = new MessageProcessor<Context>(_pipeline, (metadata, isRetry) => new Context(metadata, isRetry),
-            "test-integration", NullLogger<MessageProcessor<Context>>.Instance);
+            "test-integration");
         return new SendSideRun<Context>(processor, options, "test-integration", NullLoggerFactory.Instance, time);
     }
 

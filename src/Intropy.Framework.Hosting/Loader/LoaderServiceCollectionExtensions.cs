@@ -93,8 +93,7 @@ public static class LoaderServiceCollectionExtensions
         });
 
         services.AddSingleton(provider => new LoaderMessageHandler(
-            provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider),
-            provider.GetRequiredService<ILogger<LoaderMessageHandler>>()));
+            provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider)));
 
         services.AddSingleton(new MessageConsumerSettings(options.PubSubName, options.TopicName,
             options.MaxMessageProcessingTime, options.ShutdownGracePeriod,

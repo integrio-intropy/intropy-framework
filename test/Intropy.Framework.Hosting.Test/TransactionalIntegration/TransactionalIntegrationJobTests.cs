@@ -142,7 +142,7 @@ public class TransactionalIntegrationJobTests
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         ContextFactory<OrderContext> factory = (metadata, isRetry) => new OrderContext(metadata, isRetry);
         var sendProcessor = new MessageProcessor<OrderContext>(Substitute.For<ISendPipeline<OrderContext>>(), factory,
-            "test-integration", Substitute.For<ILogger<MessageProcessor<OrderContext>>>());
+            "test-integration");
         var options = new TransactionalIntegrationOptions
         {
             DaprPubSubName = _options.DaprPubSubName,
@@ -393,8 +393,7 @@ public class TransactionalIntegrationJobTests
     /// <summary>Builds the send side around the shared substitutes, composing the processor the
     /// way the DI registration does.</summary>
     private SendSideRun<Context> Subscriber(TransactionalIntegrationOptions options) =>
-        new(new MessageProcessor<Context>(_sendPipeline, NewContext, "test-integration",
-                Substitute.For<ILogger<MessageProcessor<Context>>>()),
+        new(new MessageProcessor<Context>(_sendPipeline, NewContext, "test-integration"),
             options, "test-integration", _loggerFactory);
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);

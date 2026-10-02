@@ -15,7 +15,9 @@ internal enum MessageOutcome
     /// <summary>Left for redelivery, counted as failed.</summary>
     Failed,
 
-    /// <summary>Interrupted by the host stopping: left for redelivery, but not counted.</summary>
+    /// <summary>Interrupted by the host stopping: left for redelivery. Recorded as
+    /// <c>interrupted</c>, not as a failure, and left out of a Transactional Integration's run
+    /// summary.</summary>
     Interrupted,
 
     /// <summary>No route handles the message's event type; acknowledged as the loader's

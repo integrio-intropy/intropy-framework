@@ -17,9 +17,13 @@ internal sealed class MetricCapture : IDisposable
                 listener.EnableMeasurementEvents(instrument);
         };
         _listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => Add(instrument, value, tags));
+        _listener.SetMeasurementEventCallback<int>((instrument, value, tags, _) => Add(instrument, value, tags));
         _listener.SetMeasurementEventCallback<double>((instrument, value, tags, _) => Add(instrument, value, tags));
         _listener.Start();
     }
+
+    /// <summary>Records the current value of every observable instrument.</summary>
+    public void RecordObservableInstruments() => _listener.RecordObservableInstruments();
 
     /// <summary>The measurements of <paramref name="instrument"/> tagged <paramref name="tag"/> =
     /// <paramref name="value"/>.</summary>

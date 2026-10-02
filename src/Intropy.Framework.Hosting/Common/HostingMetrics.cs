@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
@@ -37,11 +38,19 @@ internal static class HostingMetrics
         "intropy.sweep.files", "{file}", "Source files swept, by outcome.");
 
     private static readonly Counter<long> ConsumedMessages = Meter.CreateCounter<long>(
-        "messaging.client.consumed.messages", "{message}", "Messages delivered to the send pipeline.");
+        "messaging.client.consumed.messages", "{message}",
+        "Messages the sidecar delivered to a subscribing block, by outcome.");
 
     private static readonly Histogram<double> ProcessDuration = Meter.CreateHistogram(
-        "messaging.process.duration", "s", "Duration of processing one message through the send pipeline.",
+        "messaging.process.duration", "s",
+        "Duration of processing one message through a Transactional Integration's send pipeline or a loader route.",
         advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = MessageDurationBuckets });
+
+    private static readonly ConcurrentDictionary<InFlightRegistration, byte> InFlightRegistrations = new();
+
+    static HostingMetrics() =>
+        Meter.CreateObservableUpDownCounter("intropy.messaging.active_messages", ObserveActiveMessages, "{message}",
+            "Messages a subscribing block is processing.");
 
     internal static void RecordJobRun(string jobName, int exitCode, TimeSpan duration)
     {
@@ -62,33 +71,58 @@ internal static class HostingMetrics
             { "intropy.sweep.outcome", OutcomeName(outcome) }
         });
 
-    /// <summary>Records one message processed through a send pipeline or a loader route.</summary>
+    /// <summary>Records one message delivered to a subscribing block.</summary>
     /// <param name="componentName">The component consuming the message.</param>
-    /// <param name="topic">The topic the message was consumed from.</param>
+    /// <param name="pubSubName">The pub/sub component the message was delivered from.</param>
+    /// <param name="topic">The topic the message was delivered from.</param>
     /// <param name="outcome"><c>processed</c>, <c>skipped</c>, <c>failed</c>, <c>interrupted</c>
-    /// (by the host stopping: left for redelivery, but not a failure) or <c>unrouted</c> (no loader
-    /// route handles its event type).</param>
-    /// <param name="errorType">Set when <paramref name="outcome"/> is <c>failed</c>.</param>
-    /// <param name="duration">How long processing took.</param>
+    /// (by the host stopping: left for redelivery, but not a failure), <c>unrouted</c> (no loader
+    /// route handles its event type) or <c>rejected</c> (delivered after stopping began: left for
+    /// redelivery without processing).</param>
+    /// <param name="errorType">Set when the message failed, or was unrouted and left for
+    /// redelivery.</param>
+    /// <param name="duration">How long processing took; <see langword="null"/> when the message
+    /// was not processed, so it stays out of <c>messaging.process.duration</c>.</param>
     /// <param name="route">The loader route that handled the message, if any.</param>
-    internal static void RecordProcessedMessage(string componentName, string topic, string outcome, string? errorType,
-        TimeSpan duration, string? route = null)
+    internal static void RecordConsumedMessage(string componentName, string pubSubName, string topic, string outcome,
+        string? errorType, TimeSpan? duration, string? route = null)
     {
         var tags = new TagList
         {
-            { "messaging.system", "dapr" },
-            { "messaging.operation.name", "process" },
-            { "messaging.destination.name", topic },
-            { "intropy.component.name", componentName },
-            { "intropy.message.outcome", outcome }
+            { MessagingAttributes.System, MessagingAttributes.DaprSystem },
+            { MessagingAttributes.OperationName, MessagingAttributes.Process },
+            { MessagingAttributes.DestinationName, topic },
+            { MessagingAttributes.PubSubName, pubSubName },
+            { MessagingAttributes.ComponentName, componentName },
+            { MessagingAttributes.MessageOutcome, outcome }
         };
         if (errorType is not null)
-            tags.Add("error.type", errorType);
+            tags.Add(MessagingAttributes.ErrorType, errorType);
         if (route is not null)
-            tags.Add("intropy.route", route);
+            tags.Add(MessagingAttributes.LoaderRoute, route);
         ConsumedMessages.Add(1, tags);
-        ProcessDuration.Record(duration.TotalSeconds, tags);
+        if (duration is { } elapsed)
+            ProcessDuration.Record(elapsed.TotalSeconds, tags);
     }
+
+    /// <summary>Reports <paramref name="count"/> as a subscribing block's messages in flight, on
+    /// <c>intropy.messaging.active_messages</c>, until the returned registration is disposed.</summary>
+    internal static IDisposable TrackActiveMessages(string componentName, string pubSubName, string topic,
+        Func<int> count)
+    {
+        var registration = new InFlightRegistration(new TagList
+        {
+            { MessagingAttributes.System, MessagingAttributes.DaprSystem },
+            { MessagingAttributes.DestinationName, topic },
+            { MessagingAttributes.PubSubName, pubSubName },
+            { MessagingAttributes.ComponentName, componentName }
+        }, count);
+        InFlightRegistrations.TryAdd(registration, 0);
+        return registration;
+    }
+
+    private static IEnumerable<Measurement<int>> ObserveActiveMessages() =>
+        InFlightRegistrations.Keys.Select(r => new Measurement<int>(r.Count(), r.Tags));
 
     internal static string OutcomeName(MessageOutcome outcome) => outcome switch
     {
@@ -99,6 +133,9 @@ internal static class HostingMetrics
         _ => "failed"
     };
 
+    /// <summary>The outcome of a message delivered after stopping began.</summary>
+    internal const string RejectedOutcome = "rejected";
+
     internal static string OutcomeName(FileOutcome outcome) => outcome switch
     {
         FileOutcome.Consumed => "consumed",
@@ -106,4 +143,13 @@ internal static class HostingMetrics
         FileOutcome.Aborted => "aborted",
         _ => "failed"
     };
+
+    private sealed class InFlightRegistration(TagList tags, Func<int> count) : IDisposable
+    {
+        internal TagList Tags => tags;
+
+        internal int Count() => count();
+
+        public void Dispose() => InFlightRegistrations.TryRemove(this, out _);
+    }
 }

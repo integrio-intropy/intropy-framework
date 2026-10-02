@@ -98,8 +98,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         services.AddSingleton(sp => new MessageProcessor<TCtx>(
             sp.GetRequiredService<ISendPipeline<TCtx>>(),
             contextFactory,
-            sp.GetRequiredService<FrameworkOptions>().ComponentName,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<MessageProcessor<TCtx>>()));
+            sp.GetRequiredService<FrameworkOptions>().ComponentName));
         services.AddSingleton(sp => new SendSideRun<TCtx>(
             sp.GetRequiredService<MessageProcessor<TCtx>>(),
             sp.GetRequiredService<TransactionalIntegrationOptions>(),

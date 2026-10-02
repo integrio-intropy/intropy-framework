@@ -38,55 +38,79 @@ internal sealed record MessageConsumerSettings(
 /// Consumes the messages the sidecar pushes to the app callback, for any block that subscribes to a
 /// topic: checks the delivery is for its subscription, runs the block's
 /// <see cref="MessageHandler"/> in the message's consumer span under the per-message time limit,
-/// records the consumed-messages metrics, and answers with the ack. It acknowledges only what was
-/// processed (or deliberately dropped) and leaves everything else for redelivery; it never answers
-/// <c>DROP</c>, which the sidecar would discard without a Dapr dead-letter topic. Once stopping
-/// begins it takes no new message.
+/// records the consumed-messages metrics, logs the outcome, and answers with the ack. It
+/// acknowledges only what was processed (or deliberately dropped) and leaves everything else for
+/// redelivery; it never answers <c>DROP</c>, which the sidecar would discard without a Dapr
+/// dead-letter topic. Once stopping begins it takes no new message.
 /// </summary>
-internal sealed class MessageConsumer(
-    MessageConsumerSettings settings,
-    MessageHandler handler,
-    string componentName,
-    ILogger logger,
-    TimeProvider? time = null,
-    ActivityContext run = default) : IDisposable
+internal sealed class MessageConsumer : IDisposable
 {
-    private readonly InFlightMessages _inFlight = new(time);
+    private readonly MessageConsumerSettings _settings;
+    private readonly MessageHandler _handler;
+    private readonly string _componentName;
+    private readonly ILogger _logger;
+    private readonly ActivityContext _run;
+    private readonly InFlightMessages _inFlight;
+    private readonly IDisposable _activeMessages;
+
+    internal MessageConsumer(MessageConsumerSettings settings, MessageHandler handler, string componentName,
+        ILogger logger, TimeProvider? time = null, ActivityContext run = default)
+    {
+        _settings = settings;
+        _handler = handler;
+        _componentName = componentName;
+        _logger = logger;
+        _run = run;
+        _inFlight = new InFlightMessages(time);
+        _activeMessages = HostingMetrics.TrackActiveMessages(componentName, settings.PubSubName, settings.TopicName,
+            () => _inFlight.Count);
+    }
 
     /// <summary>The messages in flight and the idle clock.</summary>
     internal InFlightMessages InFlight => _inFlight;
 
-    internal MessageConsumerSettings Settings => settings;
+    internal MessageConsumerSettings Settings => _settings;
 
     /// <summary>Stops taking messages and waits for those in flight, interrupting them after the
     /// grace period. Their acks still reach the sidecar: stop the server only after this.</summary>
     /// <returns>How many messages were still in flight when the grace period ended.</returns>
-    internal Task<int> StopAsync() => _inFlight.StopAsync(settings.ShutdownGracePeriod, logger);
+    internal Task<int> StopAsync() => _inFlight.StopAsync(_settings.ShutdownGracePeriod, _logger);
 
-    public void Dispose() => _inFlight.Dispose();
+    public void Dispose()
+    {
+        _activeMessages.Dispose();
+        _inFlight.Dispose();
+    }
 
-    internal async Task<TopicEventResponse> HandleAsync(TopicEventRequest request, CancellationToken callCancellation)
+    /// <summary>Handles one delivery.</summary>
+    /// <param name="request">The delivery.</param>
+    /// <param name="callCancellation">Cancelled when the sidecar abandons the call.</param>
+    /// <param name="delivery">The trace context the sidecar delivered it with, linked from the
+    /// message's span; <see langword="default"/> for none.</param>
+    internal async Task<TopicEventResponse> HandleAsync(TopicEventRequest request, CancellationToken callCancellation,
+        ActivityContext delivery = default)
     {
         // The subscription lives in a declarative resource the consumer cannot see: a delivery for
         // another topic means the two disagree. Leave it for redelivery, loudly, rather than lose it.
-        if (!string.Equals(request.PubsubName, settings.PubSubName, StringComparison.Ordinal) ||
-            !string.Equals(request.Topic, settings.TopicName, StringComparison.Ordinal))
+        if (!string.Equals(request.PubsubName, _settings.PubSubName, StringComparison.Ordinal) ||
+            !string.Equals(request.Topic, _settings.TopicName, StringComparison.Ordinal))
         {
-            logger.LogError(
-                "{Component} consumes topic {Topic} on {PubSub} but was delivered message {MessageId} from topic {DeliveredTopic} on {DeliveredPubSub}; left for redelivery. Check the component's Subscription resource.",
-                componentName, settings.TopicName, settings.PubSubName, request.Id, request.Topic, request.PubsubName);
-            HostingMetrics.RecordProcessedMessage(componentName, request.Topic, "failed", "unexpected_subscription",
-                TimeSpan.Zero);
+            RejectUnexpectedSubscription(IncomingMessage.From(request), delivery);
             return Retry;
         }
 
         // Delivered after stop began: leave it for the next consumer.
         if (!_inFlight.TryEnter())
+        {
+            _logger.LogDebug("Message {MessageId} was delivered after stopping began; left for redelivery", request.Id);
+            HostingMetrics.RecordConsumedMessage(_componentName, request.PubsubName, request.Topic,
+                HostingMetrics.RejectedOutcome, errorType: null, duration: null);
             return Retry;
+        }
 
         try
         {
-            return await ProcessAsync(IncomingMessage.From(request), callCancellation);
+            return await ProcessAsync(IncomingMessage.From(request), delivery, callCancellation);
         }
         finally
         {
@@ -94,47 +118,111 @@ internal sealed class MessageConsumer(
         }
     }
 
-    private async Task<TopicEventResponse> ProcessAsync(IncomingMessage message, CancellationToken callCancellation)
+    private void RejectUnexpectedSubscription(IncomingMessage message, ActivityContext delivery)
+    {
+        const string errorType = "unexpected_subscription";
+        using var activity = MessageActivity.StartProcessActivity(message, _componentName, _run, delivery);
+        activity?.SetTag(MessagingAttributes.ErrorType, errorType);
+        activity?.SetStatus(ActivityStatusCode.Error,
+            $"Consumes topic '{_settings.TopicName}' on '{_settings.PubSubName}'; delivered from another subscription");
+        _logger.LogError(
+            "{Component} consumes topic {Topic} on {PubSub} but was delivered message {MessageId} from topic {DeliveredTopic} on {DeliveredPubSub}; left for redelivery. Check the component's Subscription resource.",
+            _componentName, _settings.TopicName, _settings.PubSubName, message.MessageId, message.TopicName,
+            message.PubSubName);
+        HostingMetrics.RecordConsumedMessage(_componentName, message.PubSubName, message.TopicName, "failed", errorType,
+            duration: null);
+    }
+
+    private async Task<TopicEventResponse> ProcessAsync(IncomingMessage message, ActivityContext delivery,
+        CancellationToken callCancellation)
     {
         var start = Stopwatch.GetTimestamp();
-        using var activity = MessageActivity.StartProcessActivity(message, run);
-        activity?.SetTag("cloudevents.event_type", message.Type);
+        using var activity = MessageActivity.StartProcessActivity(message, _componentName, _run, delivery);
+        using var scope = _logger.BeginScope(LogScope(message));
 
         // The sidecar sets no processing deadline on a pushed message: the consumer enforces its own.
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_inFlight.Interrupt, callCancellation);
-        cancellation.CancelAfter(settings.MaxMessageProcessingTime);
+        using var timeout = new CancellationTokenSource();
+        timeout.CancelAfter(_settings.MaxMessageProcessingTime);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_inFlight.Interrupt,
+            callCancellation, timeout.Token);
 
         HandledMessage handled;
         try
         {
-            handled = await handler(message, activity, _inFlight.Interrupt, cancellation.Token);
+            handled = await _handler(message, activity, _inFlight.Interrupt, cancellation.Token);
         }
         catch (Exception e)
         {
-            logger.LogError(e, "Processing message {MessageId} failed; left for redelivery", message.MessageId);
-            activity?.AddException(e);
             handled = new HandledMessage(PipelineOutcome.FromException(e, _inFlight.Interrupt, cancellation.Token));
         }
 
-        var outcome = handled.Outcome;
-        if (handled.Route is not null)
-            activity?.SetTag("intropy.route", handled.Route);
-        if (outcome.ErrorType is not null)
+        var outcome = handled.Outcome.WithCancellationCause(_settings.MaxMessageProcessingTime, timeout.Token,
+            callCancellation);
+        var acknowledged = Acknowledges(outcome.Outcome);
+
+        // A message left for redelivery is an error; one deliberately dropped is not.
+        var errorType = acknowledged ? null : outcome.ErrorType;
+        if (activity is not null)
         {
-            activity?.SetTag("error.type", outcome.ErrorType);
-            activity?.SetStatus(ActivityStatusCode.Error, outcome.Description);
+            activity.SetTag(MessagingAttributes.MessageOutcome, HostingMetrics.OutcomeName(outcome.Outcome));
+            if (handled.Route is not null)
+                activity.SetTag(MessagingAttributes.LoaderRoute, handled.Route);
+            if (outcome.Exception is not null)
+                activity.AddException(outcome.Exception);
+            if (errorType is not null)
+            {
+                activity.SetTag(MessagingAttributes.ErrorType, errorType);
+                activity.SetStatus(ActivityStatusCode.Error, outcome.Description);
+            }
         }
 
-        HostingMetrics.RecordProcessedMessage(componentName, settings.TopicName,
-            HostingMetrics.OutcomeName(outcome.Outcome), outcome.ErrorType, Stopwatch.GetElapsedTime(start),
-            handled.Route);
-        return Acknowledges(outcome.Outcome) ? Success : Retry;
+        Log(message, handled.Route, outcome);
+        HostingMetrics.RecordConsumedMessage(_componentName, message.PubSubName, message.TopicName,
+            HostingMetrics.OutcomeName(outcome.Outcome), errorType, Stopwatch.GetElapsedTime(start), handled.Route);
+        return acknowledged ? Success : Retry;
+    }
+
+    private static Dictionary<string, object?> LogScope(IncomingMessage message) => new()
+    {
+        [MessagingAttributes.DestinationName] = message.TopicName,
+        [MessagingAttributes.MessageId] = message.MessageId,
+        [MessagingAttributes.EventType] = message.Type
+    };
+
+    private void Log(IncomingMessage message, string? route, PipelineOutcome outcome)
+    {
+        switch (outcome.Outcome)
+        {
+            case MessageOutcome.Processed when route is null:
+                _logger.LogDebug("Processed message {MessageId}", message.MessageId);
+                break;
+            case MessageOutcome.Processed:
+                _logger.LogDebug("Processed message {MessageId} on route {Route}", message.MessageId, route);
+                break;
+            case MessageOutcome.Skipped:
+                _logger.LogDebug("Message {MessageId} is a duplicate; consumed", message.MessageId);
+                break;
+            case MessageOutcome.Interrupted:
+                _logger.LogInformation("Message {MessageId} was interrupted by the host stopping; left for redelivery",
+                    message.MessageId);
+                break;
+            case MessageOutcome.Unrouted:
+                _logger.LogWarning("Message {MessageId} of event type {EventType} is unrouted: {Description}; {Handling}",
+                    message.MessageId, message.Type, outcome.Description,
+                    _settings.AcknowledgeUnrouted ? "dropped" : "left for redelivery");
+                break;
+            default:
+                _logger.LogWarning(outcome.Exception,
+                    "Processing message {MessageId} failed ({ErrorType}: {Description}); left for redelivery",
+                    message.MessageId, outcome.ErrorType, outcome.Description);
+                break;
+        }
     }
 
     private bool Acknowledges(MessageOutcome outcome) => outcome switch
     {
         MessageOutcome.Processed or MessageOutcome.Skipped => true,
-        MessageOutcome.Unrouted => settings.AcknowledgeUnrouted,
+        MessageOutcome.Unrouted => _settings.AcknowledgeUnrouted,
         _ => false
     };
 

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Dapr.AppCallback.Autogen.Grpc.v1;
 using Google.Protobuf.WellKnownTypes;
@@ -73,6 +74,14 @@ internal sealed class MessageCallbackServer(MessageConsumer consumer, int? port,
             Task.FromResult(new ListInputBindingsResponse());
 
         public override Task<TopicEventResponse> OnTopicEvent(TopicEventRequest request, ServerCallContext context) =>
-            consumer.HandleAsync(request, context.CancellationToken);
+            consumer.HandleAsync(request, context.CancellationToken, DeliveryContext(context.RequestHeaders));
+
+        /// <summary>The trace context of the sidecar's span delivering the message, from the call's
+        /// metadata; <see langword="default"/> when it sent none.</summary>
+        private static ActivityContext DeliveryContext(Metadata headers) =>
+            MessageActivity.TryParseTraceContext(headers.GetValue("traceparent"), headers.GetValue("tracestate"),
+                out var context)
+                ? context
+                : default;
     }
 }

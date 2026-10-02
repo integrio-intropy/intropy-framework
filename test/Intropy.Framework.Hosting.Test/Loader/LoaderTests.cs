@@ -231,7 +231,7 @@ public class LoaderTests
         Activity activity;
         lock (processed) activity = Assert.Single(processed);
         Assert.Equal($"process {LoaderHost.Topic}", activity.DisplayName);
-        Assert.Equal(LoaderHost.Created, activity.GetTagItem("intropy.route"));
+        Assert.Equal(LoaderHost.Created, activity.GetTagItem("intropy.loader.route"));
         Assert.Equal(cloudEvent.Id, activity.GetTagItem("messaging.message.id"));
     }
 
@@ -292,7 +292,7 @@ public class LoaderTests
 
         Assert.Equal(DeliveryAck.Retry, await delivery.WaitAsync(TimeSpan.FromSeconds(10)));
         Assert.Empty(host.CreatedSender.Sent);
-        var outcomes = metrics.Of("messaging.client.consumed.messages", "intropy.route", LoaderHost.Created)
+        var outcomes = metrics.Of("messaging.client.consumed.messages", "intropy.loader.route", LoaderHost.Created)
             .Select(m => m.Tags["intropy.message.outcome"]);
         Assert.Equal(["interrupted"], outcomes);
         await host.DisposeAsync();
