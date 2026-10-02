@@ -29,7 +29,7 @@ public class ReceivePipeline<TCtx>(
 {
     /// <inheritdoc />
     public virtual async Task<(StepResult<SourceItem> Result, TCtx Context)> Execute(SourceItem item,
-        TCtx context, bool detachTrace = true, CancellationToken ct = default)
+        TCtx context, bool detachTrace = false, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(item);
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline

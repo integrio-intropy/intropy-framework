@@ -55,10 +55,13 @@ public class Extractor<TInput, TOutput, TCtx>(
     /// </summary>
     /// <param name="input">The input data to use</param>
     /// <param name="context">The pipeline context</param>
-    /// <param name="detachTrace">Indicate whether to detach the trace or continue</param>
+    /// <param name="detachTrace">When false (the default), the execution continues the ambient
+    /// trace — what a host sets up per item (the file's or message's own trace); when true, it
+    /// starts its own trace, linked to the current one. Hosts that prepare an item trace pass
+    /// false explicitly; standalone callers rarely need to detach.</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution</param>
     /// <returns></returns>
-    public async Task<(StepResult<CloudEvent> Result, TCtx Context)> Execute(string input, TCtx context, bool detachTrace = true,
+    public async Task<(StepResult<CloudEvent> Result, TCtx Context)> Execute(string input, TCtx context, bool detachTrace = false,
         CancellationToken ct = default)
     {
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline

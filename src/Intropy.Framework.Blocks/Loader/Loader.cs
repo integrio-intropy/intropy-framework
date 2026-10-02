@@ -56,10 +56,13 @@ public class Loader<TInput, TOutput, TCtx>(
     /// <param name="input">The CloudEvent to process</param>
     /// <param name="context">The pipeline context</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution</param>
-    /// <param name="detachTrace">Indicate whether to detach the trace or continue</param>
+    /// <param name="detachTrace">When false (the default), the execution continues the ambient
+    /// trace — what a host sets up per message (the consumer span); when true, it starts its own
+    /// trace, linked to the current one. Hosts that prepare a message trace pass false explicitly;
+    /// standalone callers rarely need to detach.</param>
     /// <returns>The result of the pipeline execution and the final context</returns>
     public async Task<(StepResult<TOutput> Result, TCtx Context)> Execute(CloudEvent input, TCtx context,
-        bool detachTrace = true, CancellationToken ct = default)
+        bool detachTrace = false, CancellationToken ct = default)
     {
         return await PipelineTracing.ExecuteWithTracing(async () =>
             {

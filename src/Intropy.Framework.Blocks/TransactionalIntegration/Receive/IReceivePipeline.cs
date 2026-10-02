@@ -16,10 +16,12 @@ public interface IReceivePipeline<TCtx> where TCtx : Context
     /// </summary>
     /// <param name="item">The source item and its content.</param>
     /// <param name="context">The context to use in the execution.</param>
-    /// <param name="detachTrace">When true (the default), the execution is its own trace, linked to
-    /// the current one; when false, it continues the current trace.</param>
+    /// <param name="detachTrace">When false (the default), the execution continues the ambient
+    /// trace — what a host sets up per item (the file's own trace); when true, it starts its own
+    /// trace, linked to the current one. Hosts that prepare an item trace pass false explicitly;
+    /// standalone callers rarely need to detach.</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution.</param>
     /// <returns>A tuple of the final result of the pipeline execution and the final context.</returns>
     Task<(StepResult<SourceItem> Result, TCtx Context)> Execute(SourceItem item,
-        TCtx context, bool detachTrace = true, CancellationToken ct = default);
+        TCtx context, bool detachTrace = false, CancellationToken ct = default);
 }
