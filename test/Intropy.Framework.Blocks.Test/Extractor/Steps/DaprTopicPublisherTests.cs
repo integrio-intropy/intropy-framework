@@ -54,6 +54,31 @@ public class DaprTopicPublisherTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_PublishesAnObjectPayload_AsACamelCaseJsonObject()
+    {
+        // Sidecar rules (CEL on event.data) and non-.NET consumers read the payload as JSON is
+        // usually written.
+        var daprClient = Substitute.For<DaprClient>();
+        byte[]? published = null;
+        daprClient
+            .PublishByteEventAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+                Arg.Any<string>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => published = ci.ArgAt<ReadOnlyMemory<byte>>(2).ToArray());
+        var publisher = new DaprTopicPublisher<Context>(daprClient, "pubsub", "orders.accepted", Source, "orders.accepted");
+        var input = Event();
+        input.Data = new { OrderId = "ORD-1", CustomerId = "CUST-1" };
+
+        await publisher.ExecuteAsync(input, new Context(new Dictionary<string, string>()), CancellationToken.None);
+
+        using var envelope = System.Text.Json.JsonDocument.Parse(published!);
+        var data = envelope.RootElement.GetProperty("data");
+        Assert.Equal(System.Text.Json.JsonValueKind.Object, data.ValueKind);
+        Assert.Equal("ORD-1", data.GetProperty("orderId").GetString());
+        Assert.Equal("CUST-1", data.GetProperty("customerId").GetString());
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CarriesTheCurrentTraceContext_WhenTheProducerSpanIsNotSampled()
     {
         // Nobody listens to the Blocks source: the event still continues whatever trace is current

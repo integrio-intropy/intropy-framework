@@ -15,8 +15,7 @@ helpers for delivering CloudEvents to loaders exactly as a Dapr sidecar does:
 | `FakeEnqueueStep<TCtx>` | `Intropy.Framework.Testing.Topics` | The transactional receive pipeline's queue publish step |
 | `FakeIdempotencyServiceClient` | `Intropy.Framework.Testing.Services` | `IIdempotencyServiceClient` |
 | `FakeBusinessIncidentServiceClient` | `Intropy.Framework.Testing.Services` | `IBusinessIncidentServiceClient` |
-| `FakeStreamingSubscriber` | `Intropy.Framework.Testing.Delivery` | The sidecar's streaming subscription, for loaders (`AddLoader`) |
-| `AppCallbackDelivery` | `Intropy.Framework.Testing.Delivery` | The sidecar's pushes to a loader's gRPC app callback (`LoaderTransport.AppCallback`, experimental) |
+| `AppCallbackDelivery` | `Intropy.Framework.Testing.Delivery` | The sidecar's pushes to a subscribing block's gRPC app callback: loaders (`AddLoader`) and transactional integrations |
 | `DaprDelivery` | `Intropy.Framework.Testing.Delivery` | Sidecar HTTP delivery to ASP.NET subscription endpoints |
 | `PublishedMessageCapture` | `Intropy.Framework.Testing.Dapr` | Publish-call capture for `DaprClient` substitutes |
 
@@ -46,29 +45,13 @@ Assert.Equal("order.created", topic.Events[0].Type);
 ```
 
 ```csharp
-// Loader test shape (the host consumes through a streaming subscription)
-var subscriber = new FakeStreamingSubscriber();
-var builder = Composition.CreateHostBuilder([], "Development");
-builder.Services.AddSingleton<IStreamingSubscriber>(subscriber);   // plus the edge fakes
-using var host = builder.Build();
-await host.StartAsync();
-await subscriber.WaitForSubscriptionAsync();
-
-var ack = await subscriber.DeliverAsync(cloudEvent);                // redelivery: true marks a retry
-
-Assert.Equal(DeliveryAck.Success, ack);
-Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
-```
-
-```csharp
-// Loader test shape under the app-callback transport (experimental): the loader serves
-// the Dapr gRPC app callback on a port, and the delivery plays the sidecar over it.
+// Loader test shape: the loader serves the Dapr gRPC app callback on a port, and the
+// delivery plays the sidecar over it.
 var port = AppCallbackDelivery.AvailablePort();
 builder.Services.AddLoader(options =>
 {
     options.PubSubName = "pubsub";
     options.TopicName = "orders";
-    options.Transport = LoaderTransport.AppCallback;
     options.CallbackPort = port;
 }, routes => /* the component's routes */);                          // plus the edge fakes
 using var host = builder.Build();
@@ -78,20 +61,26 @@ using var delivery = new AppCallbackDelivery(port, "pubsub", "orders");
 var ack = await delivery.DeliverAsync(cloudEvent);                  // redelivery: true marks a retry
 
 Assert.Equal(DeliveryAck.Success, ack);
+Assert.Equal(expectedJson, destinationFiles.GetString("out/order-42.json"));
 ```
 
-`FakeStreamingSubscriber` and `AppCallbackDelivery` encode events the way the
-sidecar hands them over — the payload as the envelope's `data` member (a payload
-published as a JSON string arrives quoted, as it does for real), every other
-attribute as an extension — and return the loader's ack as a `DeliveryAck`.
-`DeliverAsync` has the same shape on both, so a loader test can run against
-either transport.
+A transactional integration serves the same callback for the length of a run
+(`TransactionalIntegrationOptions.CallbackPort`): deliver to it while the run's
+sweep is still going, and it consumes until its queue goes idle.
 
-A loader on the app callback announces no subscription (a declarative Dapr
+`AppCallbackDelivery` encodes events the way the sidecar hands them over — the
+payload as the envelope's `data` member (an object payload as a camelCase JSON
+object, as the framework's blocks publish it; a string payload arrives quoted,
+as it does for real), every other attribute as an extension —
+and returns the block's ack as a `DeliveryAck`. A block never answers `DROP`:
+what it cannot process it leaves for redelivery (`RETRY`), so the broker
+dead-letters it.
+
+A subscribing block announces no subscription (a declarative Dapr
 `Subscription` resource owns it), so `AppCallbackDelivery` is told the pub/sub
 and topic it delivers on, as the resource tells the sidecar. An overload of
 `DeliverAsync` delivers from another pub/sub or topic, to test a resource that
-disagrees with the loader. `DaprDelivery` is for ASP.NET components that still
+disagrees with the block. `DaprDelivery` is for ASP.NET components that still
 receive over HTTP delivery.
 
 ## Fake semantics (fail like production)
@@ -170,7 +159,7 @@ receive over HTTP delivery.
 | Destination throws | `RETRY` | Nothing written |
 | Idempotency service down (`StatusException`) | `RETRY` | Technical failure |
 | Malformed envelope | `RETRY` | No incident routed |
-| No route for the event type (routing loader) | `DROP` (default `UnroutedPolicy.DeadLetter`) | Sent to the dead-letter topic |
+| No route for the event type (routing loader) | `RETRY` (default `UnroutedPolicy.DeadLetter`) | Handed back to the broker, which dead-letters it |
 | Processing exceeds `MaxMessageProcessingTime` | `RETRY` | Pipeline cancelled |
 | Delivered after the host began stopping | `RETRY` | Not processed |
 | Delivered from another pub/sub or topic (app callback) | `RETRY` | Not processed; error logged |

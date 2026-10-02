@@ -54,7 +54,7 @@ public class DaprTopicPublisher<TCtx>(
         MessagingTelemetry.Propagate(activity ?? Activity.Current, input);
 
         // Serialize CloudEvent to JSON bytes
-        var bytes = CloudEventSerializer.Formatter.EncodeStructuredModeMessage(input, out _);
+        var bytes = CloudEventFormat.Formatter.EncodeStructuredModeMessage(input, out _);
 
         // Publish to Dapr pub/sub topic
         try

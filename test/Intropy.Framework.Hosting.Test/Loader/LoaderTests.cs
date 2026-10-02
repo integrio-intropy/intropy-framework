@@ -14,35 +14,16 @@ using Action = Intropy.Contracts.IdempotencyService.Action;
 namespace Intropy.Framework.Hosting.Test.Loader;
 
 /// <summary>
-/// The loader's consumption contract, through a real generic host and for every transport: messages
+/// The loader's consumption contract, through a real generic host and its app callback: messages
 /// are routed by their CloudEvent type, each route's pipeline result becomes the message's ack,
-/// unrouted messages follow the unrouted policy, and shutdown drains the messages in flight.
-/// What only one transport has lives in <see cref="LoaderStreamingTests"/> and
-/// <see cref="LoaderCallbackTests"/>.
+/// unrouted messages follow the unrouted policy, and shutdown drains the messages in flight. The
+/// callback itself (port, foreign deliveries, time limit) is in <see cref="LoaderCallbackTests"/>.
 /// </summary>
 [Collection(ProcessStateCollection.Name)]
 public class LoaderTests
 {
     private static readonly CloudEventAttribute s_traceParent =
         CloudEventAttribute.CreateExtension("traceparent", CloudEventAttributeType.String);
-
-    public static TheoryData<LoaderTransport> Transports => [LoaderTransport.Streaming, LoaderTransport.AppCallback];
-
-    public static TheoryData<LoaderTransport, UnroutedPolicy, DeliveryAck> UnroutedAcks
-    {
-        get
-        {
-            var data = new TheoryData<LoaderTransport, UnroutedPolicy, DeliveryAck>();
-            foreach (var transport in Enum.GetValues<LoaderTransport>())
-            {
-                data.Add(transport, UnroutedPolicy.DeadLetter, DeliveryAck.Drop);
-                data.Add(transport, UnroutedPolicy.Ack, DeliveryAck.Success);
-                data.Add(transport, UnroutedPolicy.Retry, DeliveryAck.Retry);
-            }
-
-            return data;
-        }
-    }
 
     private static OrderCreated Created(string orderId) => new(orderId, "CUST-1");
 
@@ -60,11 +41,10 @@ public class LoaderTests
         Data = data
     };
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task SingleRoute_LoadsTheMessageAndAcksSuccess(LoaderTransport transport)
+    [Fact]
+    public async Task SingleRoute_LoadsTheMessageAndAcksSuccess()
     {
-        await using var host = await LoaderHost.StartSingleAsync(transport: transport);
+        await using var host = await LoaderHost.StartSingleAsync();
 
         var ack = await host.DeliverAsync(Event("any.type", "ORD-1", Created("ORD-1")));
 
@@ -72,22 +52,20 @@ public class LoaderTests
         Assert.Equal("ORD-1", Assert.Single(host.CreatedSender.Sent).Value.OrderId);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task SingleRoute_KeysIdempotencyOnTheSubject(LoaderTransport transport)
+    [Fact]
+    public async Task SingleRoute_KeysIdempotencyOnTheSubject()
     {
-        await using var host = await LoaderHost.StartSingleAsync(transport: transport);
+        await using var host = await LoaderHost.StartSingleAsync();
 
         await host.DeliverAsync(Event("any.type", "ORD-1", Created("ORD-1")));
 
         Assert.Equal("ORD-1", Assert.Single(host.Idempotency.Committed).Id);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Routes_DispatchEachMessageToItsEventTypesPipeline(LoaderTransport transport)
+    [Fact]
+    public async Task Routes_DispatchEachMessageToItsEventTypesPipeline()
     {
-        await using var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        await using var host = await LoaderHost.StartRoutingAsync();
 
         var createdAck = await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
         var cancelledAck = await host.DeliverAsync(Event(LoaderHost.Cancelled, "ORD-2", Cancelled("ORD-2")));
@@ -98,11 +76,10 @@ public class LoaderTests
         Assert.Equal("ORD-2", Assert.Single(host.CancelledSender.Sent).Value.OrderId);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Routes_KeepIdempotencyRecordsApartPerEventType(LoaderTransport transport)
+    [Fact]
+    public async Task Routes_KeepIdempotencyRecordsApartPerEventType()
     {
-        await using var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        await using var host = await LoaderHost.StartRoutingAsync();
 
         await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
         await host.DeliverAsync(Event(LoaderHost.Cancelled, "ORD-1", Cancelled("ORD-1")));
@@ -111,11 +88,11 @@ public class LoaderTests
     }
 
     [Theory]
-    [MemberData(nameof(UnroutedAcks))]
-    public async Task UnroutedMessage_IsAckedAsThePolicySays(LoaderTransport transport, UnroutedPolicy policy,
-        DeliveryAck expected)
+    [InlineData(UnroutedPolicy.DeadLetter, DeliveryAck.Retry)]
+    [InlineData(UnroutedPolicy.Ack, DeliveryAck.Success)]
+    public async Task UnroutedMessage_IsAckedAsThePolicySays(UnroutedPolicy policy, DeliveryAck expected)
     {
-        await using var host = await LoaderHost.StartRoutingAsync(o => o.Unrouted = policy, transport: transport);
+        await using var host = await LoaderHost.StartRoutingAsync(o => o.Unrouted = policy);
 
         var ack = await host.DeliverAsync(Event("order.shipped", "ORD-1", Created("ORD-1")));
 
@@ -124,21 +101,38 @@ public class LoaderTests
         Assert.Empty(host.CancelledSender.Sent);
     }
 
-    [Fact]
-    public void AddLoader_WhenRoutingDeadLettersWithoutADeadLetterTopic_Throws()
+    [Theory]
+    [InlineData(UnroutedPolicy.DeadLetter, DeliveryAck.Retry)]
+    [InlineData(UnroutedPolicy.Ack, DeliveryAck.Success)]
+    public async Task MessageOnTheUnhandledRoute_IsUnrouted_EvenWhenARouteHandlesItsType(UnroutedPolicy policy,
+        DeliveryAck expected)
     {
-        var services = new ServiceCollection();
+        // A content filter on the subscription left it out: the sidecar's rules decide, not the type.
+        await using var host = await LoaderHost.StartRoutingAsync(o => o.Unrouted = policy);
 
-        var error = Assert.Throws<InvalidOperationException>(() => services.AddLoader(
-            o =>
-            {
-                o.PubSubName = LoaderHost.PubSub;
-                o.TopicName = LoaderHost.Topic;
-            },
-            routes => routes.On<OrderCreated, OrderCreated, Context>(LoaderHost.Created, (b, _) => b,
-                (metadata, isRetry) => new Context(metadata, isRetry))));
+        var ack = await host.DeliverUnhandledAsync(Event(LoaderHost.Cancelled, "ORD-1", Cancelled("ORD-1")));
 
-        Assert.Contains(nameof(LoaderOptions.DeadLetterTopic), error.Message, StringComparison.Ordinal);
+        Assert.Equal(expected, ack);
+        Assert.Empty(host.CancelledSender.Sent);
+    }
+
+    [Fact]
+    public async Task Loader_NeverAnswersDrop()
+    {
+        // Without a Dapr dead-letter topic the sidecar discards a dropped message: whatever the
+        // loader cannot load must go back to the broker, which dead-letters it.
+        await using var host = await LoaderHost.StartRoutingAsync();
+        host.CancelledSender.Failure = new InvalidOperationException("Destination unreachable");
+
+        var acks = new[]
+        {
+            await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1"))),
+            await host.DeliverAsync(Event("order.shipped", "ORD-2", Created("ORD-2"))),
+            await host.DeliverAsync(Event(LoaderHost.Cancelled, "ORD-3", Cancelled("ORD-3"))),
+            await host.DeliverAsync(Event(LoaderHost.Created, "ORD-4", "not an order"))
+        };
+
+        Assert.DoesNotContain(DeliveryAck.Drop, acks);
     }
 
     [Fact]
@@ -151,11 +145,10 @@ public class LoaderTests
             (b, _) => b, (metadata, isRetry) => new Context(metadata, isRetry)));
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Duplicate_IsAckedWithoutSending(LoaderTransport transport)
+    [Fact]
+    public async Task Duplicate_IsAckedWithoutSending()
     {
-        await using var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        await using var host = await LoaderHost.StartRoutingAsync();
         host.Idempotency.NextStatus = new StatusResponse(Action.Ignore, Reason.SameData);
 
         var ack = await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
@@ -165,12 +158,10 @@ public class LoaderTests
         Assert.Empty(host.Idempotency.Committed);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task BusinessFailure_RoutesAnIncidentAndAcksSuccess(LoaderTransport transport)
+    [Fact]
+    public async Task BusinessFailure_RoutesAnIncidentAndAcksSuccess()
     {
-        await using var host = await LoaderHost.StartSingleAsync(reject: order => order.OrderId == "ORD-BAD",
-            transport: transport);
+        await using var host = await LoaderHost.StartSingleAsync(reject: order => order.OrderId == "ORD-BAD");
 
         var ack = await host.DeliverAsync(Event("any.type", "ORD-BAD", Created("ORD-BAD")));
 
@@ -180,11 +171,10 @@ public class LoaderTests
         Assert.Empty(host.CreatedSender.Sent);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task SenderFailure_LeavesTheMessageForRedelivery(LoaderTransport transport)
+    [Fact]
+    public async Task SenderFailure_LeavesTheMessageForRedelivery()
     {
-        await using var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        await using var host = await LoaderHost.StartRoutingAsync();
         host.CreatedSender.Failure = new InvalidOperationException("Destination unreachable");
 
         var ack = await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
@@ -193,23 +183,21 @@ public class LoaderTests
         Assert.Empty(host.Idempotency.Committed);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Redelivery_ReachesThePipelineAsARetry(LoaderTransport transport)
+    [Fact]
+    public async Task Redelivery_ReachesThePipelineAsARetry()
     {
-        await using var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        await using var host = await LoaderHost.StartRoutingAsync();
 
         await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")), redelivery: true);
 
         Assert.True(Assert.Single(host.CreatedSender.Sent).IsRetry);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task PayloadPublishedAsAJsonString_IsUnwrapped(LoaderTransport transport)
+    [Fact]
+    public async Task PayloadPublishedAsAJsonString_IsUnwrapped()
     {
-        // The framework's extractor publishes its payload as a JSON string inside the CloudEvent.
-        await using var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        // A publisher that sends pre-serialized JSON text puts a JSON string inside the CloudEvent.
+        await using var host = await LoaderHost.StartRoutingAsync();
 
         var ack = await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1",
             JsonSerializer.Serialize(Created("ORD-1"))));
@@ -218,9 +206,8 @@ public class LoaderTests
         Assert.Equal("ORD-1", Assert.Single(host.CreatedSender.Sent).Value.OrderId);
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Message_ContinuesThePublishersTraceAndCarriesItsRoute(LoaderTransport transport)
+    [Fact]
+    public async Task Message_ContinuesThePublishersTraceAndCarriesItsRoute()
     {
         var traceId = ActivityTraceId.CreateRandom();
         var processed = new List<Activity>();
@@ -235,7 +222,7 @@ public class LoaderTests
             }
         };
         ActivitySource.AddActivityListener(listener);
-        await using var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        await using var host = await LoaderHost.StartRoutingAsync();
         var cloudEvent = Event(LoaderHost.Created, "ORD-1", Created("ORD-1"));
         cloudEvent[s_traceParent] = $"00-{traceId}-{ActivitySpanId.CreateRandom()}-01";
 
@@ -248,11 +235,10 @@ public class LoaderTests
         Assert.Equal(cloudEvent.Id, activity.GetTagItem("messaging.message.id"));
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Shutdown_LetsTheMessageInFlightFinish(LoaderTransport transport)
+    [Fact]
+    public async Task Shutdown_LetsTheMessageInFlightFinish()
     {
-        var host = await LoaderHost.StartRoutingAsync(transport: transport);
+        var host = await LoaderHost.StartRoutingAsync();
         host.CreatedSender.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var delivery = host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
@@ -266,17 +252,16 @@ public class LoaderTests
         await host.DisposeAsync();
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Shutdown_LeavesMessagesDeliveredAfterStopBeganForRedelivery(LoaderTransport transport)
+    [Fact]
+    public async Task Shutdown_LeavesMessagesDeliveredAfterStopBeganForRedelivery()
     {
         // Unrouted messages are acked without side effects, so they can probe whether stop has begun.
-        var host = await LoaderHost.StartRoutingAsync(o => o.Unrouted = UnroutedPolicy.Ack, transport: transport);
+        var host = await LoaderHost.StartRoutingAsync(o => o.Unrouted = UnroutedPolicy.Ack);
         host.CreatedSender.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var inFlight = host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
         await host.CreatedSender.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-        // The message in flight holds the transport open while it drains.
+        // The message in flight holds the callback open while it drains.
         var stopping = host.Host.StopAsync();
         var probe = DeliveryAck.Success;
         var deadline = DateTime.UtcNow.AddSeconds(10);
@@ -293,14 +278,11 @@ public class LoaderTests
         await host.DisposeAsync();
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task Shutdown_InterruptsAMessageOutlivingTheGracePeriodWithoutCountingItAsFailed(
-        LoaderTransport transport)
+    [Fact]
+    public async Task Shutdown_InterruptsAMessageOutlivingTheGracePeriodWithoutCountingItAsFailed()
     {
         using var metrics = new MetricCapture();
-        var host = await LoaderHost.StartRoutingAsync(o => o.ShutdownGracePeriod = TimeSpan.FromMilliseconds(200),
-            transport: transport);
+        var host = await LoaderHost.StartRoutingAsync(o => o.ShutdownGracePeriod = TimeSpan.FromMilliseconds(200));
         // The sender never finishes on its own: only the interruption ends it.
         host.CreatedSender.Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var delivery = host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
@@ -316,9 +298,8 @@ public class LoaderTests
         await host.DisposeAsync();
     }
 
-    [Theory]
-    [MemberData(nameof(Transports))]
-    public async Task RouteThatCannotBeComposed_StopsTheHostWithExitCode1BeforeConsuming(LoaderTransport transport)
+    [Fact]
+    public async Task RouteThatCannotBeComposed_StopsTheHostWithExitCode1BeforeConsuming()
     {
         try
         {
@@ -326,26 +307,15 @@ public class LoaderTests
             await using var host = await LoaderHost.StartAsync((services, _) => services.AddLoader<OrderCreated, OrderCreated, Context>(
                 (b, _) => b.WithDeserializer(new JsonDeserializer<OrderCreated>()),
                 (metadata, isRetry) => new Context(metadata, isRetry),
-                o =>
-                {
-                    o.PubSubName = LoaderHost.PubSub;
-                    o.TopicName = LoaderHost.Topic;
-                    o.Transport = transport;
-                    if (transport == LoaderTransport.AppCallback)
-                        o.CallbackPort = AppCallbackDelivery.AvailablePort();
-                }), waitForSubscription: false);
+                LoaderHost.Defaults));
 
             var lifetime = host.Host.Services.GetRequiredService<IHostApplicationLifetime>();
             await Task.Delay(Timeout.Infinite, lifetime.ApplicationStopping).ContinueWith(_ => { },
                 TaskScheduler.Default).WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.Equal(1, Environment.ExitCode);
-            Assert.Empty(host.Subscriber.Subscriptions);
-            if (host.Callback is not null)
-            {
-                var refused = await Assert.ThrowsAsync<RpcException>(() => host.Callback.GetSubscriptionsAsync());
-                Assert.Equal(StatusCode.Unavailable, refused.StatusCode);
-            }
+            var refused = await Assert.ThrowsAsync<RpcException>(() => host.Callback!.GetSubscriptionsAsync());
+            Assert.Equal(StatusCode.Unavailable, refused.StatusCode);
         }
         finally
         {

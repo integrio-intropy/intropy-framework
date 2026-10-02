@@ -17,6 +17,7 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="JunitXml.TestLogger" />
     <PackageReference Include="coverlet.msbuild" />
+    <PackageReference Include="Testcontainers" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,3 +1,4 @@
+using CloudNative.CloudEvents;
 using Intropy.Framework.Blocks.Loader;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Common;
@@ -20,14 +21,15 @@ internal interface ILoaderRoute
 
     /// <summary>Runs <paramref name="message"/> through the route, in its own DI scope.</summary>
     /// <param name="message">The consumed message.</param>
+    /// <param name="cloudEvent">The message as the CloudEvent the route's pipeline consumes.</param>
     /// <param name="scopes">Creates the DI scope the pipeline is built in.</param>
     /// <param name="componentName">The component, for the pipeline name and errors.</param>
     /// <param name="interrupt">Cancelled when the host interrupts in-flight work; distinguishes an
     /// interruption from a failed or timed-out pipeline.</param>
     /// <param name="cancellationToken">Cancels the pipeline.</param>
     /// <returns>The message's outcome.</returns>
-    Task<PipelineOutcome> ExecuteAsync(IncomingMessage message, IServiceScopeFactory scopes, string componentName,
-        CancellationToken interrupt, CancellationToken cancellationToken);
+    Task<PipelineOutcome> ExecuteAsync(IncomingMessage message, CloudEvent cloudEvent, IServiceScopeFactory scopes,
+        string componentName, CancellationToken interrupt, CancellationToken cancellationToken);
 }
 
 internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
@@ -41,8 +43,9 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
 
     public void Verify(IServiceProvider scope, string componentName) => Build(scope, componentName);
 
-    public async Task<PipelineOutcome> ExecuteAsync(IncomingMessage message, IServiceScopeFactory scopes,
-        string componentName, CancellationToken interrupt, CancellationToken cancellationToken)
+    public async Task<PipelineOutcome> ExecuteAsync(IncomingMessage message, CloudEvent cloudEvent,
+        IServiceScopeFactory scopes, string componentName, CancellationToken interrupt,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -50,8 +53,7 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
             var pipeline = Build(scope.ServiceProvider, componentName);
             var context = ContextCreation.Create(contextFactory, new Dictionary<string, string>(),
                 message.IsRetry, componentName, message.MessageId);
-            var (result, _) = await pipeline.Execute(message.CloudEvent, context, detachTrace: false,
-                cancellationToken);
+            var (result, _) = await pipeline.Execute(cloudEvent, context, detachTrace: false, cancellationToken);
             return PipelineOutcome.From(result, interrupt);
         }
         catch (Exception e)

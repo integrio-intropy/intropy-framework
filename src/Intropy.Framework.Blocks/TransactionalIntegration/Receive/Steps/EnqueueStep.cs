@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using CloudNative.CloudEvents.SystemTextJson;
 using Intropy.Framework.Blocks.Common;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Helpers;
@@ -41,8 +40,7 @@ public abstract class EnqueueStep<TCtx>(FrameworkOptions options) : TechnicalSte
         {
             var cloudEvent = CloudEventHelper.Create(input, context, activity ?? Activity.Current, options);
             activity?.SetTag("messaging.message.id", cloudEvent.Id);
-            var formatter = new JsonEventFormatter();
-            var bytes = formatter.EncodeStructuredModeMessage(cloudEvent, out _);
+            var bytes = CloudEventFormat.Formatter.EncodeStructuredModeMessage(cloudEvent, out _);
 
             var result = await ExecuteAsync(input, bytes, context, ct);
             if (result.Result is TechnicalStepResult<SourceItem>.Failure failure)

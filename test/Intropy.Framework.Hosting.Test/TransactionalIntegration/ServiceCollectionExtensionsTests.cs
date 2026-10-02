@@ -3,7 +3,6 @@ using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
 using Intropy.Framework.Core.Configuration;
 using Dapr.Client;
-using Dapr.Messaging.PublishSubscribe.Extensions;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
@@ -101,23 +100,19 @@ public class ServiceCollectionExtensionsTests
         Assert.Equal(TimeSpan.FromSeconds(20), registeredOptions.MaxMessageProcessingTime);
     }
 
-    [Fact]
-    public void AddTransactionalIntegration_ShouldRegisterITopicSubscriber()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(65536)]
+    public void AddTransactionalIntegration_WithAnInvalidCallbackPort_FailsAtRegistration(int port)
     {
-        // Verifies that ITopicSubscriber is registered as DaprTopicSubscriber
         var services = GetServices();
 
-        services.AddTransactionalIntegration(options =>
+        Assert.Throws<ArgumentOutOfRangeException>(() => services.AddTransactionalIntegration(options =>
         {
             options.DaprPubSubName = "test-pubsub";
             options.DaprTopicName = "test-topic";
-        });
-
-        var provider = services.BuildServiceProvider();
-        var topicSubscriber = provider.GetRequiredService<ITopicSubscriber>();
-
-        Assert.NotNull(topicSubscriber);
-        Assert.IsType<DaprTopicSubscriber>(topicSubscriber);
+            options.CallbackPort = port;
+        }));
     }
 
     [Fact]
@@ -262,7 +257,6 @@ public class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
-        services.AddDaprPubSubClient();
         services.AddIntropyFramework(options =>
         {
             options.ComponentName = "orders-integration";

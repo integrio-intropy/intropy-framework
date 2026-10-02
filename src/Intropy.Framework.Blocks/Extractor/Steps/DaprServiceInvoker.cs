@@ -1,17 +1,11 @@
 using System.Net.Http.Headers;
 using CloudNative.CloudEvents;
-using CloudNative.CloudEvents.SystemTextJson;
 using Dapr.Client;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 
 namespace Intropy.Framework.Blocks.Extractor.Steps;
-
-internal static class CloudEventSerializer
-{
-    internal static readonly JsonEventFormatter Formatter = new();
-}
 
 /// <summary>
 /// A step that sends CloudEvents to a Dapr service using service invocation.
@@ -57,7 +51,7 @@ public class DaprServiceInvoker<TCtx>(
         input.Type = type;
 
         // Serialize CloudEvent to JSON
-        var bytes = CloudEventSerializer.Formatter.EncodeStructuredModeMessage(input, out var contentType);
+        var bytes = CloudEventFormat.Formatter.EncodeStructuredModeMessage(input, out var contentType);
 
         // Build and send the service invocation request through the Dapr sidecar
         using var request = daprClient.CreateInvokeMethodRequest(HttpMethod.Post, appId, MethodName);

@@ -1,5 +1,6 @@
 using System.Diagnostics;
-using Dapr.Messaging.PublishSubscribe;
+using CloudNative.CloudEvents;
+using Grpc.Core;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
@@ -10,6 +11,7 @@ using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Intropy.Framework.Testing.Adapters;
+using Intropy.Framework.Testing.Delivery;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -23,7 +25,6 @@ public class TransactionalIntegrationJobTests
     private static readonly FrameworkOptions Identity = new() { ComponentName = "test-integration", ServiceNamespace = "test" };
 
     private readonly IReceivePipeline<Context> _receivePipeline = Substitute.For<IReceivePipeline<Context>>();
-    private readonly ITopicSubscriber _topicSubscriber = Substitute.For<ITopicSubscriber>();
     private readonly ISendPipeline<Context> _sendPipeline = Substitute.For<ISendPipeline<Context>>();
 
     private readonly TransactionalIntegrationOptions _options = new()
@@ -41,16 +42,10 @@ public class TransactionalIntegrationJobTests
     {
         var mockLogger = Substitute.For<ILogger>();
         _loggerFactory.CreateLogger(Arg.Any<string>()).Returns(mockLogger);
-
-        var subscriptionMock = Substitute.For<IAsyncDisposable>();
-        _topicSubscriber.SubscribeAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<TimeSpan>(),
-                Arg.Any<TopicMessageHandler>(),
-                Arg.Any<CancellationToken>())
-            .Returns(subscriptionMock);
     }
+
+    /// <summary>The callback port of the run <see cref="Lifecycle"/> built last.</summary>
+    private int _callbackPort;
 
     [Fact]
     public async Task ExecuteAsync_ShouldPublishEverySourceFile_AndCompleteItOnlyAfterPublishing()
@@ -147,11 +142,18 @@ public class TransactionalIntegrationJobTests
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         ContextFactory<OrderContext> factory = (metadata, isRetry) => new OrderContext(metadata, isRetry);
         var sendProcessor = new MessageProcessor<OrderContext>(Substitute.For<ISendPipeline<OrderContext>>(), factory,
-            "test-integration", _options.DaprTopicName, Substitute.For<ILogger<MessageProcessor<OrderContext>>>());
+            "test-integration", Substitute.For<ILogger<MessageProcessor<OrderContext>>>());
+        var options = new TransactionalIntegrationOptions
+        {
+            DaprPubSubName = _options.DaprPubSubName,
+            DaprTopicName = _options.DaprTopicName,
+            IdleTimeout = _options.IdleTimeout,
+            PostIdleGracePeriod = _options.PostIdleGracePeriod,
+            CallbackPort = AppCallbackDelivery.AvailablePort()
+        };
         var lifecycle = new TransactionalIntegrationJob<OrderContext>(
             new TransactionalIntegrationReceiver<OrderContext>(provider, Identity, factory, _loggerFactory),
-            new MessageSubscriber<OrderContext>(_topicSubscriber, sendProcessor, _options, "test-integration",
-                Substitute.For<ILogger<MessageSubscriber<OrderContext>>>()),
+            new MessageSubscriber<OrderContext>(sendProcessor, options, "test-integration", _loggerFactory),
             _loggerFactory);
 
         await lifecycle.ExecuteAsync(CancellationToken.None);
@@ -233,17 +235,18 @@ public class TransactionalIntegrationJobTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_ShouldSubscribeToMessages()
+    public async Task ExecuteAsync_ServesTheCallbackWhileTheRunLasts()
     {
-        // Verifies that the lifecycle subscribes to the configured topic for message processing
-        await Lifecycle(new InMemoryFileAdapter()).ExecuteAsync(CancellationToken.None);
+        // The sidecar pushes the integration's queue to the run's callback: it listens while the
+        // source is still being swept.
+        var (source, sweepMayFinish) = GatedSource();
+        var run = Lifecycle(source).ExecuteAsync(CancellationToken.None);
 
-        await _topicSubscriber.Received(1).SubscribeAsync(
-            "test-pubsub",
-            "test-topic",
-            Arg.Any<TimeSpan>(),
-            Arg.Any<TopicMessageHandler>(),
-            Arg.Any<CancellationToken>());
+        using var delivery = await ConnectAsync();
+        Assert.Empty(await delivery.GetSubscriptionsAsync());
+        sweepMayFinish.SetResult();
+
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [Fact]
@@ -257,80 +260,24 @@ public class TransactionalIntegrationJobTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_ShouldProcessReceivedMessages()
+    public async Task ExecuteAsync_ShouldProcessPushedMessages()
     {
-        // Verifies that messages received from the queue are passed to the message handler
-        TopicMessageHandler? capturedHandler = null;
-        var subscriptionMock = Substitute.For<IAsyncDisposable>();
-
-        _topicSubscriber.SubscribeAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<TimeSpan>(),
-                Arg.Do((Action<TopicMessageHandler>)(h => capturedHandler = h)),
-                Arg.Any<CancellationToken>())
-            .Returns(subscriptionMock);
-
+        // Verifies that messages pushed to the run's callback are passed to the send pipeline
         var pipelineResult = ((StepResult<string>)new StepResult<string>.Success(""),
             new Context(new Dictionary<string, string>()));
-        _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>())
+        _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(pipelineResult));
+        var (source, sweepMayFinish) = GatedSource();
+        var run = Lifecycle(source).ExecuteAsync(CancellationToken.None);
 
-        var lifecycle = Lifecycle(new InMemoryFileAdapter());
+        using var delivery = await ConnectAsync();
+        var ack = await delivery.DeliverAsync(Event("test-msg", "data"));
+        sweepMayFinish.SetResult();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
 
-        _ = Task.Run(async () => await lifecycle.ExecuteAsync(CancellationToken.None));
-
-        await Task.Delay(100);
-
-        Assert.NotNull(capturedHandler);
-
-        var testMessage = new TopicMessage("test-msg", "test-source", "test-type", "spec-vers", "data-content-type",
-            "test-topic", "test-pubsub")
-        {
-            Data = "data"u8.ToArray()
-        };
-
-        var result = await capturedHandler(testMessage, CancellationToken.None);
-
-        Assert.Equal(TopicResponseAction.Success, result);
-        await _sendPipeline.Received(1).Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>());
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ShouldRunPublisherAndSubscriberConcurrently()
-    {
-        // Verifies that publishing and subscribing happen in parallel for optimal throughput
-        var listStarted = new TaskCompletionSource<bool>();
-        var subscribeStarted = new TaskCompletionSource<bool>();
-
-        var source = Substitute.For<IFileAdapter>();
-        source.ListAsync().Returns(_ =>
-        {
-            listStarted.SetResult(true);
-            return new List<Adapters.Common.FileEntry>();
-        });
-
-        var subscriptionMock = Substitute.For<IAsyncDisposable>();
-        _topicSubscriber.SubscribeAsync(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<TimeSpan>(),
-                Arg.Any<TopicMessageHandler>(),
-                Arg.Any<CancellationToken>())
-            .Returns(_ =>
-            {
-                subscribeStarted.SetResult(true);
-                return subscriptionMock;
-            });
-
-        var lifecycle = Lifecycle(source);
-
-        _ = Task.Run(async () => await lifecycle.ExecuteAsync(CancellationToken.None));
-
-        await Task.WhenAll(listStarted.Task, subscribeStarted.Task);
-
-        Assert.True(listStarted.Task.IsCompleted);
-        Assert.True(subscribeStarted.Task.IsCompleted);
+        Assert.Equal(DeliveryAck.Success, ack);
+        await _sendPipeline.Received(1).Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -338,20 +285,16 @@ public class TransactionalIntegrationJobTests
     {
         // A run whose deliveries failed must not look clean: each message counts once, by its last
         // outcome in the run, and a message that failed and then succeeded on redelivery is processed
-        DeliverOnSubscribe(
-            Message("m1", "fail"),
-            Message("m2", "fail"),
-            Message("m2", "ok"),
-            Message("m3", "duplicate"));
         _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
-                var result = System.Text.Encoding.UTF8.GetString(callInfo.Arg<ReadOnlyMemory<byte>>().Span) switch
-                {
-                    "fail" => (StepResult<string>)new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed")),
-                    "duplicate" => new StepResult<string>.Cancelled(),
-                    _ => new StepResult<string>.Success("")
-                };
+                // The sidecar hands the payload over as the JSON the publisher wrote: a quoted string.
+                var data = System.Text.Encoding.UTF8.GetString(callInfo.Arg<ReadOnlyMemory<byte>>().Span);
+                var result = data.Contains("fail", StringComparison.Ordinal)
+                    ? (StepResult<string>)new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed"))
+                    : data.Contains("duplicate", StringComparison.Ordinal)
+                        ? new StepResult<string>.Cancelled()
+                        : new StepResult<string>.Success("");
                 return (result, callInfo.Arg<Context>());
             });
         using var jobSource = new ActivitySource($"lifecycle-test-{Guid.NewGuid()}");
@@ -365,7 +308,17 @@ public class TransactionalIntegrationJobTests
         Hosting.Jobs.RunSummary summary;
         using (var job = jobSource.StartActivity("job")!)
         {
-            summary = await Lifecycle(new InMemoryFileAdapter()).ExecuteAsync(CancellationToken.None);
+            var (source, sweepMayFinish) = GatedSource();
+            var run = Lifecycle(source).ExecuteAsync(CancellationToken.None);
+            using (var delivery = await ConnectAsync())
+            {
+                await delivery.DeliverAsync(Event("m1", "fail"));
+                await delivery.DeliverAsync(Event("m2", "fail"));
+                await delivery.DeliverAsync(Event("m2", "ok"));
+                await delivery.DeliverAsync(Event("m3", "duplicate"));
+            }
+            sweepMayFinish.SetResult();
+            summary = await run.WaitAsync(TimeSpan.FromSeconds(10));
 
             Assert.Equal(1, job.GetTagItem("intropy.messages.processed"));
             Assert.Equal(1, job.GetTagItem("intropy.messages.failed"));
@@ -376,24 +329,44 @@ public class TransactionalIntegrationJobTests
         Assert.Equal(1, summary.Failed);    // m1, left for redelivery
     }
 
-    /// <summary>Delivers <paramref name="messages"/> in order as soon as the subscription opens.</summary>
-    private void DeliverOnSubscribe(params TopicMessage[] messages) =>
-        _topicSubscriber.SubscribeAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<TimeSpan>(),
-                Arg.Any<TopicMessageHandler>(), Arg.Any<CancellationToken>())
-            .Returns(async callInfo =>
-            {
-                var handler = callInfo.Arg<TopicMessageHandler>();
-                foreach (var message in messages)
-                    await handler(message, CancellationToken.None);
-                return Substitute.For<IAsyncDisposable>();
-            });
+    private static CloudEvent Event(string id, string data) => new()
+    {
+        Id = id, Source = new Uri("urn:test-source"), Type = "test-type", DataContentType = "application/json",
+        Data = data
+    };
 
-    private static TopicMessage Message(string id, string data) =>
-        new(id, Source: "test-source", Type: "test-type", SpecVersion: "", DataContentType: "", Topic: "", PubSubName: "")
+    /// <summary>A source with no files whose sweep finishes only when the test says so, so the run
+    /// keeps serving its callback while the test delivers.</summary>
+    private static (IFileAdapter Source, TaskCompletionSource SweepMayFinish) GatedSource()
+    {
+        var sweepMayFinish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = Substitute.For<IFileAdapter>();
+        source.ListAsync().Returns(async _ =>
         {
-            Data = System.Text.Encoding.UTF8.GetBytes(data),
-            Extensions = new Dictionary<string, Google.Protobuf.WellKnownTypes.Value>()
-        };
+            await sweepMayFinish.Task;
+            return new List<Adapters.Common.FileEntry>();
+        });
+        return (source, sweepMayFinish);
+    }
+
+    /// <summary>A delivery to the callback of the run built last, once it listens.</summary>
+    private async Task<AppCallbackDelivery> ConnectAsync()
+    {
+        var delivery = new AppCallbackDelivery(_callbackPort, _options.DaprPubSubName, _options.DaprTopicName);
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (true)
+        {
+            try
+            {
+                await delivery.GetSubscriptionsAsync();
+                return delivery;
+            }
+            catch (RpcException) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(20);
+            }
+        }
+    }
 
     private TransactionalIntegrationJob<Context> Lifecycle(IFileAdapter source, FileCompletion? completion = null)
     {
@@ -410,7 +383,8 @@ public class TransactionalIntegrationJobTests
             DaprTopicName = _options.DaprTopicName,
             IdleTimeout = _options.IdleTimeout,
             PostIdleGracePeriod = _options.PostIdleGracePeriod,
-            MaxMessageProcessingTime = _options.MaxMessageProcessingTime
+            MaxMessageProcessingTime = _options.MaxMessageProcessingTime,
+            CallbackPort = _callbackPort = AppCallbackDelivery.AvailablePort()
         };
         var receiver = new TransactionalIntegrationReceiver<Context>(provider, Identity, NewContext, _loggerFactory);
         return new TransactionalIntegrationJob<Context>(receiver, Subscriber(options), _loggerFactory);
@@ -419,10 +393,9 @@ public class TransactionalIntegrationJobTests
     /// <summary>Builds the send side around the shared substitutes, composing the processor the
     /// way the DI registration does.</summary>
     private MessageSubscriber<Context> Subscriber(TransactionalIntegrationOptions options) =>
-        new(_topicSubscriber,
-            new MessageProcessor<Context>(_sendPipeline, NewContext, "test-integration", options.DaprTopicName,
+        new(new MessageProcessor<Context>(_sendPipeline, NewContext, "test-integration",
                 Substitute.For<ILogger<MessageProcessor<Context>>>()),
-            options, "test-integration", Substitute.For<ILogger<MessageSubscriber<Context>>>());
+            options, "test-integration", _loggerFactory);
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);
 }

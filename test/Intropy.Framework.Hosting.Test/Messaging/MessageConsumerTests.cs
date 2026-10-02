@@ -1,0 +1,292 @@
+using System.Diagnostics;
+using Dapr.AppCallback.Autogen.Grpc.v1;
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
+using Intropy.Framework.Hosting.Messaging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Status = Dapr.AppCallback.Autogen.Grpc.v1.TopicEventResponse.Types.TopicEventResponseStatus;
+
+namespace Intropy.Framework.Hosting.Test.Messaging;
+
+/// <summary>
+/// What every subscribing block's consumer does with a pushed message: checks it is for its
+/// subscription, runs the handler in the message's consumer span under the time limit, records the
+/// metrics, and acknowledges only what was processed — never <c>DROP</c>.
+/// </summary>
+public class MessageConsumerTests
+{
+    private const string PubSub = "pubsub";
+
+    private static MessageConsumer Consumer(MessageHandler handler, string topic = "orders",
+        TimeSpan? maxProcessingTime = null, bool acknowledgeUnrouted = false) =>
+        new(new MessageConsumerSettings(PubSub, topic, maxProcessingTime ?? TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(5), acknowledgeUnrouted), handler, "test-component", NullLogger.Instance);
+
+    private static MessageHandler Returns(MessageOutcome outcome, string? errorType = null, string? route = null) =>
+        (_, _, _, _) => Task.FromResult(new HandledMessage(new PipelineOutcome(outcome, errorType, errorType), route));
+
+    internal static TopicEventRequest Request(string id = "msg-1", string topic = "orders", string pubSub = PubSub,
+        string type = "order.created", IDictionary<string, string>? extensions = null)
+    {
+        var request = new TopicEventRequest
+        {
+            Id = id, Source = "urn:test", Type = type, SpecVersion = "1.0", DataContentType = "application/json",
+            Data = ByteString.CopyFromUtf8("{}"), PubsubName = pubSub, Topic = topic, Extensions = new Struct()
+        };
+        foreach (var (key, value) in extensions ?? new Dictionary<string, string>())
+            request.Extensions.Fields[key] = Value.ForString(value);
+        return request;
+    }
+
+    [Theory]
+    [InlineData(nameof(MessageOutcome.Processed), Status.Success)]
+    [InlineData(nameof(MessageOutcome.Skipped), Status.Success)]
+    [InlineData(nameof(MessageOutcome.Failed), Status.Retry)]
+    [InlineData(nameof(MessageOutcome.Interrupted), Status.Retry)]
+    [InlineData(nameof(MessageOutcome.Unrouted), Status.Retry)]
+    public async Task HandleAsync_AcknowledgesOnlyWhatWasProcessed(string outcome, Status expected)
+    {
+        using var consumer = Consumer(Returns(System.Enum.Parse<MessageOutcome>(outcome)));
+
+        var response = await consumer.HandleAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(expected, response.Status);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AcknowledgesAnUnroutedMessage_WhenTheConsumerDropsThem()
+    {
+        using var consumer = Consumer(Returns(MessageOutcome.Unrouted), acknowledgeUnrouted: true);
+
+        var response = await consumer.HandleAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(Status.Success, response.Status);
+    }
+
+    [Fact]
+    public async Task HandleAsync_LeavesTheMessageForRedelivery_WhenTheHandlerThrows()
+    {
+        using var consumer = Consumer((_, _, _, _) => throw new InvalidOperationException("Processing failed"));
+
+        var response = await consumer.HandleAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(Status.Retry, response.Status);
+    }
+
+    [Theory]
+    [InlineData("other-pubsub", "orders")]
+    [InlineData(PubSub, "other-topic")]
+    public async Task HandleAsync_LeavesADeliveryForAnotherSubscriptionForRedeliveryWithoutHandlingIt(string pubSub,
+        string topic)
+    {
+        var handled = false;
+        using var consumer = Consumer((_, _, _, _) =>
+        {
+            handled = true;
+            return Task.FromResult(new HandledMessage(new PipelineOutcome(MessageOutcome.Processed)));
+        });
+
+        var response = await consumer.HandleAsync(Request(pubSub: pubSub, topic: topic), CancellationToken.None);
+
+        Assert.Equal(Status.Retry, response.Status);
+        Assert.False(handled);
+    }
+
+    [Fact]
+    public async Task HandleAsync_CancelsAMessageExceedingItsTimeLimitAndLeavesItForRedelivery()
+    {
+        HandledMessage? reported = null;
+        using var consumer = Consumer(async (_, _, _, ct) =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return new HandledMessage(new PipelineOutcome(MessageOutcome.Processed));
+        }, maxProcessingTime: TimeSpan.FromMilliseconds(100));
+        consumer.Handled = (_, outcome) => reported = new HandledMessage(new PipelineOutcome(outcome));
+
+        var response = await consumer.HandleAsync(Request(), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(Status.Retry, response.Status);
+        Assert.Equal(MessageOutcome.Failed, reported?.Outcome.Outcome);
+    }
+
+    [Fact]
+    public async Task HandleAsync_AfterStopBegan_LeavesTheMessageForRedeliveryWithoutHandlingIt()
+    {
+        var handled = false;
+        using var consumer = Consumer((_, _, _, _) =>
+        {
+            handled = true;
+            return Task.FromResult(new HandledMessage(new PipelineOutcome(MessageOutcome.Processed)));
+        });
+        await consumer.StopAsync();
+
+        var response = await consumer.HandleAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(Status.Retry, response.Status);
+        Assert.False(handled);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ReportsEachMessagesOutcome()
+    {
+        var reported = new List<(string, MessageOutcome)>();
+        using var consumer = Consumer(Returns(MessageOutcome.Skipped));
+        consumer.Handled = (message, outcome) => reported.Add((message.MessageId, outcome));
+
+        await consumer.HandleAsync(Request("msg-7"), CancellationToken.None);
+
+        Assert.Equal([("msg-7", MessageOutcome.Skipped)], reported);
+    }
+
+    [Fact]
+    public async Task HandleAsync_ContinuesThePropagatedTrace_AndDescribesTheSpanWithTheMessagingConventions()
+    {
+        var traceId = ActivityTraceId.CreateRandom();
+        var parentSpanId = ActivitySpanId.CreateRandom();
+        using var listener = Listen();
+        Activity? span = null;
+        using var consumer = Consumer((_, activity, _, _) =>
+        {
+            span = activity;
+            return Task.FromResult(new HandledMessage(new PipelineOutcome(MessageOutcome.Processed), "order.created"));
+        });
+
+        await consumer.HandleAsync(Request("msg-7", extensions: new Dictionary<string, string>
+        {
+            ["traceparent"] = $"00-{traceId}-{parentSpanId}-01",
+            ["retrycount"] = "2"
+        }), CancellationToken.None);
+
+        Assert.NotNull(span);
+        Assert.Equal(traceId, span.TraceId);
+        Assert.Equal(parentSpanId, span.ParentSpanId);
+        Assert.Equal("process orders", span.DisplayName);
+        Assert.Equal(ActivityKind.Consumer, span.Kind);
+        Assert.Equal("dapr", span.GetTagItem("messaging.system"));
+        Assert.Equal("process", span.GetTagItem("messaging.operation.type"));
+        Assert.Equal("orders", span.GetTagItem("messaging.destination.name"));
+        Assert.Equal("msg-7", span.GetTagItem("messaging.message.id"));
+        Assert.Equal("order.created", span.GetTagItem("cloudevents.event_type"));
+        Assert.Equal("order.created", span.GetTagItem("intropy.route"));
+        Assert.Equal(2L, span.GetTagItem("intropy.message.retry_count"));
+        Assert.Equal(ActivityStatusCode.Unset, span.Status);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("not-a-traceparent")]
+    public async Task HandleAsync_StartsANewTrace_WhenTheMessageCarriesNoValidTraceContext(string? traceParent)
+    {
+        // Even when a span is current on the delivering thread, a message without trace context
+        // is its own unit of work.
+        using var jobSource = new ActivitySource($"consumer-test-{Guid.NewGuid()}");
+        using var listener = Listen(jobSource);
+        Activity? span = null;
+        using var consumer = Consumer((_, activity, _, _) =>
+        {
+            span = activity;
+            return Task.FromResult(new HandledMessage(new PipelineOutcome(MessageOutcome.Processed)));
+        });
+        var extensions = traceParent is null ? null : new Dictionary<string, string> { ["traceparent"] = traceParent };
+
+        using var job = jobSource.StartActivity("job")!;
+        await consumer.HandleAsync(Request(extensions: extensions), CancellationToken.None);
+
+        Assert.NotNull(span);
+        Assert.Equal(default, span.ParentSpanId);
+        Assert.NotEqual(job.TraceId, span.TraceId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_LinksTheSpanToTheRunThatConsumedIt()
+    {
+        using var jobSource = new ActivitySource($"consumer-link-test-{Guid.NewGuid()}");
+        using var listener = Listen(jobSource);
+        Activity? span = null;
+        using var consumer = Consumer((_, activity, _, _) =>
+        {
+            span = activity;
+            return Task.FromResult(new HandledMessage(new PipelineOutcome(MessageOutcome.Processed)));
+        });
+        using (var job = jobSource.StartActivity("job")!)
+            consumer.Run = job.Context;
+
+        await consumer.HandleAsync(Request(), CancellationToken.None);
+
+        Assert.NotNull(span);
+        Assert.Contains(span.Links, l => l.Context.SpanId == consumer.Run.SpanId);
+    }
+
+    [Fact]
+    public async Task HandleAsync_MarksTheSpanAsAnError_WhenTheMessageFails()
+    {
+        using var listener = Listen();
+        var stopped = CaptureStopped(listener);
+        using var consumer = Consumer(Returns(MessageOutcome.Failed, "technical_failure"));
+
+        await consumer.HandleAsync(Request("msg-err"), CancellationToken.None);
+
+        var span = Assert.Single(stopped(), a => (string?)a.GetTagItem("messaging.message.id") == "msg-err");
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Equal("technical_failure", span.GetTagItem("error.type"));
+    }
+
+    [Fact]
+    public async Task HandleAsync_RecordsTheExceptionOnTheSpan_WhenTheHandlerThrows()
+    {
+        using var listener = Listen();
+        var stopped = CaptureStopped(listener);
+        using var consumer = Consumer((_, _, _, _) => throw new InvalidOperationException("Processing failed"));
+
+        await consumer.HandleAsync(Request("msg-throw"), CancellationToken.None);
+
+        var span = Assert.Single(stopped(), a => (string?)a.GetTagItem("messaging.message.id") == "msg-throw");
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
+        Assert.Contains(span.Events, e => e.Name == "exception");
+        Assert.Equal(typeof(InvalidOperationException).FullName, span.GetTagItem("error.type"));
+    }
+
+    [Theory]
+    [InlineData(nameof(MessageOutcome.Processed), "processed", null)]
+    [InlineData(nameof(MessageOutcome.Skipped), "skipped", null)]
+    [InlineData(nameof(MessageOutcome.Failed), "failed", "technical_failure")]
+    [InlineData(nameof(MessageOutcome.Interrupted), "interrupted", null)]
+    public async Task HandleAsync_RecordsTheConsumedMessageAndItsProcessingDuration(string outcome,
+        string outcomeName, string? errorType)
+    {
+        using var metrics = new MetricCapture();
+        var topic = $"metrics-topic-{Guid.NewGuid()}";
+        using var consumer = Consumer(Returns(System.Enum.Parse<MessageOutcome>(outcome), errorType, "a-route"), topic);
+
+        await consumer.HandleAsync(Request(topic: topic), CancellationToken.None);
+
+        var consumed = Assert.Single(metrics.Of("messaging.client.consumed.messages", "messaging.destination.name", topic));
+        Assert.Equal(1, consumed.Value);
+        Assert.Equal("dapr", consumed.Tags["messaging.system"]);
+        Assert.Equal("process", consumed.Tags["messaging.operation.name"]);
+        Assert.Equal(outcomeName, consumed.Tags["intropy.message.outcome"]);
+        Assert.Equal("test-component", consumed.Tags["intropy.component.name"]);
+        Assert.Equal("a-route", consumed.Tags["intropy.route"]);
+        Assert.Equal(errorType, consumed.Tags.GetValueOrDefault("error.type"));
+        var duration = Assert.Single(metrics.Of("messaging.process.duration", "messaging.destination.name", topic));
+        Assert.Equal(outcomeName, duration.Tags["intropy.message.outcome"]);
+    }
+
+    private static ActivityListener Listen(ActivitySource? testSource = null)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == testSource || source.Name == "Intropy.Framework.Hosting",
+            Sample = (ref _) => ActivitySamplingResult.AllDataAndRecorded
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
+    }
+
+    private static Func<List<Activity>> CaptureStopped(ActivityListener listener)
+    {
+        var stopped = new List<Activity>();
+        listener.ActivityStopped = activity => { lock (stopped) stopped.Add(activity); };
+        return () => { lock (stopped) return [.. stopped]; };
+    }
+}

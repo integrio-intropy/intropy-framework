@@ -1,12 +1,11 @@
 using System.Diagnostics;
 using System.Globalization;
-using Dapr.Messaging.PublishSubscribe;
 using Google.Protobuf.WellKnownTypes;
 using Intropy.Framework.Hosting.Common;
 
-namespace Intropy.Framework.Hosting.TransactionalIntegration;
+namespace Intropy.Framework.Hosting.Messaging;
 
-internal static class DaprActivityHelper
+internal static class MessageActivity
 {
     private const string TraceParentKey = "traceparent";
     private const string TraceStateKey = "tracestate";
@@ -16,16 +15,15 @@ internal static class DaprActivityHelper
     /// Starts the consumer span for a received message, following the OpenTelemetry messaging
     /// conventions (<c>process {topic}</c>): a child of the trace context propagated with it, or the
     /// root of a new trace when the message carries none (or an unparsable one). Never a child of
-    /// whatever span happens to be current on the delivering thread, such as the job's: a message
-    /// is its own unit of work. It is linked to <paramref name="run"/>, the span of the run that
-    /// consumed it, so the run's messages can be found from it and vice versa.
+    /// whatever span happens to be current on the delivering thread: a message is its own unit of
+    /// work. It is linked to <paramref name="run"/>, the span of the run that consumed it, when
+    /// there is one, so the run's messages can be found from it and vice versa.
     /// </summary>
-    internal static Activity? StartProcessActivity(TopicMessage message, string topic, ActivityContext run) =>
-        StartProcessActivity(message.Id, message.Extensions, topic, run);
+    internal static Activity? StartProcessActivity(IncomingMessage message, ActivityContext run) =>
+        StartProcessActivity(message.MessageId, message.Extensions, message.TopicName, run);
 
     /// <summary>Starts the consumer span for a received message, from its id and the CloudEvent
-    /// extensions it was delivered with (trace context, <c>retrycount</c>). See
-    /// <see cref="StartProcessActivity(TopicMessage, string, ActivityContext)"/>.</summary>
+    /// extensions it was delivered with (trace context, <c>retrycount</c>).</summary>
     internal static Activity? StartProcessActivity(string messageId, IReadOnlyDictionary<string, Value> extensions,
         string topic, ActivityContext run)
     {

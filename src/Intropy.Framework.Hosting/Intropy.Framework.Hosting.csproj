@@ -18,7 +18,6 @@
 
   <ItemGroup>
     <PackageReference Include="Dapr.Client" />
-    <PackageReference Include="Dapr.Messaging" />
     <PackageReference Include="Grpc.AspNetCore" />
   </ItemGroup>
 

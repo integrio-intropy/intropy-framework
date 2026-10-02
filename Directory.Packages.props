@@ -10,7 +10,6 @@
 
     <!-- Dapr -->
     <PackageVersion Include="Dapr.Client" Version="1.18.10" />
-    <PackageVersion Include="Dapr.Messaging" Version="1.18.10" />
 
     <!-- gRPC server for the Dapr app callback -->
     <PackageVersion Include="Grpc.AspNetCore" Version="2.84.0" />

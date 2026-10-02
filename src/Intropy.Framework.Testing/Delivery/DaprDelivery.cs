@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using CloudNative.CloudEvents;
-using CloudNative.CloudEvents.SystemTextJson;
+using Intropy.Framework.Blocks.Shared;
 
 namespace Intropy.Framework.Testing.Delivery;
 
@@ -33,8 +33,7 @@ public static class DaprDelivery
     {
         ArgumentNullException.ThrowIfNull(cloudEvent);
 
-        var formatter = new JsonEventFormatter();
-        var bytes = formatter.EncodeStructuredModeMessage(cloudEvent, out _);
+        var bytes = CloudEventFormat.Formatter.EncodeStructuredModeMessage(cloudEvent, out _);
         return Encoding.UTF8.GetString(bytes.Span);
     }
 

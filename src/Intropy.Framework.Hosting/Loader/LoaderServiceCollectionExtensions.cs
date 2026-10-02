@@ -1,22 +1,16 @@
-using Dapr.Messaging.PublishSubscribe;
-using Dapr.Messaging.PublishSubscribe.Extensions;
 using Intropy.Framework.Blocks.Loader;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Messaging;
-using Intropy.Framework.Hosting.Messaging.Callback;
-using Intropy.Framework.Hosting.Messaging.Streaming;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace Intropy.Framework.Hosting.Loader;
 
 /// <summary>
-/// Registers a loader: a long-running worker that consumes one topic and runs each message through a
-/// loader pipeline — through a Dapr streaming subscription (no server, no app port) by default, or
-/// through the Dapr gRPC app callback (<see cref="LoaderOptions.Transport"/>).
+/// Registers a loader: a long-running worker that consumes one topic, pushed to it by the Dapr
+/// sidecar over the gRPC app callback, and runs each message through a loader pipeline.
 /// </summary>
 public static class LoaderServiceCollectionExtensions
 {
@@ -41,12 +35,13 @@ public static class LoaderServiceCollectionExtensions
 
     /// <summary>
     /// Registers a loader that routes each message, by its CloudEvent type, to that type's own
-    /// pipeline. Messages no route handles are dropped to the dead-letter topic by default
+    /// pipeline. Messages no route handles end in the broker's dead-letter queue by default
     /// (<see cref="LoaderOptions.Unrouted"/>).
     /// </summary>
     /// <remarks>
-    /// The loader consumes through a Dapr streaming subscription and serves nothing, unless
-    /// <see cref="LoaderOptions.Transport"/> selects the app callback. Each route's
+    /// The sidecar pushes the loader's messages to a gRPC app callback the loader serves on
+    /// <see cref="LoaderOptions.CallbackPort"/>; its subscription is a declarative Dapr
+    /// <c>Subscription</c> resource. Each route's
     /// pipeline is built in the message's own scope, so its steps may be scoped. The
     /// loader builds every route's pipeline once before subscribing, so a missing registration stops
     /// the host at startup. Caller-owned: the component identity (<c>AddIntropyFramework</c>),
@@ -79,12 +74,11 @@ public static class LoaderServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(options.PubSubName, $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.PubSubName)}");
         ArgumentException.ThrowIfNullOrWhiteSpace(options.TopicName, $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.TopicName)}");
 
+        if (options.CallbackPort is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(configure), options.CallbackPort,
+                $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.CallbackPort)} must be a port number (1-65535).");
+
         var table = new LoaderRouteTable(routes.Routes);
-        if (table.IsRouting && options.Unrouted == UnroutedPolicy.DeadLetter && string.IsNullOrWhiteSpace(options.DeadLetterTopic))
-            throw new InvalidOperationException(
-                $"The loader for topic '{options.TopicName}' dead-letters unrouted messages but has no " +
-                $"{nameof(LoaderOptions.DeadLetterTopic)}; without one the sidecar would drop them silently. " +
-                $"Set {nameof(LoaderOptions.DeadLetterTopic)}, or choose another {nameof(LoaderOptions.Unrouted)} policy.");
 
         services.AddSingleton(new Registration());
         services.AddSingleton(options);
@@ -102,49 +96,22 @@ public static class LoaderServiceCollectionExtensions
             provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider),
             provider.GetRequiredService<ILogger<LoaderMessageHandler>>()));
 
-        if (options.Transport == LoaderTransport.AppCallback)
-            AddCallbackTransport(services, table, options);
-        else
-            AddStreamingTransport(services, table, options);
-
-        return services;
-    }
-
-    private static void AddStreamingTransport(IServiceCollection services, LoaderRouteTable table,
-        LoaderOptions options)
-    {
-        services.AddDaprPubSubClient();
-        services.TryAddSingleton<IStreamingSubscriber>(provider =>
-            new DaprStreamingSubscriber(provider.GetRequiredService<DaprPublishSubscribeClient>()));
-        services.AddHostedService(provider => new LoaderService(
-            provider.GetRequiredService<IStreamingSubscriber>(),
-            provider.GetRequiredService<LoaderMessageHandler>(),
-            table,
-            options,
+        services.AddSingleton(provider => new MessageConsumer(
+            new MessageConsumerSettings(options.PubSubName, options.TopicName, options.MaxMessageProcessingTime,
+                options.ShutdownGracePeriod, AcknowledgeUnrouted: options.Unrouted == UnroutedPolicy.Ack),
+            provider.GetRequiredService<LoaderMessageHandler>().HandleAsync,
             ComponentName(provider),
-            provider.GetRequiredService<IServiceScopeFactory>(),
-            provider.GetRequiredService<IHostApplicationLifetime>(),
-            provider.GetRequiredService<ILogger<LoaderService>>()));
-    }
-
-    private static void AddCallbackTransport(IServiceCollection services, LoaderRouteTable table,
-        LoaderOptions options)
-    {
-        if (options.CallbackPort is < 1 or > 65535)
-            throw new ArgumentOutOfRangeException(nameof(options), options.CallbackPort,
-                $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.CallbackPort)} must be a port number (1-65535).");
-
-        services.AddSingleton(provider => new LoaderCallbackDelivery(
-            provider.GetRequiredService<LoaderMessageHandler>(), options, ComponentName(provider),
-            provider.GetRequiredService<ILogger<LoaderCallbackDelivery>>()));
-        services.AddHostedService(provider => new LoaderCallbackServer(
-            provider.GetRequiredService<LoaderCallbackDelivery>(),
+            provider.GetRequiredService<ILoggerFactory>().CreateLogger<MessageConsumer>()));
+        services.AddHostedService(provider => new LoaderService(
+            provider.GetRequiredService<MessageConsumer>(),
             table,
             options,
             ComponentName(provider),
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ILoggerFactory>(),
             provider.GetRequiredService<IHostApplicationLifetime>()));
+
+        return services;
     }
 
     private static string ComponentName(IServiceProvider provider) =>

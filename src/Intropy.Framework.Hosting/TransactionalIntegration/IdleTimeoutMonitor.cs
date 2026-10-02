@@ -1,3 +1,4 @@
+using Intropy.Framework.Hosting.Messaging;
 using Microsoft.Extensions.Logging;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
@@ -7,7 +8,7 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// </summary>
 internal class IdleTimeoutMonitor
 {
-    private readonly MessageActivityTracker _activityTracker;
+    private readonly InFlightMessages _inFlight;
     private readonly TimeSpan _idleTimeout;
     private readonly ILogger _logger;
     private readonly TimeProvider _timeProvider;
@@ -16,19 +17,19 @@ internal class IdleTimeoutMonitor
     /// <summary>
     /// Creates a new <see cref="IdleTimeoutMonitor"/>.
     /// </summary>
-    /// <param name="activityTracker">The <see cref="MessageActivityTracker"/> to monitor.</param>
+    /// <param name="inFlight">The messages in flight and the idle clock to monitor.</param>
     /// <param name="idleTimeout">The duration of inactivity before triggering shutdown.</param>
     /// <param name="logger">An instance of <see cref="ILogger"/> for logging.</param>
     /// <param name="timeProvider">Time source. Defaults to <see cref="TimeProvider.System"/>. Override in tests to control time.</param>
     /// <param name="pollInterval">How often inactivity is checked. Defaults to 1 second.</param>
     public IdleTimeoutMonitor(
-        MessageActivityTracker activityTracker,
+        InFlightMessages inFlight,
         TimeSpan idleTimeout,
         ILogger logger,
         TimeProvider? timeProvider = null,
         TimeSpan? pollInterval = null)
     {
-        _activityTracker = activityTracker;
+        _inFlight = inFlight;
         _idleTimeout = idleTimeout;
         _logger = logger;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -46,7 +47,7 @@ internal class IdleTimeoutMonitor
         {
             await Task.Delay(_pollInterval, _timeProvider, cancellationToken);
 
-            if (!_activityTracker.ShouldShutdownDueToInactivity(_idleTimeout))
+            if (!_inFlight.IsIdle(_idleTimeout))
                 continue;
 
             _logger.LogInformation(

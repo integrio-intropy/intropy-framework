@@ -42,7 +42,7 @@ public class AppCallbackDeliveryTests
         Assert.Equal("application/json", request.DataContentType);
         Assert.Equal("pubsub", request.PubsubName);
         Assert.Equal("orders", request.Topic);
-        Assert.Equal("""{"OrderId":"ORD-1"}""", request.Data.ToStringUtf8());
+        Assert.Equal("""{"orderId":"ORD-1"}""", request.Data.ToStringUtf8());
         Assert.Equal("ORD-1", request.Extensions.Fields["subject"].StringValue);
         Assert.Equal("2026-09-29T10:00:00Z", request.Extensions.Fields["time"].StringValue);
         Assert.False(request.Extensions.Fields.ContainsKey("retrycount"));

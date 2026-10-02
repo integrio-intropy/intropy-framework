@@ -23,6 +23,9 @@ namespace Intropy.Framework.Testing.Delivery;
 public sealed class AppCallbackDelivery : IDisposable
 {
     private static readonly string s_service = AppCallback.Descriptor.FullName;
+    // The rendered Subscription's default route (the topology's SubscriptionRouting.UnhandledPath).
+    private const string UnhandledPath = "/unhandled";
+
     private readonly GrpcChannel _channel;
     private readonly CallInvoker _invoker;
 
@@ -83,6 +86,16 @@ public sealed class AppCallbackDelivery : IDisposable
     public Task<DeliveryAck> DeliverAsync(CloudEvent cloudEvent, bool redelivery = false,
         CancellationToken ct = default) => DeliverAsync(cloudEvent, PubSubName, TopicName, redelivery, ct);
 
+    /// <summary>Delivers <paramref name="cloudEvent"/> on the subscription's default route, as the
+    /// sidecar does when none of the subscription's rules select it — a content filter left it
+    /// out — and returns the block's ack.</summary>
+    /// <param name="cloudEvent">The event, as its publisher sent it.</param>
+    /// <param name="redelivery">Marks the delivery as a redelivery.</param>
+    /// <param name="ct">Cancels the call.</param>
+    public Task<DeliveryAck> DeliverUnhandledAsync(CloudEvent cloudEvent, bool redelivery = false,
+        CancellationToken ct = default) =>
+        SendAsync(cloudEvent, PubSubName, TopicName, UnhandledPath, redelivery, ct);
+
     /// <summary>Delivers <paramref name="cloudEvent"/> on the given pub/sub and topic and returns the
     /// loader's ack.</summary>
     /// <param name="cloudEvent">The event, as its publisher sent it.</param>
@@ -90,8 +103,16 @@ public sealed class AppCallbackDelivery : IDisposable
     /// <param name="topicName">The topic the delivery comes from.</param>
     /// <param name="redelivery">Marks the delivery as a redelivery.</param>
     /// <param name="ct">Cancels the call.</param>
-    public async Task<DeliveryAck> DeliverAsync(CloudEvent cloudEvent, string pubSubName, string topicName,
+    public Task<DeliveryAck> DeliverAsync(CloudEvent cloudEvent, string pubSubName, string topicName,
         bool redelivery = false, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(cloudEvent);
+        // The route the rendered subscription's rule for the event's type delivers it on.
+        return SendAsync(cloudEvent, pubSubName, topicName, $"/{cloudEvent.Type}", redelivery, ct);
+    }
+
+    private async Task<DeliveryAck> SendAsync(CloudEvent cloudEvent, string pubSubName, string topicName,
+        string path, bool redelivery, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(cloudEvent);
         var (data, attributes) = SidecarEncoding.Encode(cloudEvent);
@@ -111,6 +132,7 @@ public sealed class AppCallbackDelivery : IDisposable
             Data = ByteString.CopyFrom(data),
             PubsubName = pubSubName,
             Topic = topicName,
+            Path = path,
             Extensions = extensions
         }, TopicEventResponse.Parser, ct);
 

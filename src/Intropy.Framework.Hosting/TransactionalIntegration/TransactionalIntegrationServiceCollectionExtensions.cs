@@ -1,4 +1,3 @@
-using Dapr.Messaging.PublishSubscribe;
 using Dapr.Client;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
@@ -34,7 +33,9 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <summary>
     /// Adds Transactional Integration services to the service collection.
     /// This configures the whole receive side — the source sweep, and a receive pipeline that
-    /// publishes each file to the integration's own topic — and the message subscription.
+    /// publishes each file to the integration's own topic — and the send side, which the sidecar
+    /// pushes that topic to over the gRPC app callback (<see cref="TransactionalIntegrationOptions.CallbackPort"/>);
+    /// the subscription is a declarative Dapr <c>Subscription</c> resource.
     /// NOTE: You must register the component identity (<c>AddIntropyFramework</c>),
     /// <c>DaprClient</c>, an ISendPipeline of <typeparamref name="TCtx"/>, and the
     /// source port (<c>AddSourcePort</c>).
@@ -89,26 +90,21 @@ public static class TransactionalIntegrationServiceCollectionExtensions
                 .Build();
         });
 
-        // Register topic subscriber
-        services.AddSingleton<ITopicSubscriber>(sp =>
-        {
-            var pubSubClient = sp.GetRequiredService<DaprPublishSubscribeClient>();
-            return new DaprTopicSubscriber(pubSubClient);
-        });
+        if (options.CallbackPort is < 1 or > 65535)
+            throw new ArgumentOutOfRangeException(nameof(configureOptions), options.CallbackPort,
+                "CallbackPort must be a port number (1-65535).");
 
-        // The send side: the message processor and the subscription around it.
+        // The send side: the message processor, and the callback the sidecar pushes the queue to.
         services.AddSingleton(sp => new MessageProcessor<TCtx>(
             sp.GetRequiredService<ISendPipeline<TCtx>>(),
             contextFactory,
             sp.GetRequiredService<FrameworkOptions>().ComponentName,
-            options.DaprTopicName,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<MessageProcessor<TCtx>>()));
         services.AddSingleton(sp => new MessageSubscriber<TCtx>(
-            sp.GetRequiredService<ITopicSubscriber>(),
             sp.GetRequiredService<MessageProcessor<TCtx>>(),
             sp.GetRequiredService<TransactionalIntegrationOptions>(),
             sp.GetRequiredService<FrameworkOptions>().ComponentName,
-            sp.GetRequiredService<ILoggerFactory>().CreateLogger<MessageSubscriber<TCtx>>()));
+            sp.GetRequiredService<ILoggerFactory>()));
 
         // The receive side, and the lifecycle hosting both.
         services.AddSingleton(sp => new TransactionalIntegrationReceiver<TCtx>(sp,

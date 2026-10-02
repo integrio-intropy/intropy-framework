@@ -38,6 +38,13 @@ public class TransactionalIntegrationOptions
     public TimeSpan MaxMessageProcessingTime { get; set; } = TimeSpan.FromSeconds(40);
 
     /// <summary>
+    /// The port the integration serves the Dapr gRPC app callback on, through which the sidecar
+    /// pushes its queue: the sidecar's <c>app-port</c>, with <c>app-protocol</c> <c>grpc</c>.
+    /// Defaults to <c>APP_PORT</c> from the environment, or 8080.
+    /// </summary>
+    public int? CallbackPort { get; set; }
+
+    /// <summary>
     /// Creates new instance of <see cref="TransactionalIntegrationOptions"/>
     /// </summary>
     public TransactionalIntegrationOptions()

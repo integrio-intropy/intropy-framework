@@ -186,9 +186,9 @@ var builder = Host.CreateApplicationBuilder(args);
 // Add framework services
 builder.Services.AddIntropyFramework();
 
-// Add Dapr client
+// Add Dapr client (the receive side publishes with it; the sidecar pushes the queue to the
+// integration's gRPC app callback, so no pub/sub client is needed)
 builder.Services.AddDaprClient();
-builder.Services.AddDaprPubSubClient();
 
 // The port the file sweep reads; its adapter is configured under Ports:order-source
 builder.Services.AddSourcePort("order-source", builder.Configuration); // or FileCompletion.Archive("archive")

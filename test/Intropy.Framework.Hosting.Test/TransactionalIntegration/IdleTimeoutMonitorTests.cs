@@ -1,3 +1,4 @@
+using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
@@ -17,7 +18,7 @@ public class IdleTimeoutMonitorTests
     public async Task WaitForIdleTimeoutAsync_ShouldReturn_WhenIdleTimeoutReached()
     {
         // Verifies that the monitor triggers shutdown when no messages are received within the timeout period
-        var tracker = new MessageActivityTracker(_time);
+        using var tracker = new InFlightMessages(_time);
         var monitor = new IdleTimeoutMonitor(tracker, IdleTimeout, _logger, _time, PollInterval);
 
         var task = monitor.WaitForIdleTimeoutAsync(CancellationToken.None);
@@ -32,10 +33,10 @@ public class IdleTimeoutMonitorTests
     public async Task WaitForIdleTimeoutAsync_ShouldNotReturn_WhileMessagesAreBeingProcessed()
     {
         // Verifies that active message processing prevents shutdown
-        var tracker = new MessageActivityTracker(_time);
+        using var tracker = new InFlightMessages(_time);
         var monitor = new IdleTimeoutMonitor(tracker, IdleTimeout, _logger, _time, PollInterval);
 
-        using var scope = tracker.BeginMessageProcessing();
+        Assert.True(tracker.TryEnter());
 
         var task = monitor.WaitForIdleTimeoutAsync(CancellationToken.None);
 
@@ -51,7 +52,7 @@ public class IdleTimeoutMonitorTests
     public async Task WaitForIdleTimeoutAsync_ShouldRespectCancellationToken()
     {
         // Verifies that the monitor can be cancelled externally for emergency shutdown
-        var tracker = new MessageActivityTracker(_time);
+        using var tracker = new InFlightMessages(_time);
         var monitor = new IdleTimeoutMonitor(tracker, IdleTimeout, _logger, _time, PollInterval);
 
         using var cts = new CancellationTokenSource();
@@ -66,14 +67,15 @@ public class IdleTimeoutMonitorTests
     public async Task WaitForIdleTimeoutAsync_ShouldWaitForNewIdlePeriod_WhenMessageReceivedDuringMonitoring()
     {
         // Verifies that receiving new messages resets the idle timeout timer
-        var tracker = new MessageActivityTracker(_time);
+        using var tracker = new InFlightMessages(_time);
         var monitor = new IdleTimeoutMonitor(tracker, IdleTimeout, _logger, _time, PollInterval);
 
         var task = monitor.WaitForIdleTimeoutAsync(CancellationToken.None);
 
         // Almost-but-not-quite hit the idle timeout, then simulate message activity.
         _time.Advance(IdleTimeout - PollInterval);
-        using (tracker.BeginMessageProcessing()) { }
+        Assert.True(tracker.TryEnter());
+        tracker.Exit();
         await Task.Yield();
         Assert.False(task.IsCompleted);
 

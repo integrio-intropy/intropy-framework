@@ -6,7 +6,6 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Loader;
 using Intropy.Framework.Hosting.Messaging;
-using Intropy.Framework.Hosting.Messaging.Streaming;
 using Intropy.Framework.Testing.Delivery;
 using Intropy.Framework.Testing.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -15,8 +14,7 @@ using Microsoft.Extensions.Hosting;
 namespace Intropy.Framework.Hosting.Test.Loader;
 
 /// <summary>
-/// A generic host running a loader against fakes: the sidecar's subscription
-/// (<see cref="FakeStreamingSubscriber"/>) or, under the app-callback transport, the sidecar's pushes
+/// A generic host running a loader against fakes: the sidecar's pushes to the loader's app callback
 /// (<see cref="Callback"/>), both platform-service clients, and recording senders.
 /// </summary>
 public sealed class LoaderHost : IAsyncDisposable
@@ -27,10 +25,8 @@ public sealed class LoaderHost : IAsyncDisposable
     public const string Cancelled = "order.cancelled";
 
     public IHost Host { get; private set; } = null!;
-    public FakeStreamingSubscriber Subscriber { get; } = new();
-
-    /// <summary>Delivers to the loader's app callback; set when the loader runs
-    /// <see cref="LoaderTransport.AppCallback"/> on an explicit <see cref="LoaderOptions.CallbackPort"/>.</summary>
+    /// <summary>Delivers to the loader's app callback, as the sidecar does; set when the loader
+    /// listens on an explicit <see cref="LoaderOptions.CallbackPort"/> (the default here).</summary>
     public AppCallbackDelivery? Callback { get; private set; }
     public FakeIdempotencyServiceClient Idempotency { get; } = new();
     public FakeBusinessIncidentServiceClient Incidents { get; } = new();
@@ -39,13 +35,11 @@ public sealed class LoaderHost : IAsyncDisposable
 
     /// <summary>A loader routing <see cref="Created"/> and <see cref="Cancelled"/>.</summary>
     public static Task<LoaderHost> StartRoutingAsync(Action<LoaderOptions>? configure = null,
-        Action<LoaderRoutes, LoaderHost>? extraRoutes = null, bool waitForSubscription = true,
-        LoaderTransport transport = LoaderTransport.Streaming) =>
+        Action<LoaderRoutes, LoaderHost>? extraRoutes = null) =>
         StartAsync((services, fixture) => services.AddLoader(
             options =>
             {
-                Defaults(options, transport);
-                options.DeadLetterTopic = "orders.dead";
+                Defaults(options);
                 configure?.Invoke(options);
             },
             routes =>
@@ -58,22 +52,21 @@ public sealed class LoaderHost : IAsyncDisposable
                         (builder, _) => Pipeline(builder, fixture.CancelledSender),
                         (metadata, isRetry) => new Context(metadata, isRetry));
                 extraRoutes?.Invoke(routes, fixture);
-            }), waitForSubscription);
+            }));
 
     /// <summary>A loader without routes: one pipeline for every event type.</summary>
     public static Task<LoaderHost> StartSingleAsync(Func<OrderCreated, bool>? reject = null,
-        Action<LoaderOptions>? configure = null, LoaderTransport transport = LoaderTransport.Streaming) =>
+        Action<LoaderOptions>? configure = null) =>
         StartAsync((services, fixture) => services.AddLoader<OrderCreated, OrderCreated, Context>(
             (builder, _) => Pipeline(builder, fixture.CreatedSender, reject),
             (metadata, isRetry) => new Context(metadata, isRetry),
             options =>
             {
-                Defaults(options, transport);
+                Defaults(options);
                 configure?.Invoke(options);
             }));
 
-    public static async Task<LoaderHost> StartAsync(Action<IServiceCollection, LoaderHost> addLoader,
-        bool waitForSubscription = true)
+    public static async Task<LoaderHost> StartAsync(Action<IServiceCollection, LoaderHost> addLoader)
     {
         var fixture = new LoaderHost();
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(
@@ -84,7 +77,6 @@ public sealed class LoaderHost : IAsyncDisposable
             o.ComponentName = "test-loader";
             o.ServiceNamespace = "test";
         });
-        builder.Services.AddSingleton<IStreamingSubscriber>(fixture.Subscriber);
         builder.Services.AddSingleton<IIdempotencyServiceClient>(fixture.Idempotency);
         builder.Services.AddSingleton<IBusinessIncidentServiceClient>(fixture.Incidents);
         addLoader(builder.Services, fixture);
@@ -93,13 +85,8 @@ public sealed class LoaderHost : IAsyncDisposable
         await fixture.Host.StartAsync();
 
         var options = fixture.Host.Services.GetRequiredService<LoaderOptions>();
-        if (options.Transport == LoaderTransport.AppCallback)
-        {
-            if (options.CallbackPort is { } port)
-                fixture.Callback = new AppCallbackDelivery(port, options.PubSubName, options.TopicName);
-        }
-        else if (waitForSubscription)
-            await fixture.Subscriber.WaitForSubscriptionAsync();
+        if (options.CallbackPort is { } port)
+            fixture.Callback = new AppCallbackDelivery(port, options.PubSubName, options.TopicName);
         return fixture;
     }
 
@@ -110,19 +97,20 @@ public sealed class LoaderHost : IAsyncDisposable
         Callback?.Dispose();
     }
 
-    /// <summary>Delivers <paramref name="cloudEvent"/> through whichever transport the loader runs —
-    /// its app callback or its streaming subscription — and returns the loader's ack.</summary>
+    /// <summary>Delivers <paramref name="cloudEvent"/> to the loader's app callback and returns
+    /// the loader's ack.</summary>
     public Task<DeliveryAck> DeliverAsync(CloudEvent cloudEvent, bool redelivery = false) =>
-        Callback is not null ? Callback.DeliverAsync(cloudEvent, redelivery) : Subscriber.DeliverAsync(cloudEvent, redelivery);
+        Callback!.DeliverAsync(cloudEvent, redelivery);
 
-    private static void Defaults(LoaderOptions options, LoaderTransport transport = LoaderTransport.Streaming)
+    public Task<DeliveryAck> DeliverUnhandledAsync(CloudEvent cloudEvent) =>
+        Callback!.DeliverUnhandledAsync(cloudEvent);
+
+    /// <summary>The fixture's subscription and a free callback port, so tests can run in parallel.</summary>
+    public static void Defaults(LoaderOptions options)
     {
         options.PubSubName = PubSub;
         options.TopicName = Topic;
-        options.Transport = transport;
-        if (transport == LoaderTransport.AppCallback)
-            options.CallbackPort = AppCallbackDelivery.AvailablePort();
-        options.ReconnectDelay = TimeSpan.FromMilliseconds(10);
+        options.CallbackPort = AppCallbackDelivery.AvailablePort();
         options.ShutdownGracePeriod = TimeSpan.FromSeconds(5);
     }
 

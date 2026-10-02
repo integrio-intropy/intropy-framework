@@ -8,9 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Intropy.Framework.Hosting.Test.Loader;
 
 /// <summary>
-/// What only the app-callback transport has: the gRPC server on the loader's port, no announced
+/// The loader's app callback itself: the gRPC server on the loader's port, no announced
 /// subscription (a declarative resource owns it), deliveries the resource sent from the wrong topic,
-/// and the time limit the loader enforces itself. The behaviour both transports share is in
+/// and the time limit the loader enforces itself. The consumption contract is in
 /// <see cref="LoaderTests"/>.
 /// </summary>
 [Collection(ProcessStateCollection.Name)]
@@ -28,7 +28,7 @@ public class LoaderCallbackTests
     };
 
     private static Task<LoaderHost> StartRoutingAsync(Action<LoaderOptions>? configure = null) =>
-        LoaderHost.StartRoutingAsync(configure, transport: LoaderTransport.AppCallback);
+        LoaderHost.StartRoutingAsync(configure);
 
     [Fact]
     public async Task AppCallback_ServesTheCallbackAndAnnouncesNoSubscription()
@@ -38,19 +38,6 @@ public class LoaderCallbackTests
         var subscriptions = await host.Callback!.GetSubscriptionsAsync();
 
         Assert.Empty(subscriptions);
-        Assert.Empty(host.Subscriber.Subscriptions);
-    }
-
-    [Fact]
-    public async Task DefaultTransport_SubscribesByStreamingAndServesNothing()
-    {
-        var port = AppCallbackDelivery.AvailablePort();
-        await using var host = await LoaderHost.StartRoutingAsync(o => o.CallbackPort = port);
-        using var callback = new AppCallbackDelivery(port, LoaderHost.PubSub, LoaderHost.Topic);
-
-        Assert.Single(host.Subscriber.Subscriptions);
-        var refused = await Assert.ThrowsAsync<RpcException>(() => callback.GetSubscriptionsAsync());
-        Assert.Equal(StatusCode.Unavailable, refused.StatusCode);
     }
 
     [Fact]
@@ -85,7 +72,6 @@ public class LoaderCallbackTests
             {
                 o.PubSubName = LoaderHost.PubSub;
                 o.TopicName = LoaderHost.Topic;
-                o.Transport = LoaderTransport.AppCallback;
                 o.CallbackPort = port;
             }));
     }
