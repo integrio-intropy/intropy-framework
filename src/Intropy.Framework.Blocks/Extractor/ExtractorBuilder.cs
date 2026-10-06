@@ -99,6 +99,24 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures deserialization by resolving the registered <typeparamref name="TStep"/> from the
+    /// service provider.
+    /// This step processes the raw string input to deserialize it into the input POCO type.
+    /// </summary>
+    /// <remarks>
+    /// Register the step against its concrete type, e.g. <c>services.AddScoped&lt;MyDeserializer&gt;()</c>.
+    /// The step is resolved once, when this method is called, in the scope the pipeline is built in,
+    /// which is each file's own scope for a hosted extractor — so a scoped registration exercises
+    /// its per-file lifetime.
+    /// </remarks>
+    /// <typeparam name="TStep">The concrete <see cref="DeserializeStep{T,TCtx}"/> to resolve from DI.</typeparam>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithDeserializer<TStep>()
+        where TStep : DeserializeStep<TInput, TCtx>
+        => WithDeserializer(StepFromServices.Resolve<TStep>(_serviceProvider));
+
+    /// <summary>
     /// Configures input validation using a custom validator.
     /// </summary>
     /// <param name="validator">The <see cref="ValidateStep{T,TCtx}"/> that validates TInput</param>
@@ -108,6 +126,23 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
         _validator = validator;
         return this;
     }
+
+    /// <summary>
+    /// Configures input validation by resolving the registered <typeparamref name="TStep"/> from
+    /// the service provider.
+    /// </summary>
+    /// <remarks>
+    /// Register the step against its concrete type, e.g. <c>services.AddScoped&lt;MyValidator&gt;()</c>.
+    /// The step is resolved once, when this method is called, in the scope the pipeline is built in,
+    /// which is each file's own scope for a hosted extractor — so a scoped registration exercises
+    /// its per-file lifetime.
+    /// </remarks>
+    /// <typeparam name="TStep">The concrete <see cref="ValidateStep{T,TCtx}"/> to resolve from DI.</typeparam>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithValidator<TStep>()
+        where TStep : ValidateStep<TInput, TCtx>
+        => WithValidator(StepFromServices.Resolve<TStep>(_serviceProvider));
 
     /// <summary>
     /// Configures transformation using a custom transformer step.
@@ -123,6 +158,24 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures transformation by resolving the registered <typeparamref name="TStep"/> from the
+    /// service provider.
+    /// This step transforms the validated input into the output type.
+    /// </summary>
+    /// <remarks>
+    /// Register the step against its concrete type, e.g. <c>services.AddScoped&lt;MyTransformer&gt;()</c>.
+    /// The step is resolved once, when this method is called, in the scope the pipeline is built in,
+    /// which is each file's own scope for a hosted extractor — so a scoped registration exercises
+    /// its per-file lifetime.
+    /// </remarks>
+    /// <typeparam name="TStep">The concrete <see cref="TransformStep{TInput,TOutput,TCtx}"/> to resolve from DI.</typeparam>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithTransformer<TStep>()
+        where TStep : TransformStep<TInput, TOutput, TCtx>
+        => WithTransformer(StepFromServices.Resolve<TStep>(_serviceProvider));
+
+    /// <summary>
     /// Configures serialization using a custom serializer step.
     /// This step serializes the transformed output into a string.
     /// </summary>
@@ -136,6 +189,24 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures serialization by resolving the registered <typeparamref name="TStep"/> from the
+    /// service provider.
+    /// This step serializes the transformed output into a string.
+    /// </summary>
+    /// <remarks>
+    /// Register the step against its concrete type, e.g. <c>services.AddSingleton&lt;MySerializer&gt;()</c>.
+    /// The step is resolved once, when this method is called, in the scope the pipeline is built in,
+    /// which is each file's own scope for a hosted extractor — so a scoped registration exercises
+    /// its per-file lifetime.
+    /// </remarks>
+    /// <typeparam name="TStep">The concrete <see cref="SerializeStep{T,TCtx}"/> to resolve from DI.</typeparam>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithSerializer<TStep>()
+        where TStep : SerializeStep<TOutput, TCtx>
+        => WithSerializer(StepFromServices.Resolve<TStep>(_serviceProvider));
+
+    /// <summary>
     /// Adds extractors to the pipeline. Multiple extractors can be added and will be executed in order.
     /// </summary>
     public ExtractorBuilder<TInput, TOutput, TCtx> WithExtractor(ExtractStep<TInput, TCtx> extractor)
@@ -144,6 +215,23 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
         _extractors.Add(extractor);
         return this;
     }
+
+    /// <summary>
+    /// Adds an extractor resolved from the service provider to the pipeline. Multiple extractors
+    /// can be added and will be executed in order.
+    /// </summary>
+    /// <remarks>
+    /// Register the step against its concrete type, e.g. <c>services.AddScoped&lt;MyEnrichment&gt;()</c>.
+    /// The step is resolved once, when this method is called, in the scope the pipeline is built in,
+    /// which is each file's own scope for a hosted extractor — so a scoped registration exercises
+    /// its per-file lifetime.
+    /// </remarks>
+    /// <typeparam name="TStep">The concrete <see cref="ExtractStep{TInput,TCtx}"/> to resolve from DI.</typeparam>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithExtractor<TStep>()
+        where TStep : ExtractStep<TInput, TCtx>
+        => WithExtractor(StepFromServices.Resolve<TStep>(_serviceProvider));
 
     /// <summary>
     /// Configures sending using a custom sender.
@@ -155,6 +243,26 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
         _sender = sender;
         return this;
     }
+
+    /// <summary>
+    /// Configures sending by resolving the registered <typeparamref name="TStep"/> from the service
+    /// provider. Use this when the sender is registered in DI by its concrete type, so the "which
+    /// sender?" decision lives in service registration alongside the other external edges, and
+    /// tests can replace the registration with a fake. Unlike <see cref="WithSenderFromServices"/>,
+    /// which resolves the abstract <see cref="SendStep{TCtx}"/>, this resolves the concrete type —
+    /// both can coexist.
+    /// </summary>
+    /// <remarks>
+    /// Register the sender against its concrete type, e.g. <c>services.AddSingleton&lt;MySender&gt;()</c>.
+    /// The sender is resolved once, when this method is called, in the scope the pipeline is built
+    /// in; register it as a singleton (or transient) rather than scoped.
+    /// </remarks>
+    /// <typeparam name="TStep">The concrete <see cref="SendStep{TCtx}"/> to resolve from DI.</typeparam>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithSender<TStep>()
+        where TStep : SendStep<TCtx>
+        => WithSender(StepFromServices.Resolve<TStep>(_serviceProvider));
 
     /// <summary>
     /// Configures sending by resolving the registered <see cref="SendStep{TCtx}"/> from the service provider.

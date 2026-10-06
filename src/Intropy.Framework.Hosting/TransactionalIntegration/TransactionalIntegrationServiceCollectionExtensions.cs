@@ -4,6 +4,8 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
+using Intropy.Framework.Hosting.Common;
+using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -18,7 +20,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
 {
     /// <summary>
     /// Adds a Transactional Integration whose pipelines use the base <see cref="Context"/>.
-    /// See <see cref="AddTransactionalIntegration{TCtx}"/>.
+    /// See <see cref="AddTransactionalIntegration{TCtx}(IServiceCollection, ContextFactory{TCtx}, Action{TransactionalIntegrationOptions}, Action{JobOptions}?)"/>.
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
     /// <param name="configureOptions">Action to configure the integration options.</param>
@@ -48,6 +50,9 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <see cref="TransactionalIntegrationOptions.DaprTopicName"/>. Both defaults are registered
     /// only when absent: register an <see cref="EnqueueStep{TCtx}"/> to replace the publisher
     /// (tests register a fake), or a whole <see cref="IReceivePipeline{TCtx}"/>.
+    /// For the described-by-a-definition shape
+    /// (<see cref="AddTransactionalIntegration{TCtx}(IServiceCollection, TransactionalIntegrationDefinition{TCtx})"/>),
+    /// the pub/sub, topic, source port and context factory are one object, validated at registration.
     /// </remarks>
     /// <typeparam name="TCtx">The context type shared by the receive and send pipelines.</typeparam>
     /// <param name="services">The service collection to add services to.</param>
@@ -72,7 +77,47 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             throw new InvalidOperationException("DaprPubSubName must be configured.");
         if (string.IsNullOrEmpty(options.DaprTopicName))
             throw new InvalidOperationException("DaprTopicName must be configured.");
+        ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
+            nameof(TransactionalIntegrationOptions), nameof(configureOptions));
 
+        return AddTransactionalIntegrationCore(services, options, contextFactory, configureJob);
+    }
+
+    /// <summary>
+    /// Adds a Transactional Integration described by a <paramref name="definition"/>: the pub/sub,
+    /// topic, source port, context factory and runner settings in one object, validated at
+    /// registration so a misconfigured integration fails at startup with the member that is wrong.
+    /// See <see cref="TransactionalIntegrationDefinition{TCtx}"/>.
+    /// </summary>
+    /// <remarks>
+    /// This configures the whole receive side — the source sweep, and a receive pipeline that
+    /// publishes each file to the integration's own topic — and the send side, which the sidecar
+    /// pushes that topic to over the gRPC app callback
+    /// (<see cref="TransactionalIntegrationOptions.CallbackPort"/>).
+    /// NOTE: You must register the component identity (<c>AddIntropyFramework</c>),
+    /// <c>DaprClient</c>, an ISendPipeline of <typeparamref name="TCtx"/>.
+    /// </remarks>
+    /// <typeparam name="TCtx">The context type shared by the receive and send pipelines.</typeparam>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="definition">The integration description, validated at registration.</param>
+    /// <returns>The service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">The definition is incomplete.</exception>
+    public static IServiceCollection AddTransactionalIntegration<TCtx>(this IServiceCollection services,
+        TransactionalIntegrationDefinition<TCtx> definition) where TCtx : Context
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(definition);
+        var options = definition.Validate(); // before any registration: a rejected definition leaves nothing behind
+        if (definition.SourcePort is { } port)
+            services.AddSourcePort(port, definition.Completion);
+        return AddTransactionalIntegrationCore(services, options, definition.ResolveContextFactory(),
+            definition.ConfigureJob);
+    }
+
+    private static IServiceCollection AddTransactionalIntegrationCore<TCtx>(IServiceCollection services,
+        TransactionalIntegrationOptions options, ContextFactory<TCtx> contextFactory,
+        Action<JobOptions>? configureJob) where TCtx : Context
+    {
         // Register options
         services.AddSingleton(options);
 
@@ -89,10 +134,6 @@ public static class TransactionalIntegrationServiceCollectionExtensions
                 .WithEnqueuer(sp.GetRequiredService<EnqueueStep<TCtx>>())
                 .Build();
         });
-
-        if (options.CallbackPort is < 1 or > 65535)
-            throw new ArgumentOutOfRangeException(nameof(configureOptions), options.CallbackPort,
-                "CallbackPort must be a port number (1-65535).");
 
         // The send side: the message processor, and the callback the sidecar pushes the queue to.
         services.AddSingleton(sp => new MessageProcessor<TCtx>(
