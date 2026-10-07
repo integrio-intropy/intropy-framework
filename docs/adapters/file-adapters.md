@@ -12,25 +12,30 @@ Interface for all file operations. All implementations use Dapr bindings under t
 ```csharp
 public interface IFileAdapter
 {
-    Task<List<FileEntry>> ListAsync();
-    Task<byte[]> GetContentAsync(string fileName);
-    Task<string?> GetContentAsync(string fileName, Encoding encoding);
-    Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null);
-    Task WriteAsync(string fileName, string content, Encoding encoding, string? basePathOverride = null);
-    Task DeleteAsync(string fileName);
+    Task<List<FileEntry>> ListAsync(CancellationToken ct = default);
+    Task<byte[]> GetContentAsync(string fileName, CancellationToken ct = default);
+    Task WriteAsync(string fileName, byte[] content, string? basePathOverride = null, CancellationToken ct = default);
+    Task DeleteAsync(string fileName, CancellationToken ct = default);
 }
+```
+
+Text reads and writes with an encoding are `FileAdapterExtensions` over the binary core:
+
+```csharp
+Task<string> GetContentAsync(this IFileAdapter adapter, string fileName, Encoding encoding, CancellationToken ct = default);
+Task WriteAsync(this IFileAdapter adapter, string fileName, string content, Encoding encoding, string? basePathOverride = null, CancellationToken ct = default);
 ```
 
 ### Methods
 
 | Method | Description |
 |--------|-------------|
-| `ListAsync()` | Lists files matching the configured filter. Returns `List<FileEntry>`. |
-| `GetContentAsync(fileName)` | Reads file content as `byte[]`. |
-| `GetContentAsync(fileName, encoding)` | Reads file content as `string` with the specified encoding. |
-| `WriteAsync(fileName, content)` | Writes `byte[]` content. Optional `basePathOverride` to write to a different directory. |
-| `WriteAsync(fileName, content, encoding)` | Writes `string` content with encoding. |
-| `DeleteAsync(fileName)` | Deletes a file. |
+| `ListAsync(ct)` | Lists files matching the configured filter. Returns `List<FileEntry>`. |
+| `GetContentAsync(fileName, ct)` | Reads file content as `byte[]`. Throws on a missing file. |
+| `GetContentAsync(fileName, encoding, ct)` | Extension: reads file content as `string` with the specified encoding. |
+| `WriteAsync(fileName, content, basePathOverride, ct)` | Writes `byte[]` content. Optional `basePathOverride` to write to a different directory. |
+| `WriteAsync(fileName, content, encoding, basePathOverride, ct)` | Extension: writes `string` content with encoding. |
+| `DeleteAsync(fileName, ct)` | Deletes a file. |
 
 ---
 
