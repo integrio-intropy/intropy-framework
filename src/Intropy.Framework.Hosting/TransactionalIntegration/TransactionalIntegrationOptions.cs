@@ -71,13 +71,6 @@ public class TransactionalIntegrationOptions
         set => _subscription.CallbackPort = value;
     }
 
-    /// <summary>
-    /// Creates new instance of <see cref="TransactionalIntegrationOptions"/>
-    /// </summary>
-    public TransactionalIntegrationOptions()
-    {
-    }
-
     /// <summary>Settles the subscription values across the two shapes: a value set through
     /// <see cref="Subscription"/> but not through this class's own member fills that member, and
     /// the other way around, so both shapes read the same values after registration. Called by the

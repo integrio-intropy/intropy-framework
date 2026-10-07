@@ -1,5 +1,6 @@
 using Dapr.Client;
 using Intropy.Framework.Core.Configuration;
+using Intropy.Framework.Hosting.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -27,24 +28,30 @@ public static class JobServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        // Multiple runners resolve ambiguous options and sidecar lifecycles; one process is one job.
-        if (services.Any(d => d.ServiceType == typeof(JobRunner)))
-            throw new InvalidOperationException(
-                "A run-to-completion job is already registered; a process hosts exactly one job.");
+        // Multiple runners resolve ambiguous options and sidecar lifecycles; one process is one
+        // job. The guard also rejects a second job across component kinds (an extractor and a
+        // transactional integration on one provider both land here).
+        ComponentRegistration.EnsureNoOther(services, "job");
 
         var options = new JobOptions();
         configureOptions?.Invoke(options);
 
         // The component name is only known once the provider is built (FrameworkOptions is
-        // options-bound), so the default job name is resolved then.
+        // options-bound), so the default job name is resolved then — in a new instance, never
+        // by mutating the configured one: the registered options are fixed once resolved.
         services.AddSingleton(sp =>
         {
-            if (string.IsNullOrEmpty(options.JobName))
-                options.JobName = sp.GetService<FrameworkOptions>()?.ComponentName is { Length: > 0 } componentName
-                    ? componentName
-                    : throw new InvalidOperationException(
-                        "JobName is not configured and no component name is registered. Call AddIntropyFramework or set JobName.");
-            return options;
+            if (!string.IsNullOrEmpty(options.JobName))
+                return options;
+            return sp.GetService<FrameworkOptions>()?.ComponentName is { Length: > 0 } componentName
+                ? new JobOptions
+                {
+                    JobName = componentName,
+                    SidecarTimeout = options.SidecarTimeout,
+                    SidecarShutdownTimeout = options.SidecarShutdownTimeout,
+                }
+                : throw new InvalidOperationException(
+                    "JobName is not configured and no component name is registered. Call AddIntropyFramework or set JobName.");
         });
 
         services.TryAddSingleton<TJob>();
