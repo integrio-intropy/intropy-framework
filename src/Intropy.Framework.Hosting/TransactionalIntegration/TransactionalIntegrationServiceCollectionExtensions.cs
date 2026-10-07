@@ -7,6 +7,7 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Jobs;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
@@ -27,6 +28,8 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <param name="configureJob">Optional runner settings: the job name (the trace activity
     /// name, default: the component name) and the sidecar timeouts.</param>
     /// <returns>The service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">A Transactional Integration is already
+    /// registered on this service provider.</exception>
     public static IServiceCollection AddTransactionalIntegration(this IServiceCollection services,
         Action<TransactionalIntegrationOptions> configureOptions, Action<JobOptions>? configureJob = null) =>
         services.AddTransactionalIntegration<Context>((metadata, isRetry) => new Context(metadata, isRetry),
@@ -43,6 +46,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// source port (<c>AddSourcePort</c>).
     /// The lifecycle is hosted by <see cref="JobRunner"/>; resolve it and call
     /// <c>RunAsync</c>.
+    /// Only one Transactional Integration may be registered per service provider.
     /// </summary>
     /// <remarks>
     /// The receive pipeline publishes with a <see cref="DaprTopicEnqueuer{TCtx}"/> to
@@ -69,8 +73,16 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(contextFactory);
         ArgumentNullException.ThrowIfNull(configureOptions);
 
+        // Read only: the marker is recorded once every check that can fail has passed, so a
+        // rejected registration leaves the guard open for a corrected retry.
+        ComponentRegistration.EnsureSingleKind(services, "transactional integration");
+
         var options = new TransactionalIntegrationOptions();
         configureOptions(options);
+        // Settle the composed Subscription shape against the legacy members before the required
+        // checks: a value set through either shape satisfies them, a value set through both with
+        // different values fails here, with the members named.
+        options.ConsolidateSubscription();
 
         // Validate required options
         if (string.IsNullOrEmpty(options.DaprPubSubName))
@@ -80,6 +92,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), nameof(configureOptions));
 
+        ComponentRegistration.MarkRegistered(services, "transactional integration");
         return AddTransactionalIntegrationCore(services, options, contextFactory, configureJob);
     }
 
@@ -101,17 +114,70 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <param name="services">The service collection to add services to.</param>
     /// <param name="definition">The integration description, validated at registration.</param>
     /// <returns>The service collection for chaining.</returns>
-    /// <exception cref="InvalidOperationException">The definition is incomplete.</exception>
+    /// <exception cref="InvalidOperationException">The definition is incomplete, or a Transactional
+    /// Integration is already registered.</exception>
     public static IServiceCollection AddTransactionalIntegration<TCtx>(this IServiceCollection services,
         TransactionalIntegrationDefinition<TCtx> definition) where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(definition);
         var options = definition.Validate(); // before any registration: a rejected definition leaves nothing behind
+        ComponentRegistration.EnsureNoOther(services, "transactional integration");
         if (definition.SourcePort is { } port)
             services.AddSourcePort(port, definition.Completion);
         return AddTransactionalIntegrationCore(services, options, definition.ResolveContextFactory(),
             definition.ConfigureJob);
+    }
+
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="configuration">The section holding the integration's values: the pub/sub and
+    /// topic (<c>DaprPubSubName</c>/<c>DaprTopicName</c>, or <c>PubSubName</c>/<c>TopicName</c>),
+    /// the timeouts (<c>MaxMessageProcessingTime</c>, <c>IdleTimeout</c>,
+    /// <c>PostIdleGracePeriod</c>) and the <c>CallbackPort</c>. Each value only sets what the
+    /// definition does not; a malformed value fails here, with the member it would configure.</param>
+    /// <param name="factory">Builds the definition the code owns — the context factory, the source
+    /// port — and overrides anything configuration set. Leave a member unset (null) to let the
+    /// configuration provide it.</param>
+    /// <typeparam name="TCtx">The context type shared by the receive and send pipelines.</typeparam>
+    /// <returns>The service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">The definition is incomplete after both
+    /// configuration and the factory have run, a configuration value is malformed, or a
+    /// Transactional Integration is already registered.</exception>
+    public static IServiceCollection AddTransactionalIntegration<TCtx>(this IServiceCollection services,
+        IConfiguration configuration, Func<TransactionalIntegrationDefinition<TCtx>> factory)
+        where TCtx : Context =>
+        services.AddTransactionalIntegration(
+            TransactionalIntegrationDefinition<TCtx>.BoundTo(configuration, factory));
+
+    /// <summary>Binds a configuration section onto the integration options: every key the section
+    /// carries sets the member it names — the legacy <c>DaprPubSubName</c>/<c>DaprTopicName</c>
+    /// spellings and the composed <see cref="TransactionalIntegrationOptions.Subscription"/>
+    /// shape, whose delegating members are the same values. Runs before the definition's own
+    /// <see cref="TransactionalIntegrationDefinition{TCtx}.Configure"/>, so code wins.</summary>
+    internal static void ApplyConfiguration(TransactionalIntegrationOptions options, IConfiguration configuration)
+    {
+        if (ComponentConfigurationReader.String(configuration, "DaprPubSubName") is { } pubSub)
+            options.DaprPubSubName = pubSub;
+        if (ComponentConfigurationReader.String(configuration, "DaprTopicName") is { } topic)
+            options.DaprTopicName = topic;
+        // The composed shape: an additional way to set the pub/sub and topic, and the shape the
+        // delegating members store through.
+        if (ComponentConfigurationReader.String(configuration, "PubSubName") is { } composedPubSub)
+            options.Subscription.PubSubName = composedPubSub;
+        if (ComponentConfigurationReader.String(configuration, "TopicName") is { } composedTopic)
+            options.Subscription.TopicName = composedTopic;
+        if (ComponentConfigurationReader.TimeSpan(configuration, nameof(TransactionalIntegrationOptions.MaxMessageProcessingTime),
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.MaxMessageProcessingTime)}") is { } processing)
+            options.MaxMessageProcessingTime = processing;
+        if (ComponentConfigurationReader.TimeSpan(configuration, nameof(TransactionalIntegrationOptions.IdleTimeout),
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.IdleTimeout)}") is { } idle)
+            options.IdleTimeout = idle;
+        if (ComponentConfigurationReader.TimeSpan(configuration, nameof(TransactionalIntegrationOptions.PostIdleGracePeriod),
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.PostIdleGracePeriod)}") is { } grace)
+            options.PostIdleGracePeriod = grace;
+        if (ComponentConfigurationReader.Int32(configuration, nameof(TransactionalIntegrationOptions.CallbackPort),
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.CallbackPort)}") is { } port)
+            options.CallbackPort = port;
     }
 
     private static IServiceCollection AddTransactionalIntegrationCore<TCtx>(IServiceCollection services,

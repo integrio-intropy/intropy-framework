@@ -3,6 +3,7 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.Messaging;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -141,6 +142,60 @@ public static class LoaderServiceCollectionExtensions
 
         ComponentRegistration.MarkRegistered(services, "loader");
         return AddLoaderCore(services, options, routes);
+    }
+
+    /// <summary>Registers a loader like the definition overload, with the pub/sub, topic and
+    /// subscription settings supplied by a configuration section. The section's keys bind onto the
+    /// definition's subscription options first — <c>PubSubName</c>, <c>TopicName</c>,
+    /// <c>Unrouted</c>, <c>MaxMessageProcessingTime</c>, <c>ShutdownGracePeriod</c>,
+    /// <c>CallbackPort</c> — then the caller's delegate runs, so code wins over configuration. The
+    /// required pub/sub and topic are satisfied by whichever of the delegate or the section provides
+    /// them; if neither does, registration fails with the existing message, so binding does not
+    /// weaken validation.</summary>
+    /// <remarks>
+    /// The pipeline and context factory are code's to give — configuration carries settings, not
+    /// wiring. A malformed value fails at registration with the member it would configure.
+    /// Only one loader may be registered per service provider.
+    /// </remarks>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="configuration">The section holding the loader's values.</param>
+    /// <param name="factory">Builds the definition the code owns — the pipeline, the context
+    /// factory — and overrides anything configuration set. Leave a member unset (null) to let the
+    /// configuration provide it.</param>
+    /// <typeparam name="TInput">The deserialized input.</typeparam>
+    /// <typeparam name="TOutput">What the loader sends to the external system.</typeparam>
+    /// <typeparam name="TCtx">The pipeline context.</typeparam>
+    /// <returns>The service collection, for chaining.</returns>
+    /// <exception cref="InvalidOperationException">The definition is incomplete after both
+    /// configuration and the delegate have run, a configuration value is malformed, or a loader is
+    /// already registered.</exception>
+    public static IServiceCollection AddLoader<TInput, TOutput, TCtx>(this IServiceCollection services,
+        IConfiguration configuration, Func<LoaderDefinition<TInput, TOutput, TCtx>> factory) where TCtx : Context =>
+        services.AddLoader(LoaderDefinition<TInput, TOutput, TCtx>.BoundTo(configuration, factory));
+
+    /// <summary>Binds a configuration section onto the loader's subscription options: every key the
+    /// section carries sets the member it names, which the delegating members and the composed
+    /// <see cref="SubscriptionOptions"/> share. Runs before the definition's own
+    /// <see cref="LoaderDefinition{TInput,TOutput,TCtx}.Configure"/>, so code wins.</summary>
+    internal static void ApplyConfiguration(LoaderOptions options, IConfiguration configuration)
+    {
+        var optionsName = nameof(LoaderOptions);
+        if (ComponentConfigurationReader.String(configuration, nameof(LoaderOptions.PubSubName)) is { } pubSub)
+            options.PubSubName = pubSub;
+        if (ComponentConfigurationReader.String(configuration, nameof(LoaderOptions.TopicName)) is { } topic)
+            options.TopicName = topic;
+        if (ComponentConfigurationReader.Enum<UnroutedPolicy>(configuration, nameof(LoaderOptions.Unrouted),
+                $"{optionsName}.{nameof(LoaderOptions.Unrouted)}") is { } unrouted)
+            options.Unrouted = unrouted;
+        if (ComponentConfigurationReader.TimeSpan(configuration, nameof(LoaderOptions.MaxMessageProcessingTime),
+                $"{optionsName}.{nameof(LoaderOptions.MaxMessageProcessingTime)}") is { } processing)
+            options.MaxMessageProcessingTime = processing;
+        if (ComponentConfigurationReader.TimeSpan(configuration, nameof(LoaderOptions.ShutdownGracePeriod),
+                $"{optionsName}.{nameof(LoaderOptions.ShutdownGracePeriod)}") is { } shutdown)
+            options.ShutdownGracePeriod = shutdown;
+        if (ComponentConfigurationReader.Int32(configuration, nameof(LoaderOptions.CallbackPort),
+                $"{optionsName}.{nameof(LoaderOptions.CallbackPort)}") is { } port)
+            options.CallbackPort = port;
     }
 
     private static IServiceCollection AddLoaderCore(IServiceCollection services, LoaderOptions options,

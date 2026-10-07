@@ -1,4 +1,5 @@
 using Intropy.Framework.Blocks.Extractor;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Common;
@@ -81,4 +82,37 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
     /// the base <see cref="Context"/>.</summary>
     internal ContextFactory<TCtx> ResolveContextFactory() =>
         ContextFactory ?? ComponentRegistration.DefaultContextFactory<TCtx>("Extractor", nameof(ContextFactory));
+
+    /// <summary>Builds the definition the configuration-based registration registers: the
+    /// configuration supplies the <see cref="SourcePort"/> when the factory's definition leaves it
+    /// unset, then the factory's definition wins for everything it sets.</summary>
+    /// <remarks>
+    /// The section's <c>SourcePort</c> key names the port to sweep. <see cref="Completion"/>
+    /// binds only in code: it carries behavior, not a value configuration can express.
+    /// </remarks>
+    /// <param name="configuration">The section holding the extractor's values.</param>
+    /// <param name="factory">Builds the definition the code owns — the pipeline, the context
+    /// factory — and overrides anything configuration set. Leave a member unset (null) to let the
+    /// configuration provide it.</param>
+    /// <returns>A definition equivalent to the factory's, with the configuration's values as
+    /// defaults.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="configuration"/> or
+    /// <paramref name="factory"/> is null.</exception>
+    internal static ExtractorDefinition<TInput, TOutput, TCtx> BoundTo(IConfiguration configuration,
+        Func<ExtractorDefinition<TInput, TOutput, TCtx>> factory)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(factory);
+        var source = factory();
+        return new ExtractorDefinition<TInput, TOutput, TCtx>
+        {
+            SourcePort = source.SourcePort is { Length: > 0 } port
+                ? port
+                : ComponentConfigurationReader.String(configuration, nameof(SourcePort)),
+            Pipeline = source.Pipeline,
+            ContextFactory = source.ContextFactory,
+            ConfigureJob = source.ConfigureJob,
+            Completion = source.Completion,
+        };
+    }
 }

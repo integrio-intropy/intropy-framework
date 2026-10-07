@@ -4,6 +4,7 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Jobs;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -73,6 +74,24 @@ public static class ExtractorServiceCollectionExtensions
         return AddExtractorCore(services, configurePipeline,
             static (metadata, isRetry) => new Context(metadata, isRetry), configureJob);
     }
+
+    /// <typeparam name="TInput">The deserialized input.</typeparam>
+    /// <typeparam name="TOutput">The published payload.</typeparam>
+    /// <typeparam name="TCtx">The pipeline context.</typeparam>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="configuration">The section holding the extractor's values — its
+    /// <c>SourcePort</c> key names the port to sweep. Each value only sets what the definition does
+    /// not; the factory's definition wins for everything it sets.</param>
+    /// <param name="factory">Builds the definition the code owns — the pipeline, the context
+    /// factory — and overrides anything configuration set. Leave a member unset (null) to let the
+    /// configuration provide it.</param>
+    /// <returns>The service collection, for chaining.</returns>
+    /// <exception cref="InvalidOperationException">The definition is incomplete after both
+    /// configuration and the factory have run, or an extractor is already registered.</exception>
+    public static IServiceCollection AddExtractor<TInput, TOutput, TCtx>(this IServiceCollection services,
+        IConfiguration configuration, Func<ExtractorDefinition<TInput, TOutput, TCtx>> factory)
+        where TCtx : Context =>
+        services.AddExtractor(ExtractorDefinition<TInput, TOutput, TCtx>.BoundTo(configuration, factory));
 
     /// <summary>
     /// Registers one extractor component described by a <paramref name="definition"/>: the pipeline,

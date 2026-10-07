@@ -1,4 +1,5 @@
 using Intropy.Framework.Blocks.Shared;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
@@ -71,19 +72,25 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
     /// <see cref="DaprTopicName"/> is missing, or the callback port is out of range.</exception>
     internal TransactionalIntegrationOptions Validate()
     {
-        if (string.IsNullOrWhiteSpace(DaprPubSubName))
+        var options = new TransactionalIntegrationOptions();
+        Configure?.Invoke(options);
+        // The definition's required names are authoritative when the code set them: configuration
+        // binds first, Configure runs second, and a set definition member beats both. An unset
+        // member (the configuration-bound shape) defers to the options the merged Configure has
+        // already bound — then the composed Subscription shape settles against the legacy members.
+        if (NonEmpty(DaprPubSubName))
+            options.DaprPubSubName = DaprPubSubName;
+        if (NonEmpty(DaprTopicName))
+            options.DaprTopicName = DaprTopicName;
+        options.ConsolidateSubscription();
+        if (string.IsNullOrEmpty(options.DaprPubSubName))
             throw new InvalidOperationException(
                 "TransactionalIntegration composition failed: DaprPubSubName — the receive side needs the Dapr " +
                 "pub/sub component to publish swept files to; set DaprPubSubName.");
-        if (string.IsNullOrWhiteSpace(DaprTopicName))
+        if (string.IsNullOrEmpty(options.DaprTopicName))
             throw new InvalidOperationException(
                 "TransactionalIntegration composition failed: DaprTopicName — the receive side needs the topic to " +
                 "publish swept files to (the send side consumes it); set DaprTopicName.");
-
-        var options = new TransactionalIntegrationOptions();
-        Configure?.Invoke(options);
-        options.DaprPubSubName = DaprPubSubName;
-        options.DaprTopicName = DaprTopicName;
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), "definition");
         return options;
@@ -94,4 +101,45 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
     internal ContextFactory<TCtx> ResolveContextFactory() =>
         ContextFactory ?? ComponentRegistration.DefaultContextFactory<TCtx>(
             "TransactionalIntegration", nameof(ContextFactory));
+
+    /// <summary>Builds the definition the configuration-based registration registers: the section's
+    /// key values bind onto the options surface before the definition's own <see cref="Configure"/>
+    /// runs, so code wins over configuration, and a definition member the factory sets stays
+    /// authoritative over both. <see cref="Completion"/> binds only in code: it carries behavior,
+    /// not a value configuration can express.</summary>
+    /// <param name="configuration">The section holding the integration's values; the pub/sub and
+    /// topic are read from <c>DaprPubSubName</c>/<c>DaprTopicName</c> or, when absent, from
+    /// <c>PubSubName</c>/<c>TopicName</c>.</param>
+    /// <param name="factory">Builds the definition the code owns — the context factory, the source
+    /// port, and any value configuration must not overrule. Leave a member unset (null) to defer it
+    /// to the configuration.</param>
+    /// <returns>A definition equivalent to the factory's, with the configuration supplying the
+    /// values the definition leaves unset.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="configuration"/> or
+    /// <paramref name="factory"/> is null.</exception>
+    internal static TransactionalIntegrationDefinition<TCtx> BoundTo(IConfiguration configuration,
+        Func<TransactionalIntegrationDefinition<TCtx>> factory)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(factory);
+        var source = factory();
+        return new TransactionalIntegrationDefinition<TCtx>
+        {
+            // Unset members pass through: Validate() defers them to the options the merged
+            // Configure has already bound the section's values onto.
+            DaprPubSubName = source.DaprPubSubName,
+            DaprTopicName = source.DaprTopicName,
+            Configure = options =>
+            {
+                TransactionalIntegrationServiceCollectionExtensions.ApplyConfiguration(options, configuration);
+                source.Configure?.Invoke(options);
+            },
+            SourcePort = source.SourcePort,
+            Completion = source.Completion,
+            ContextFactory = source.ContextFactory,
+            ConfigureJob = source.ConfigureJob,
+        };
+    }
+
+    private static bool NonEmpty(string? value) => !string.IsNullOrEmpty(value);
 }
