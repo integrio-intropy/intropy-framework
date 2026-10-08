@@ -42,37 +42,48 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void
-        AddTransactionalIntegration_ShouldThrowInvalidOperationException_WhenDaprPubSubNameIsNotConfigured()
+    public void AddTransactionalIntegration_DefaultsUnsetNames_ToTheInternalHopTheTopologyGenerates()
     {
-        // Verifies that DaprPubSubName is required
         var services = GetServices();
 
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            services.AddTransactionalIntegration(options =>
-            {
-                options.DaprTopicName = "test-topic";
-                    // DaprPubSubName intentionally not set
-            }));
+        services.AddTransactionalIntegration(_ => { });
 
-        Assert.Equal("DaprPubSubName must be configured.", exception.Message);
+        var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
+        Assert.Equal("internal-orders-integration", options.DaprPubSubName);
+        Assert.Equal("hop", options.DaprTopicName);
+        // Both shapes read the defaults.
+        Assert.Equal("internal-orders-integration", options.Subscription.PubSubName);
+        Assert.Equal("hop", options.Subscription.TopicName);
     }
 
     [Fact]
-    public void
-        AddTransactionalIntegration_ShouldThrowInvalidOperationException_WhenDaprTopicNameIsNotConfigured()
+    public void AddTransactionalIntegration_DefaultsOnlyTheUnsetName()
     {
-        // Verifies that DaprTopicName is required
         var services = GetServices();
 
-        var exception = Assert.Throws<InvalidOperationException>(() =>
-            services.AddTransactionalIntegration(options =>
-            {
-                options.DaprPubSubName = "test-pubsub";
-                // DaprTopicName intentionally not set
-            }));
+        services.AddTransactionalIntegration(options => options.DaprTopicName = "test-topic");
 
-        Assert.Equal("DaprTopicName must be configured.", exception.Message);
+        var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
+        Assert.Equal("internal-orders-integration", options.DaprPubSubName);
+        Assert.Equal("test-topic", options.DaprTopicName);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_NamesTheDefaultPubSubAfterTheAppId_ForADottedComponentName()
+    {
+        // The topology names the hop after the app id: the component name with dots as dashes.
+        var services = new ServiceCollection();
+        services.AddSingleton(_ => new DaprClientBuilder().Build());
+        services.AddIntropyFramework(options =>
+        {
+            options.ComponentName = "int1055.order-sync";
+            options.ServiceNamespace = "example";
+        });
+
+        services.AddTransactionalIntegration(_ => { });
+
+        var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
+        Assert.Equal("internal-int1055-order-sync", options.DaprPubSubName);
     }
 
     [Fact]

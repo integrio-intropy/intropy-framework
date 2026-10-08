@@ -128,7 +128,7 @@ public class LoaderSubscriptionTests
     }
 
     [Fact]
-    public void MissingRequiredValue_InConfigurationAndCode_FailsAtRegistration()
+    public void ValueUnsetInConfigurationAndCode_StaysUnset()
     {
         var services = new ServiceCollection();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -136,16 +136,17 @@ public class LoaderSubscriptionTests
             ["Loader:TopicName"] = "config-topic",
         }).Build();
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            services.AddLoader<int, int, Context>(configuration.GetSection("Loader"),
-                () => new LoaderDefinition<int, int, Context>
-                {
-                    PubSubName = null!, // not set in code, not in configuration
-                    TopicName = null!, // filled from configuration
-                    Pipeline = (_, _) => null!,
-                }));
+        services.AddLoader<int, int, Context>(configuration.GetSection("Loader"),
+            () => new LoaderDefinition<int, int, Context>
+            {
+                // PubSubName: not set in code, not in configuration — any pub/sub is accepted.
+                // TopicName: filled from configuration.
+                Pipeline = (_, _) => null!,
+            });
 
-        Assert.Contains("Loader composition failed: PubSubName", error.Message);
+        var options = services.BuildServiceProvider().GetRequiredService<LoaderOptions>();
+        Assert.Equal("", options.PubSubName);
+        Assert.Equal("config-topic", options.TopicName);
     }
 
     [Fact]

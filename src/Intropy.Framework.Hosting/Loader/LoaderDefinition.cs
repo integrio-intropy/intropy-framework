@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Intropy.Framework.Blocks.Loader;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,8 +11,8 @@ namespace Intropy.Framework.Hosting.Loader;
 /// <summary>
 /// Describes a loader component for
 /// <see cref="LoaderServiceCollectionExtensions.AddLoader{TInput,TOutput,TCtx}(IServiceCollection, LoaderDefinition{TInput,TOutput,TCtx})"/>:
-/// one pipeline for every message on the topic, the pub/sub and topic it consumes, and the
-/// subscription settings around them. The definition is validated when it is registered, so a
+/// one pipeline for every message the subscription delivers, and the subscription settings around
+/// it. The definition is validated when it is registered, so a
 /// misconfigured loader fails at startup with the member that is wrong and how to fix it.
 /// </summary>
 /// <remarks>
@@ -22,8 +23,6 @@ namespace Intropy.Framework.Hosting.Loader;
 /// <code>
 /// services.AddLoader(new LoaderDefinition&lt;OrderCreated, OrderCreated, Context&gt;
 /// {
-///     PubSubName = "pubsub",
-///     TopicName = "orders",
 ///     Pipeline = (builder, services) =&gt; builder
 ///         .WithDeserializer&lt;OrderDeserializer&gt;()
 ///         .WithIdempotency(),
@@ -35,15 +34,19 @@ namespace Intropy.Framework.Hosting.Loader;
 /// <typeparam name="TCtx">The pipeline context.</typeparam>
 public sealed class LoaderDefinition<TInput, TOutput, TCtx> where TCtx : Context
 {
-    /// <summary>The Dapr pub/sub component to subscribe through. Required.</summary>
-    public required string PubSubName { get; init; }
+    /// <summary>The Dapr pub/sub component the loader expects deliveries from. Optional: the
+    /// component's Dapr Subscription resource decides what is delivered; when set, a delivery from
+    /// another pub/sub is refused as a mismatch.</summary>
+    public string? PubSubName { get; init; }
 
-    /// <summary>The topic the loader consumes. Required.</summary>
-    public required string TopicName { get; init; }
+    /// <summary>The topic the loader expects deliveries from. Optional: the component's Dapr
+    /// Subscription resource decides what is delivered; when set, a delivery from another topic is
+    /// refused as a mismatch.</summary>
+    public string? TopicName { get; init; }
 
     /// <summary>The rest of the subscription: unrouted policy, timeouts, callback port. The
-    /// definition's <see cref="PubSubName"/> and <see cref="TopicName"/> are authoritative —
-    /// set through them, not here.</summary>
+    /// definition's <see cref="PubSubName"/> and <see cref="TopicName"/>, when set, are
+    /// authoritative over what is set here.</summary>
     public Action<LoaderOptions>? Configure { get; init; }
 
     /// <summary>Configures the pipeline builder, given the message's scope. This is where the
@@ -62,9 +65,7 @@ public sealed class LoaderDefinition<TInput, TOutput, TCtx> where TCtx : Context
     /// <see cref="PubSubName"/>/<see cref="TopicName"/> are applied on top when the code set them,
     /// so the final options always carry what this definition meant.</summary>
     /// <returns>The subscription options to register.</returns>
-    /// <exception cref="InvalidOperationException"><see cref="Pipeline"/> is missing, or neither
-    /// the definition, its <see cref="Configure"/>, nor a bound configuration section provides the
-    /// pub/sub or topic.</exception>
+    /// <exception cref="InvalidOperationException"><see cref="Pipeline"/> is missing.</exception>
     internal LoaderOptions Validate()
     {
         if (Pipeline is null)
@@ -73,20 +74,14 @@ public sealed class LoaderDefinition<TInput, TOutput, TCtx> where TCtx : Context
 
         var options = new LoaderOptions();
         Configure?.Invoke(options);
-        // The definition's required names are authoritative when the code set them: configuration
+        // The definition's names are authoritative when the code set them: configuration
         // binds first, Configure runs second, and a set definition member beats both. An unset
         // member (the configuration-bound shape) defers to the options the merged Configure has
-        // already bound — but the value this definition registered is always validated.
+        // already bound. Unset everywhere, the loader takes what its Subscription delivers.
         if (NonEmpty(PubSubName))
             options.PubSubName = PubSubName;
         if (NonEmpty(TopicName))
             options.TopicName = TopicName;
-        if (string.IsNullOrWhiteSpace(options.PubSubName))
-            throw new InvalidOperationException(
-                "Loader composition failed: PubSubName — the loader needs the Dapr pub/sub component to subscribe through; set PubSubName.");
-        if (string.IsNullOrWhiteSpace(options.TopicName))
-            throw new InvalidOperationException(
-                "Loader composition failed: TopicName — the loader needs the topic to consume; set TopicName.");
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort, nameof(LoaderOptions), "definition");
         return options;
     }
@@ -101,7 +96,7 @@ public sealed class LoaderDefinition<TInput, TOutput, TCtx> where TCtx : Context
     /// a malformed value fails at registration, with the member it would configure.</param>
     /// <param name="factory">Builds the definition the code owns — the pipeline, the context
     /// factory, and any value configuration must not overrule. Leave a member unset (null) to defer
-    /// it to the configuration — including a required pub/sub or topic the section provides.</param>
+    /// it to the configuration — including a pub/sub or topic the section provides.</param>
     /// <returns>A definition equivalent to the factory's, with the configuration supplying the
     /// values the definition leaves unset.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="configuration"/> or
@@ -128,5 +123,5 @@ public sealed class LoaderDefinition<TInput, TOutput, TCtx> where TCtx : Context
         };
     }
 
-    private static bool NonEmpty(string? value) => !string.IsNullOrWhiteSpace(value);
+    private static bool NonEmpty([NotNullWhen(true)] string? value) => !string.IsNullOrWhiteSpace(value);
 }

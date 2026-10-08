@@ -34,7 +34,7 @@ builder.Services.AddTransactionalIntegration(opts =>
 
 To export traces and metrics, configure OpenTelemetry with [Intropy.Telemetry](https://github.com/integrio-intropy/intropy-telemetry). Use the component name as its `ServiceName`, and add the framework's meters. See [Observability](concepts/observability.md#collecting-the-telemetry).
 
-`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `JobRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are required.
+`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `JobRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are optional. If you don't set them, they default to the internal hop that the system topology generates for the component: `internal-<component>` (the component name with dots replaced by dashes) and `hop`.
 
 ## Define your data models
 

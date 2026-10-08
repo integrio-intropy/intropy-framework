@@ -22,14 +22,27 @@ public class TransactionalIntegrationOptions
     public SubscriptionOptions Subscription => _subscription;
 
     /// <summary>
-    /// The name of the Dapr PubSub component to use.
+    /// The name of the Dapr PubSub component to use. Optional: unset, it is the internal hop's
+    /// pub/sub the system topology generates for the component, <c>internal-&lt;component&gt;</c>
+    /// (the component name with dots as dashes).
     /// </summary>
     public string DaprPubSubName { get; set; } = "";
 
     /// <summary>
-    /// The name of the topic to use.
+    /// The name of the topic to use. Optional: unset, it is the internal hop's topic the system
+    /// topology generates for the component, <c>hop</c>.
     /// </summary>
     public string DaprTopicName { get; set; } = "";
+
+    /// <summary>The internal hop's topic the system topology generates for every transactional
+    /// integration.</summary>
+    internal const string InternalHopTopicName = "hop";
+
+    /// <summary>The internal hop's pub/sub the system topology generates for
+    /// <paramref name="componentName"/>: scoped to the component alone, named after its app id
+    /// (the component name with dots as dashes).</summary>
+    internal static string InternalHopPubSubName(string componentName) =>
+        $"internal-{componentName.Replace('.', '-')}";
 
 
     /// <summary>
@@ -83,6 +96,18 @@ public class TransactionalIntegrationOptions
             _subscription.PubSubName);
         DaprTopicName = Consolidate(nameof(DaprTopicName), DaprTopicName, nameof(SubscriptionOptions.TopicName),
             _subscription.TopicName);
+        _subscription.PubSubName = DaprPubSubName;
+        _subscription.TopicName = DaprTopicName;
+    }
+
+    /// <summary>Fills the pub/sub and topic left unset with the internal hop the system topology
+    /// generates for <paramref name="componentName"/>, in both shapes.</summary>
+    internal void UseInternalHopDefaults(string componentName)
+    {
+        if (string.IsNullOrEmpty(DaprPubSubName))
+            DaprPubSubName = InternalHopPubSubName(componentName);
+        if (string.IsNullOrEmpty(DaprTopicName))
+            DaprTopicName = InternalHopTopicName;
         _subscription.PubSubName = DaprPubSubName;
         _subscription.TopicName = DaprTopicName;
     }

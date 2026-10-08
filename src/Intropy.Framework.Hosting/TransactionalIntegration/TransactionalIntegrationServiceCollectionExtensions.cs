@@ -24,16 +24,17 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// See <see cref="AddTransactionalIntegration{TCtx}(IServiceCollection, ContextFactory{TCtx}, Action{TransactionalIntegrationOptions}, Action{JobOptions}?)"/>.
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
-    /// <param name="configureOptions">Action to configure the integration options.</param>
+    /// <param name="configureOptions">Optional action to configure the integration options; without
+    /// it, every option keeps its default, the internal hop included.</param>
     /// <param name="configureJob">Optional runner settings: the job name (the trace activity
     /// name, default: the component name) and the sidecar timeouts.</param>
     /// <returns>The service collection for chaining.</returns>
     /// <exception cref="InvalidOperationException">A Transactional Integration is already
     /// registered on this service provider.</exception>
     public static IServiceCollection AddTransactionalIntegration(this IServiceCollection services,
-        Action<TransactionalIntegrationOptions> configureOptions, Action<JobOptions>? configureJob = null) =>
+        Action<TransactionalIntegrationOptions>? configureOptions = null, Action<JobOptions>? configureJob = null) =>
         services.AddTransactionalIntegration<Context>((metadata, isRetry) => new Context(metadata, isRetry),
-            configureOptions, configureJob);
+            configureOptions ?? (_ => { }), configureJob);
 
     /// <summary>
     /// Adds Transactional Integration services to the service collection.
@@ -79,16 +80,11 @@ public static class TransactionalIntegrationServiceCollectionExtensions
 
         var options = new TransactionalIntegrationOptions();
         configureOptions(options);
-        // Settle the composed Subscription shape against the legacy members before the required
-        // checks: a value set through either shape satisfies them, a value set through both with
-        // different values fails here, with the members named.
+        // Settle the composed Subscription shape against the legacy members: a value set through
+        // both with different values fails here, with the members named. A name set through
+        // neither defaults to the internal hop when the options are resolved.
         options.ConsolidateSubscription();
 
-        // Validate required options
-        if (string.IsNullOrEmpty(options.DaprPubSubName))
-            throw new InvalidOperationException("DaprPubSubName must be configured.");
-        if (string.IsNullOrEmpty(options.DaprTopicName))
-            throw new InvalidOperationException("DaprTopicName must be configured.");
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), nameof(configureOptions));
 
@@ -97,8 +93,8 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds a Transactional Integration described by a <paramref name="definition"/>: the pub/sub,
-    /// topic, source port, context factory and runner settings in one object, validated at
+    /// Adds a Transactional Integration described by a <paramref name="definition"/>: the optional
+    /// pub/sub and topic, source port, context factory and runner settings in one object, validated at
     /// registration so a misconfigured integration fails at startup with the member that is wrong.
     /// See <see cref="TransactionalIntegrationDefinition{TCtx}"/>.
     /// </summary>
@@ -184,13 +180,22 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         TransactionalIntegrationOptions options, ContextFactory<TCtx> contextFactory,
         Action<JobOptions>? configureJob) where TCtx : Context
     {
-        // Register options
-        services.AddSingleton(options);
+        // Register options. A pub/sub or topic left unset is the internal hop the system topology
+        // generates for the component, named after its identity, which resolves from DI.
+        services.AddSingleton(sp =>
+        {
+            if (string.IsNullOrEmpty(options.DaprPubSubName) || string.IsNullOrEmpty(options.DaprTopicName))
+                options.UseInternalHopDefaults(sp.GetRequiredService<FrameworkOptions>().ComponentName);
+            return options;
+        });
 
         // The receive side: publish each swept file to the integration's own topic.
-        services.TryAddSingleton<EnqueueStep<TCtx>>(sp => new DaprTopicEnqueuer<TCtx>(
-            sp.GetRequiredService<DaprClient>(), options.DaprPubSubName, options.DaprTopicName,
-            sp.GetRequiredService<FrameworkOptions>()));
+        services.TryAddSingleton<EnqueueStep<TCtx>>(sp =>
+        {
+            var resolved = sp.GetRequiredService<TransactionalIntegrationOptions>();
+            return new DaprTopicEnqueuer<TCtx>(sp.GetRequiredService<DaprClient>(), resolved.DaprPubSubName,
+                resolved.DaprTopicName, sp.GetRequiredService<FrameworkOptions>());
+        });
         services.TryAddSingleton<IReceivePipeline<TCtx>>(sp =>
         {
             var frameworkOptions = sp.GetRequiredService<FrameworkOptions>();

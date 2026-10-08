@@ -15,7 +15,9 @@ public sealed class LoaderOptions
     /// delegate to it, so setting through one shape shows through the other.</summary>
     public SubscriptionOptions Subscription { get; } = new() { MaxMessageProcessingTime = TimeSpan.FromMinutes(1) };
 
-    /// <summary>The Dapr pub/sub component to subscribe through. Required. Delegates to
+    /// <summary>The Dapr pub/sub component the loader expects deliveries from. Optional: the
+    /// component's Dapr Subscription resource decides what is delivered; when set, a delivery from
+    /// another pub/sub is refused as a mismatch. Delegates to
     /// <see cref="SubscriptionOptions.PubSubName"/> on <see cref="Subscription"/>.</summary>
     public string PubSubName
     {
@@ -23,7 +25,9 @@ public sealed class LoaderOptions
         set => Subscription.PubSubName = value;
     }
 
-    /// <summary>The topic the loader consumes. Required. Delegates to
+    /// <summary>The topic the loader expects deliveries from. Optional: the component's Dapr
+    /// Subscription resource decides what is delivered; when set, a delivery from another topic is
+    /// refused as a mismatch. Delegates to
     /// <see cref="SubscriptionOptions.TopicName"/> on <see cref="Subscription"/>.</summary>
     public string TopicName
     {

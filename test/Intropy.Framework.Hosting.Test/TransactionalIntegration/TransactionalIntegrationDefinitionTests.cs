@@ -25,33 +25,19 @@ public class TransactionalIntegrationDefinitionTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public void MissingDaprPubSubName_FailsAtRegistration(string? pubSubName)
+    public void UnsetNames_DefaultToTheInternalHopTheTopologyGenerates(string? name)
     {
         var services = GetServices();
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            services.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>
-            {
-                DaprPubSubName = pubSubName!,
-                DaprTopicName = "orders.received",
-            }));
+        services.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>
+        {
+            DaprPubSubName = name,
+            DaprTopicName = name,
+        });
 
-        Assert.Contains("TransactionalIntegration composition failed: DaprPubSubName", error.Message);
-    }
-
-    [Fact]
-    public void MissingDaprTopicName_FailsAtRegistration()
-    {
-        var services = GetServices();
-
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            services.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>
-            {
-                DaprPubSubName = "test-pubsub",
-                DaprTopicName = "",
-            }));
-
-        Assert.Contains("TransactionalIntegration composition failed: DaprTopicName", error.Message);
+        var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
+        Assert.Equal("internal-orders-integration", options.DaprPubSubName);
+        Assert.Equal("hop", options.DaprTopicName);
     }
 
     [Theory]

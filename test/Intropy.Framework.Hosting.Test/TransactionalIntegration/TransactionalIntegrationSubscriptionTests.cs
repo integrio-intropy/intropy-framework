@@ -159,10 +159,11 @@ public class TransactionalIntegrationSubscriptionTests
 
         var error = Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(options =>
         {
-            // DaprPubSubName intentionally not set — the registration is rejected.
+            // The two shapes disagree — the registration is rejected.
             options.DaprTopicName = "test-topic";
+            options.Subscription.TopicName = "other-topic";
         }));
-        Assert.Equal("DaprPubSubName must be configured.", error.Message);
+        Assert.Contains("DaprTopicName and Subscription.TopicName disagree", error.Message);
 
         services.AddTransactionalIntegration(options =>
         {
@@ -302,7 +303,7 @@ public class TransactionalIntegrationSubscriptionTests
     }
 
     [Fact]
-    public void MissingRequiredValue_InConfigurationAndCode_FailsAtRegistration()
+    public void ValueUnsetInConfigurationAndCode_DefaultsToTheInternalHop()
     {
         var services = GetServices();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -310,15 +311,16 @@ public class TransactionalIntegrationSubscriptionTests
             ["TransactionalIntegration:DaprTopicName"] = "config-topic",
         }).Build();
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            services.AddTransactionalIntegration<Context>(configuration.GetSection("TransactionalIntegration"),
-                () => new TransactionalIntegrationDefinition<Context>
-                {
-                    DaprPubSubName = null!, // not set in code, not in configuration
-                    DaprTopicName = null!, // filled from configuration
-                }));
+        services.AddTransactionalIntegration<Context>(configuration.GetSection("TransactionalIntegration"),
+            () => new TransactionalIntegrationDefinition<Context>
+            {
+                // DaprPubSubName: not set in code, not in configuration — the internal hop's.
+                // DaprTopicName: filled from configuration.
+            });
 
-        Assert.Contains("DaprPubSubName", error.Message);
+        var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
+        Assert.Equal("internal-orders-integration", options.DaprPubSubName);
+        Assert.Equal("config-topic", options.DaprTopicName);
     }
 
     private static ServiceCollection GetServices()

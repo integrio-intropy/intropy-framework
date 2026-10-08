@@ -8,10 +8,14 @@ namespace Intropy.Framework.Hosting.Common;
 /// through this one object. Both always end up the same values.</summary>
 public sealed class SubscriptionOptions
 {
-    /// <summary>The Dapr pub/sub component to subscribe through. Required.</summary>
+    /// <summary>The Dapr pub/sub component the subscription is on. Empty means any: the component
+    /// takes what its Dapr Subscription resource delivers. Whether it is required is the
+    /// component's to say.</summary>
     public string PubSubName { get; set; } = "";
 
-    /// <summary>The topic the component consumes. Required.</summary>
+    /// <summary>The topic the component consumes. Empty means any: the component takes what its
+    /// Dapr Subscription resource delivers. Whether it is required is the component's to
+    /// say.</summary>
     public string TopicName { get; set; } = "";
 
     /// <summary>How long one message may run before its pipeline is cancelled and the message is

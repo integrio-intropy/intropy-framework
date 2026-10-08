@@ -136,8 +136,6 @@ public static class LoaderServiceCollectionExtensions
 
         var options = new LoaderOptions();
         configure(options);
-        ArgumentException.ThrowIfNullOrWhiteSpace(options.PubSubName, $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.PubSubName)}");
-        ArgumentException.ThrowIfNullOrWhiteSpace(options.TopicName, $"{nameof(LoaderOptions)}.{nameof(LoaderOptions.TopicName)}");
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort, nameof(LoaderOptions), nameof(configure));
 
         ComponentRegistration.MarkRegistered(services, "loader");
@@ -149,9 +147,8 @@ public static class LoaderServiceCollectionExtensions
     /// definition's subscription options first — <c>PubSubName</c>, <c>TopicName</c>,
     /// <c>Unrouted</c>, <c>MaxMessageProcessingTime</c>, <c>ShutdownGracePeriod</c>,
     /// <c>CallbackPort</c> — then the caller's delegate runs, so code wins over configuration. The
-    /// required pub/sub and topic are satisfied by whichever of the delegate or the section provides
-    /// them; if neither does, registration fails with the existing message, so binding does not
-    /// weaken validation.</summary>
+    /// pub/sub and topic are optional: if neither the delegate nor the section provides them, the
+    /// loader takes whatever its Dapr Subscription delivers.</summary>
     /// <remarks>
     /// The pipeline and context factory are code's to give — configuration carries settings, not
     /// wiring. A malformed value fails at registration with the member it would configure.

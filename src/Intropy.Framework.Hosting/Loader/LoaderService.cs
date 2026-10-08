@@ -46,7 +46,7 @@ internal sealed class LoaderService(
 
         _logger.LogInformation(
             "Loader {Component} serving the Dapr app callback on port {Port} for topic {Topic} on {PubSub}; routes: {Routes}; unrouted messages: {Unrouted}",
-            componentName, _subscription.Port, options.TopicName, options.PubSubName,
+            componentName, _subscription.Port, OrSubscription(options.TopicName), OrSubscription(options.PubSubName),
             string.Join(", ", routes.Routes.Select(r => r.Name)), routes.IsRouting ? options.Unrouted.ToString() : "n/a");
     }
 
@@ -61,4 +61,7 @@ internal sealed class LoaderService(
         if (_subscription is not null)
             await _subscription.DisposeAsync();
     }
+
+    /// <summary>The name for the log; unset means whatever the component's Subscription delivers.</summary>
+    private static string OrSubscription(string name) => name.Length > 0 ? name : "(per Subscription)";
 }

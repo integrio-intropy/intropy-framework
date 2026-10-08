@@ -110,13 +110,17 @@ internal static class HostingMetrics
     internal static IDisposable TrackActiveMessages(string componentName, string pubSubName, string topic,
         Func<int> count)
     {
-        var registration = new InFlightRegistration(new TagList
+        var tags = new TagList
         {
             { MessagingAttributes.System, MessagingAttributes.DaprSystem },
-            { MessagingAttributes.DestinationName, topic },
-            { MessagingAttributes.PubSubName, pubSubName },
             { MessagingAttributes.ComponentName, componentName }
-        }, count);
+        };
+        // A consumer that takes whatever its Subscription delivers has no single topic to name.
+        if (topic.Length > 0)
+            tags.Add(MessagingAttributes.DestinationName, topic);
+        if (pubSubName.Length > 0)
+            tags.Add(MessagingAttributes.PubSubName, pubSubName);
+        var registration = new InFlightRegistration(tags, count);
         InFlightRegistrations.TryAdd(registration, 0);
         return registration;
     }

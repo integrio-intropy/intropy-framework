@@ -19,8 +19,8 @@ internal delegate Task<HandledMessage> MessageHandler(IncomingMessage message, A
 internal readonly record struct HandledMessage(PipelineOutcome Outcome, string? Route = null);
 
 /// <summary>What a <see cref="MessageConsumer"/> consumes and how long it gives each message.</summary>
-/// <param name="PubSubName">The pub/sub component its subscription is on.</param>
-/// <param name="TopicName">The topic it consumes.</param>
+/// <param name="PubSubName">The pub/sub component its subscription is on; empty to accept any.</param>
+/// <param name="TopicName">The topic it consumes; empty to accept any.</param>
 /// <param name="MaxMessageProcessingTime">How long one message may run before it is cancelled and
 /// left for redelivery.</param>
 /// <param name="ShutdownGracePeriod">How long messages in flight may finish when the consumer
@@ -90,10 +90,10 @@ internal sealed class MessageConsumer : IDisposable
     internal async Task<TopicEventResponse> HandleAsync(TopicEventRequest request, CancellationToken callCancellation,
         ActivityContext delivery = default)
     {
-        // The subscription lives in a declarative resource the consumer cannot see: a delivery for
-        // another topic means the two disagree. Leave it for redelivery, loudly, rather than lose it.
-        if (!string.Equals(request.PubsubName, _settings.PubSubName, StringComparison.Ordinal) ||
-            !string.Equals(request.Topic, _settings.TopicName, StringComparison.Ordinal))
+        // The subscription lives in a declarative resource the consumer cannot see: when the
+        // consumer names its topic too, a delivery for another topic means the two disagree. Leave
+        // it for redelivery, loudly, rather than lose it.
+        if (!Expects(_settings.PubSubName, request.PubsubName) || !Expects(_settings.TopicName, request.Topic))
         {
             RejectUnexpectedSubscription(IncomingMessage.From(request), delivery);
             return Retry;
@@ -117,6 +117,9 @@ internal sealed class MessageConsumer : IDisposable
             _inFlight.Exit();
         }
     }
+
+    private static bool Expects(string expected, string delivered) =>
+        expected.Length == 0 || string.Equals(delivered, expected, StringComparison.Ordinal);
 
     private void RejectUnexpectedSubscription(IncomingMessage message, ActivityContext delivery)
     {

@@ -16,8 +16,8 @@ namespace Intropy.Framework.Hosting.Test.Loader;
 
 /// <summary>
 /// The <see cref="LoaderDefinition{TInput,TOutput,TCtx}"/> registration: validated at registration
-/// (missing pipeline, pub/sub and topic; out-of-range callback port) so misconfiguration fails at
-/// startup with the member that is wrong, registering equivalently to the lambda overload, keeping
+/// (missing pipeline, out-of-range callback port) so misconfiguration fails at startup with the
+/// member that is wrong, the pub/sub and topic optional, registering equivalently to the lambda overload, keeping
 /// the definition's pub/sub and topic authoritative over <c>Configure</c>, and still guarded by the
 /// one-loader-per-provider rule.
 /// </summary>
@@ -43,35 +43,22 @@ public class LoaderDefinitionTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData(" ")]
-    public void MissingPubSubName_FailsAtRegistration(string? pubSubName)
+    public void UnsetPubSubAndTopic_Register_ToTakeWhatTheSubscriptionDelivers(string? name)
     {
+        // The component's Dapr Subscription resource decides what is delivered; the loader need
+        // not repeat it.
         var services = new ServiceCollection();
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            services.AddLoader(new LoaderDefinition<int, int, Context>
-            {
-                PubSubName = pubSubName!,
-                TopicName = LoaderHost.Topic,
-                Pipeline = (_, _) => null!,
-            }));
+        services.AddLoader(new LoaderDefinition<int, int, Context>
+        {
+            PubSubName = name,
+            TopicName = name,
+            Pipeline = (_, _) => null!,
+        });
 
-        Assert.Contains("Loader composition failed: PubSubName", error.Message);
-    }
-
-    [Fact]
-    public void MissingTopicName_FailsAtRegistration()
-    {
-        var services = new ServiceCollection();
-
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            services.AddLoader(new LoaderDefinition<int, int, Context>
-            {
-                PubSubName = LoaderHost.PubSub,
-                TopicName = "",
-                Pipeline = (_, _) => null!,
-            }));
-
-        Assert.Contains("Loader composition failed: TopicName", error.Message);
+        var settings = services.BuildServiceProvider().GetRequiredService<MessageConsumerSettings>();
+        Assert.Equal("", settings.PubSubName);
+        Assert.Equal("", settings.TopicName);
     }
 
     [Theory]
@@ -195,10 +182,10 @@ public class LoaderDefinitionTests
             new LoaderDefinition<int, int, Context>
             {
                 PubSubName = LoaderHost.PubSub,
-                TopicName = "",
-                Pipeline = (_, _) => null!,
+                TopicName = LoaderHost.Topic,
+                Pipeline = null!,
             }));
-        Assert.Contains("TopicName", error.Message);
+        Assert.Contains("Pipeline", error.Message);
 
         services.AddLoader(new LoaderDefinition<int, int, Context>
         {

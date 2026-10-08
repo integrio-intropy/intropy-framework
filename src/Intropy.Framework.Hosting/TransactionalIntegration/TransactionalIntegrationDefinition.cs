@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Intropy.Framework.Blocks.Shared;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,8 +20,6 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <code>
 /// services.AddTransactionalIntegration(new TransactionalIntegrationDefinition&lt;OrderContext&gt;
 /// {
-///     DaprPubSubName = "pubsub",
-///     DaprTopicName = "orders.received",
 ///     SourcePort = "orders-inbox",
 ///     ContextFactory = (metadata, isRetry) =&gt; new OrderContext(metadata, isRetry),
 /// });
@@ -30,18 +29,20 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Context
 {
     /// <summary>The name of the Dapr pub/sub component the receive side publishes swept files to.
-    /// Required. (Member name mirrors
+    /// Optional: unset, it is the internal hop's pub/sub the system topology generates for the
+    /// component. (Member name mirrors
     /// <see cref="TransactionalIntegrationOptions.DaprPubSubName"/>.)</summary>
-    public required string DaprPubSubName { get; init; }
+    public string? DaprPubSubName { get; init; }
 
     /// <summary>The name of the topic the receive side publishes swept files to, and the sidecar
-    /// pushes back to the send side. Required. (Member name mirrors
+    /// pushes back to the send side. Optional: unset, it is the internal hop's topic the system
+    /// topology generates for the component. (Member name mirrors
     /// <see cref="TransactionalIntegrationOptions.DaprTopicName"/>.)</summary>
-    public required string DaprTopicName { get; init; }
+    public string? DaprTopicName { get; init; }
 
     /// <summary>The rest of the integration options: idle timeouts, message processing time, callback
-    /// port. The definition's <see cref="DaprPubSubName"/> and <see cref="DaprTopicName"/> are
-    /// authoritative — set through them, not here.</summary>
+    /// port. The definition's <see cref="DaprPubSubName"/> and <see cref="DaprTopicName"/>, when set,
+    /// are authoritative over what is set here.</summary>
     public Action<TransactionalIntegrationOptions>? Configure { get; init; }
 
     /// <summary>The port the component sweeps, as declared in the system's topology; the
@@ -65,16 +66,16 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
     public Action<JobOptions>? ConfigureJob { get; init; }
 
     /// <summary>Checks the definition and builds the validated integration options: the
-    /// <see cref="Configure"/> tweaks with the definition's required pub/sub and topic applied last,
-    /// so the final options are always the ones this definition validated.</summary>
+    /// <see cref="Configure"/> tweaks with the definition's pub/sub and topic applied last, so the
+    /// final options are always the ones this definition validated.</summary>
     /// <returns>The integration options to register.</returns>
-    /// <exception cref="InvalidOperationException"><see cref="DaprPubSubName"/> or
-    /// <see cref="DaprTopicName"/> is missing, or the callback port is out of range.</exception>
+    /// <exception cref="InvalidOperationException">The pub/sub or topic is set in both option
+    /// shapes with different values, or the callback port is out of range.</exception>
     internal TransactionalIntegrationOptions Validate()
     {
         var options = new TransactionalIntegrationOptions();
         Configure?.Invoke(options);
-        // The definition's required names are authoritative when the code set them: configuration
+        // The definition's names are authoritative when the code set them: configuration
         // binds first, Configure runs second, and a set definition member beats both. An unset
         // member (the configuration-bound shape) defers to the options the merged Configure has
         // already bound — then the composed Subscription shape settles against the legacy members.
@@ -82,15 +83,8 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
             options.DaprPubSubName = DaprPubSubName;
         if (NonEmpty(DaprTopicName))
             options.DaprTopicName = DaprTopicName;
+        // Unset everywhere, the names default to the internal hop when the options are resolved.
         options.ConsolidateSubscription();
-        if (string.IsNullOrEmpty(options.DaprPubSubName))
-            throw new InvalidOperationException(
-                "TransactionalIntegration composition failed: DaprPubSubName — the receive side needs the Dapr " +
-                "pub/sub component to publish swept files to; set DaprPubSubName.");
-        if (string.IsNullOrEmpty(options.DaprTopicName))
-            throw new InvalidOperationException(
-                "TransactionalIntegration composition failed: DaprTopicName — the receive side needs the topic to " +
-                "publish swept files to (the send side consumes it); set DaprTopicName.");
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), "definition");
         return options;
@@ -141,5 +135,5 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
         };
     }
 
-    private static bool NonEmpty(string? value) => !string.IsNullOrEmpty(value);
+    private static bool NonEmpty([NotNullWhen(true)] string? value) => !string.IsNullOrEmpty(value);
 }

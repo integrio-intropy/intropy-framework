@@ -310,6 +310,25 @@ public class MessageConsumerTests
     }
 
     [Fact]
+    public async Task HandleAsync_ProcessesAnySubscriptionsDelivery_WhenItNamesNoTopic()
+    {
+        // The Subscription resource alone decides what is delivered: nothing to disagree with.
+        var handled = 0;
+        using var consumer = new MessageConsumer(new MessageConsumerSettings("", "", TimeSpan.FromSeconds(30),
+                TimeSpan.FromSeconds(5)), (_, _, _, _) =>
+            {
+                handled++;
+                return Task.FromResult(new HandledMessage(new PipelineOutcome(MessageOutcome.Processed)));
+            }, "test-component", NullLogger.Instance);
+
+        var response = await consumer.HandleAsync(Request(topic: "any-topic", pubSub: "any-pubsub"),
+            CancellationToken.None);
+
+        Assert.Equal(Status.Success, response.Status);
+        Assert.Equal(1, handled);
+    }
+
+    [Fact]
     public async Task HandleAsync_AfterStopBegan_CountsTheMessageAsRejected_WithoutAProcessingDuration()
     {
         using var metrics = new MetricCapture();
