@@ -9,8 +9,10 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 
 /// <summary>
 /// A step that publishes CloudEvents to a Dapr pub/sub topic.
-/// This step sets the source and type on the CloudEvent from the configured values,
-/// then serializes the event and publishes it to the specified topic.
+/// This step sets the source on the CloudEvent from the configured value, sets the type from
+/// the configured value unless the serialize step already set one (a component-supplied type
+/// extractor wins; the configured type is the fallback), then serializes the event and
+/// publishes it to the specified topic.
 /// </summary>
 /// <remarks>
 /// It publishes under a <c>send {topic}</c> producer span (the OpenTelemetry messaging
@@ -22,7 +24,9 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 /// <param name="pubSubName">The name of the Dapr pub/sub component.</param>
 /// <param name="topicName">The topic to publish to.</param>
 /// <param name="source">The CloudEvent source URI identifying where the data came from.</param>
-/// <param name="type">The CloudEvent type identifying the kind of event.</param>
+/// <param name="type">The fallback CloudEvent type identifying the kind of event. Applies only when
+/// the serialize step did not already set a type (e.g. via a component-supplied type extractor on
+/// <see cref="CloudEventSerializeStep{TOutput,TCtx}"/>).</param>
 public class DaprTopicPublisher<TCtx>(
     DaprClient daprClient,
     string pubSubName,
@@ -45,9 +49,10 @@ public class DaprTopicPublisher<TCtx>(
             throw new InvalidOperationException(
                 "CloudEvent.Time must be set by the SerializeStep. The time indicates when the event occurred in the source system.");
 
-        // Set source and type from configuration
+        // Set the source from configuration; the configured type is the fallback — a type set by
+        // the serialize step (component-supplied type extractor) wins.
         input.Source = source;
-        input.Type = type;
+        input.Type ??= type;
 
         using var activity = MessagingTelemetry.StartSendActivity(topicName, "dapr");
         activity?.SetTag("messaging.message.id", input.Id);

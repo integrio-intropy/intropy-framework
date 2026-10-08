@@ -10,12 +10,14 @@ public class CloudEventSerializeStepTests
     private static CloudEventSerializeStep<CustomerOut, Context> CreateStep(
         Func<CustomerOut, string>? subject = null,
         Func<CustomerOut, DateTimeOffset>? time = null,
-        string dataContentType = "application/json")
+        string dataContentType = "application/json",
+        Func<CustomerOut, Context, string>? type = null)
     {
         return new CloudEventSerializeStep<CustomerOut, Context>(
             subject ?? (c => c.CustomerId.ToString()),
             time ?? (_ => DateTimeOffset.UtcNow),
-            dataContentType);
+            dataContentType,
+            type);
     }
 
     #region Constructor Tests
@@ -127,10 +129,46 @@ public class CloudEventSerializeStepTests
         // Act
         var (result, _) = await step.ExecuteAsync(new CustomerOut { CustomerId = 1 }, context, CancellationToken.None);
 
-        // Assert - Source and Type are owned by the send step (e.g. DaprTopicPublisher)
+        // Assert - Source is owned by the send step (e.g. DaprTopicPublisher); without a type
+        // extractor, Type is left for the send step's configured fallback.
         var successResult = Assert.IsType<TechnicalStepResult<CloudEvent>.Success>(result);
         Assert.Null(successResult.Value.Source);
         Assert.Null(successResult.Value.Type);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithTypeExtractor_SetsTypeFromTheOutput()
+    {
+        // Arrange - the component's condition classifies the same payload into different event types
+        var step = CreateStep(type: (c, _) => c.CustomerId == 0
+            ? "io.intropy.customers.new"
+            : "io.intropy.customers.cancelled");
+        var context = new Context(new Dictionary<string, string>());
+
+        // Act
+        var (newResult, _) = await step.ExecuteAsync(new CustomerOut { CustomerId = 0 }, context, CancellationToken.None);
+        var (cancelledResult, _) = await step.ExecuteAsync(new CustomerOut { CustomerId = 1 }, context, CancellationToken.None);
+
+        // Assert
+        Assert.Equal("io.intropy.customers.new",
+            Assert.IsType<TechnicalStepResult<CloudEvent>.Success>(newResult).Value.Type);
+        Assert.Equal("io.intropy.customers.cancelled",
+            Assert.IsType<TechnicalStepResult<CloudEvent>.Success>(cancelledResult).Value.Type);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithTypeExtractor_PassesThePipelineContext()
+    {
+        // Arrange
+        Context? seen = null;
+        var step = CreateStep(type: (_, ctx) => { seen = ctx; return "io.intropy.customers.new"; });
+        var context = new Context(new Dictionary<string, string>());
+
+        // Act
+        await step.ExecuteAsync(new CustomerOut { CustomerId = 1 }, context, CancellationToken.None);
+
+        // Assert
+        Assert.Same(context, seen);
     }
 
     #endregion
@@ -186,6 +224,25 @@ public class CloudEventSerializeStepTests
         var failureResult = Assert.IsType<TechnicalStepResult<CloudEvent>.Failure>(result);
         Assert.Contains("Time", failureResult.Value.Description, StringComparison.Ordinal);
         Assert.DoesNotContain("Subject", failureResult.Value.Description, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ExecuteAsync_WithTypeExtractorResolvingToInvalidType_ReturnsTechnicalFailureNamingType(string? typeValue)
+    {
+        // Arrange - fail closed: consumers route on type, so an empty type must never be published
+        var step = CreateStep(type: (_, _) => typeValue!);
+        var context = new Context(new Dictionary<string, string>());
+
+        // Act
+        var (result, resultContext) = await step.ExecuteAsync(new CustomerOut { CustomerId = 1 }, context, CancellationToken.None);
+
+        // Assert
+        var failureResult = Assert.IsType<TechnicalStepResult<CloudEvent>.Failure>(result);
+        Assert.Contains("Type", failureResult.Value.Description, StringComparison.Ordinal);
+        Assert.Same(context, resultContext);
     }
 
     [Fact]

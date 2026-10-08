@@ -109,6 +109,45 @@ public class DaprTopicPublisherTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_AppliesTheConfiguredType_WhenTheSerializeStepDidNotSetOne()
+    {
+        var daprClient = Substitute.For<DaprClient>();
+        byte[]? published = null;
+        daprClient
+            .PublishByteEventAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+                Arg.Any<string>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => published = ci.ArgAt<ReadOnlyMemory<byte>>(2).ToArray());
+        var publisher = new DaprTopicPublisher<Context>(daprClient, "pubsub", "orders.accepted", Source, "orders.accepted");
+
+        await publisher.ExecuteAsync(Event(), new Context(new Dictionary<string, string>()), CancellationToken.None);
+
+        var envelope = new JsonEventFormatter().DecodeStructuredModeMessage(published!, null, []);
+        Assert.Equal("orders.accepted", envelope.Type);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_KeepsTheTypeSetByTheSerializeStep_WhenPresent()
+    {
+        // A component-supplied type extractor wins over the configured fallback.
+        var daprClient = Substitute.For<DaprClient>();
+        byte[]? published = null;
+        daprClient
+            .PublishByteEventAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+                Arg.Any<string>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => published = ci.ArgAt<ReadOnlyMemory<byte>>(2).ToArray());
+        var publisher = new DaprTopicPublisher<Context>(daprClient, "pubsub", "orders.accepted", Source, "orders.accepted");
+        var input = Event();
+        input.Type = "io.intropy.orders.new";
+
+        await publisher.ExecuteAsync(input, new Context(new Dictionary<string, string>()), CancellationToken.None);
+
+        var envelope = new JsonEventFormatter().DecodeStructuredModeMessage(published!, null, []);
+        Assert.Equal("io.intropy.orders.new", envelope.Type);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_MarksTheSendSpanAsAnError_WhenPublishingFails()
     {
         var daprClient = Substitute.For<DaprClient>();

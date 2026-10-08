@@ -289,13 +289,14 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <summary>
     /// Configures sending CloudEvents to a Dapr pub/sub topic.
     /// This is the recommended way to configure sending for extractors.
-    /// The publisher will set the source and type on the CloudEvent from the configured values,
-    /// serialize the event to JSON, and publish it to the specified topic.
+    /// The publisher will set the source on the CloudEvent from the configured value, apply the
+    /// configured type as a fallback when the serialize step did not set one, serialize the event
+    /// to JSON, and publish it to the specified topic.
     /// </summary>
     /// <param name="pubSubName">The name of the Dapr pub/sub component (e.g., "pubsub").</param>
     /// <param name="topicName">The topic to publish to (e.g., "customers").</param>
     /// <param name="source">The CloudEvent source URI identifying where the data came from (e.g., "urn:company:system:salesforce").</param>
-    /// <param name="type">The CloudEvent type identifying the kind of event (e.g., "com.company.customer.extracted").</param>
+    /// <param name="type">The fallback CloudEvent type identifying the kind of event (e.g., "com.company.customer.extracted"). Applies only when the serialize step did not set a type (e.g. via a type extractor on <see cref="CloudEventSerializeStep{TOutput,TCtx}"/>).</param>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="DaprClient"/> is not registered in the service provider.</exception>
     public ExtractorBuilder<TInput, TOutput, TCtx> WithDaprTopicPublisher(
@@ -319,12 +320,13 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
     /// <summary>
     /// Configures sending CloudEvents to a Dapr service using service invocation.
-    /// The publisher will set the source and type on the CloudEvent from the configured values,
-    /// serialize the event to JSON, and invoke the target service's "ingest" endpoint with the CloudEvent as the request body.
+    /// The publisher will set the source on the CloudEvent from the configured value, apply the
+    /// configured type as a fallback when the serialize step did not set one, serialize the event
+    /// to JSON, and invoke the target service's "ingest" endpoint with the CloudEvent as the request body.
     /// </summary>
     /// <param name="appId">The Dapr app ID of the target service.</param>
     /// <param name="source">The CloudEvent source URI identifying where the data came from (e.g., "urn:company:system:salesforce").</param>
-    /// <param name="type">The CloudEvent type identifying the kind of event (e.g., "com.company.customer.extracted").</param>
+    /// <param name="type">The fallback CloudEvent type identifying the kind of event (e.g., "com.company.customer.extracted"). Applies only when the serialize step did not set a type (e.g. via a type extractor on <see cref="CloudEventSerializeStep{TOutput,TCtx}"/>).</param>
     /// <param name="httpClientFactory">
     /// Factory that produces the <see cref="HttpClient"/> used to send the request through the Dapr sidecar.
     /// Receives the configured <see cref="IServiceProvider"/> so the factory can resolve dependencies from DI

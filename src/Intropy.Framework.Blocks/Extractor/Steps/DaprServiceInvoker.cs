@@ -9,8 +9,10 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 
 /// <summary>
 /// A step that sends CloudEvents to a Dapr service using service invocation.
-/// This step sets the source and type on the CloudEvent from the configured values,
-/// then serializes and invokes the target service's "ingest" endpoint with the CloudEvent as the request body.
+/// This step sets the source on the CloudEvent from the configured value, sets the type from
+/// the configured value unless the serialize step already set one (a component-supplied type
+/// extractor wins; the configured type is the fallback), then serializes and invokes the target
+/// service's "ingest" endpoint with the CloudEvent as the request body.
 /// </summary>
 /// <remarks>
 /// Only a success status code (2xx) counts as delivered. Any other status is a technical failure,
@@ -21,7 +23,9 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 /// <param name="httpClient">The HTTP client used to send the request through the Dapr sidecar (typically created via <see cref="DaprClient.CreateInvokeHttpClient(string, string?, string?)"/>).</param>
 /// <param name="appId">The Dapr app ID of the target service.</param>
 /// <param name="source">The CloudEvent source URI identifying where the data came from.</param>
-/// <param name="type">The CloudEvent type identifying the kind of event.</param>
+/// <param name="type">The fallback CloudEvent type identifying the kind of event. Applies only when
+/// the serialize step did not already set a type (e.g. via a component-supplied type extractor on
+/// <see cref="CloudEventSerializeStep{TOutput,TCtx}"/>).</param>
 public class DaprServiceInvoker<TCtx>(
     DaprClient daprClient,
     HttpClient httpClient,
@@ -46,9 +50,10 @@ public class DaprServiceInvoker<TCtx>(
             throw new InvalidOperationException(
                 "CloudEvent.Time must be set by the SerializeStep. The time indicates when the event occurred in the source system.");
 
-        // Set source and type from configuration
+        // Set the source from configuration; the configured type is the fallback — a type set by
+        // the serialize step (component-supplied type extractor) wins.
         input.Source = source;
-        input.Type = type;
+        input.Type ??= type;
 
         // Serialize CloudEvent to JSON
         var bytes = CloudEventFormat.Formatter.EncodeStructuredModeMessage(input, out var contentType);

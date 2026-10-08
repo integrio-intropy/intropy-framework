@@ -7,11 +7,13 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 
 /// <summary>
 /// A reusable <see cref="SerializeStep{T,TCtx}"/> that constructs the
-/// <see cref="CloudEvent"/> envelope from two component-supplied extractor functions.
+/// <see cref="CloudEvent"/> envelope from component-supplied extractor functions.
 /// This step owns <see cref="CloudEvent.Id"/>, <see cref="CloudEvent.Subject"/>,
 /// <see cref="CloudEvent.Time"/>, <see cref="CloudEvent.DataContentType"/> and
-/// <see cref="CloudEvent.Data"/>. The send step (e.g. <see cref="DaprTopicPublisher{TCtx}"/>)
-/// owns <see cref="CloudEvent.Source"/> and <see cref="CloudEvent.Type"/>, and performs the
+/// <see cref="CloudEvent.Data"/>, and — when a <paramref name="type"/> extractor is
+/// supplied — <see cref="CloudEvent.Type"/>. The send step (e.g.
+/// <see cref="DaprTopicPublisher{TCtx}"/>) owns <see cref="CloudEvent.Source"/>, supplies the
+/// fallback <see cref="CloudEvent.Type"/> when this step did not set one, and performs the
 /// JSON encoding at publish time.
 /// </summary>
 /// <typeparam name="TOutput">The output type of the pipeline.</typeparam>
@@ -26,12 +28,17 @@ namespace Intropy.Framework.Blocks.Extractor.Steps;
 /// <param name="subject">Extracts the subject identifying the entity the event is about.</param>
 /// <param name="time">Extracts the time the event occurred in the source system.</param>
 /// <param name="dataContentType">The content type of the data payload. Defaults to <c>application/json</c>.</param>
+/// <param name="type">Optional. Extracts the CloudEvent type from the output and context, e.g.
+/// <c>(o, _) =&gt; o.Status == 0 ? "io.intropy.orders.new" : "io.intropy.orders.cancelled"</c>.
+/// When supplied, the resolved type wins over the send step's configured fallback. When left
+/// null, the type is left for the send step to set from its configuration.</param>
 /// <exception cref="ArgumentNullException">Thrown if <paramref name="subject"/> or <paramref name="time"/> is null.</exception>
 /// <exception cref="ArgumentException">Thrown if <paramref name="dataContentType"/> is null or whitespace.</exception>
 public class CloudEventSerializeStep<TOutput, TCtx>(
     Func<TOutput, string> subject,
     Func<TOutput, DateTimeOffset> time,
-    string dataContentType = "application/json") : SerializeStep<TOutput, TCtx> where TCtx : Context
+    string dataContentType = "application/json",
+    Func<TOutput, TCtx, string>? type = null) : SerializeStep<TOutput, TCtx> where TCtx : Context
 {
     private readonly Func<TOutput, string> _subject =
         subject ?? throw new ArgumentNullException(nameof(subject));
@@ -43,6 +50,8 @@ public class CloudEventSerializeStep<TOutput, TCtx>(
         string.IsNullOrWhiteSpace(dataContentType)
             ? throw new ArgumentException("Data content type cannot be null or whitespace", nameof(dataContentType))
             : dataContentType;
+
+    private readonly Func<TOutput, TCtx, string>? _type = type;
 
     /// <inheritdoc/>
     public override Task<(TechnicalStepResult<CloudEvent> Result, TCtx Context)> ExecuteAsync(
@@ -66,10 +75,26 @@ public class CloudEventSerializeStep<TOutput, TCtx>(
                 (new TechnicalStepResult<CloudEvent>.Failure(tf), context));
         }
 
+        string? typeValue = null;
+        if (_type is not null)
+        {
+            typeValue = _type(input, context);
+            if (string.IsNullOrWhiteSpace(typeValue))
+            {
+                var tf = new TechnicalFailure(
+                    "CloudEvent.Type must resolve to a non-empty value when a type extractor is configured. The type identifies the kind of event and is what consumers route on.");
+                return Task.FromResult<(TechnicalStepResult<CloudEvent>, TCtx)>(
+                    (new TechnicalStepResult<CloudEvent>.Failure(tf), context));
+            }
+        }
+
         var cloudEvent = new CloudEvent
         {
             Id = Guid.NewGuid().ToString(),
-            // Source and Type are set by the send step (e.g. DaprTopicPublisher) from builder configuration.
+            // Source is set by the send step (e.g. DaprTopicPublisher) from builder configuration.
+            // Type is set here when a type extractor is configured; otherwise the send step's
+            // configured fallback applies.
+            Type = typeValue,
             Subject = subjectValue,
             Time = timeValue,
             DataContentType = _dataContentType,
