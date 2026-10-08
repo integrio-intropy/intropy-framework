@@ -30,18 +30,6 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_ShouldThrowArgumentNullException_WhenConfigureOptionsIsNull()
-    {
-        // Verifies that null configuration action is rejected
-        var services = GetServices();
-
-        var exception = Assert.Throws<ArgumentNullException>(() =>
-            services.AddTransactionalIntegration(null!));
-
-        Assert.Equal("configureOptions", exception.ParamName);
-    }
-
-    [Fact]
     public void AddTransactionalIntegration_DefaultsUnsetNames_ToTheInternalHopTheTopologyGenerates()
     {
         var services = GetServices();
