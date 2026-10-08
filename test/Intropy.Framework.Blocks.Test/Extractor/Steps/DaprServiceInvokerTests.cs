@@ -40,6 +40,43 @@ public class DaprServiceInvokerTests
         Assert.Equal(status, exception.StatusCode);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_AppliesTheConfiguredType_WhenTheSerializeStepDidNotSetOne()
+    {
+        var (result, _) = await Invoke(HttpStatusCode.OK);
+
+        var success = Assert.IsType<TechnicalStepResult<CloudEvent>.Success>(result);
+        Assert.Equal("com.test.customer.extracted", success.Value.Type);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_KeepsTheTypeSetByTheSerializeStep_WhenPresent()
+    {
+        // A component-supplied type extractor wins over the configured fallback.
+        var daprClient = Substitute.For<DaprClient>();
+        daprClient.CreateInvokeMethodRequest(Arg.Any<HttpMethod>(), Arg.Any<string>(), Arg.Any<string>())
+            .Returns(_ => new HttpRequestMessage(HttpMethod.Post, "http://localhost:3500/v1.0/invoke/reconciler/method/ingest"));
+        using var handler = new StatusHandler(HttpStatusCode.OK);
+        using var httpClient = new HttpClient(handler);
+        var invoker = new DaprServiceInvoker<Context>(daprClient, httpClient, "reconciler", new Uri("urn:test:crm"),
+            "com.test.customer.extracted");
+        var input = new CloudEvent
+        {
+            Id = Guid.NewGuid().ToString(),
+            Type = "io.intropy.orders.new",
+            Subject = "order-42",
+            Time = DateTimeOffset.UtcNow,
+            DataContentType = "application/json",
+            Data = "{}"
+        };
+
+        var (result, _) = await invoker.ExecuteAsync(input, new Context(new Dictionary<string, string>()),
+            CancellationToken.None);
+
+        var success = Assert.IsType<TechnicalStepResult<CloudEvent>.Success>(result);
+        Assert.Equal("io.intropy.orders.new", success.Value.Type);
+    }
+
     private static async Task<(TechnicalStepResult<CloudEvent> Result, Context Context)> Invoke(HttpStatusCode status)
     {
         var daprClient = Substitute.For<DaprClient>();

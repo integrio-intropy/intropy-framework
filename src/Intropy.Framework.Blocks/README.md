@@ -44,6 +44,26 @@ var extractor = ExtractorBuilder<Order, OrderDto, OrderContext>.Create("orders",
 
 The sender is resolved once, when `WithSenderFromServices()` is called — register it as a singleton (or transient), not scoped.
 
+## The CloudEvent envelope (Extractor)
+
+`CloudEventSerializeStep` builds the envelope from component-supplied extractors — `subject`,
+`time`, and optionally `type`. The send steps (`DaprTopicPublisher`, `DaprServiceInvoker`) set
+`source` from configuration and apply their configured `type` as a fallback when the serializer
+did not set one.
+
+The optional `type` extractor classifies the same payload into different event types, from the
+output and the pipeline context:
+
+```csharp
+.WithSerializer(new CloudEventSerializeStep<Order, OrderContext>(
+    subject: o => o.OrderId,
+    time: o => o.ChangedAt,
+    type: (o, _) => o.Status == 0 ? "io.intropy.orders.new" : "io.intropy.orders.cancelled"))
+```
+
+A configured type extractor that resolves to null, empty, or whitespace is a technical failure —
+consumers route on the type, so an event without one must never be published.
+
 ## Install
 
 ```bash

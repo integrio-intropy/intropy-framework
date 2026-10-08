@@ -117,6 +117,10 @@ await using var provider = services.BuildServiceProvider(
 return await provider.GetRequiredService<JobRunner>().RunAsync(ct);
 ```
 
+To classify the same payload into different event types, pass the optional `type` extractor to
+`CloudEventSerializeStep` — e.g. `type: (o, _) => o.Status == 0 ? "io.intropy.orders.new" : "io.intropy.orders.cancelled"`.
+The publisher's configured type then applies only as the fallback when no extractor is supplied.
+
 The pipeline is built in each file's own DI scope, so the `sp` passed to the callback is that
 scope and the steps may be scoped. `AddSourcePort` registers the port's file adapter from
 `Ports:<port>` and declares it the port the job sweeps. Before listing any file, the job checks
