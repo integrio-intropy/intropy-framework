@@ -68,7 +68,7 @@ the host is disposed.
 |------|---------|
 | 0 | Success, nothing to do, or cancelled. Cancellation is success **by design**: the job is idempotent and decided it does not need to process (e.g. duplicates detected), so the scheduler must not retry. |
 | 1 | Job failure: the job threw, or `RunSummary.Failed` was greater than zero. For a Transactional Integration, `Failed` counts files left in place and messages the run left for redelivery. |
-| 2 | Infrastructure failure: the Dapr sidecar never became available. The job never ran. |
+| 2 | Infrastructure failure: the Dapr sidecar never became available, or the Transactional Integration's internal queue never delivered a probe before the readiness deadline. In the latter case, no source file is swept. |
 
 A failed sidecar shutdown is logged but never changes the exit code — the job's outcome stands.
 
@@ -78,6 +78,30 @@ The framework cannot infer duplicate detection — component code must count `St
 outcomes itself and report them in `RunSummary.Skipped`. Skipped items (e.g. duplicates
 detected by idempotency) never affect the exit code, but keep the summary log line and trace
 tags honest.
+
+## Transactional Integration internal queue readiness
+
+Before sweeping source files, the built-in Dapr enqueuer publishes harmless probes through the
+same internal queue as the files. Only delivery of a probe issued by the current run unlocks the
+sweep; old business messages and leftover probes cannot prove the current publisher reaches the
+queue. Retries use fresh message ids to avoid broker duplicate detection. Probes are acknowledged
+without running the send pipeline and excluded from the run summary.
+
+`TransactionalIntegrationOptions.InternalQueueReadyTimeout` defaults to 60 seconds (also configurable as
+`InternalQueueReadyTimeout`). It must be positive and within the .NET timer range. A timeout fails the job
+with exit code 2 and leaves all source files untouched; host cancellation also leaves the source
+untouched while probing and follows the normal cancellation contract.
+
+Run **one active job instance per internal queue**. Use `concurrencyPolicy: Forbid` for a
+Kubernetes CronJob, and prevent other schedulers or manual jobs from overlapping it. Competing
+consumers can receive each other's probes and make a healthy job time out. This check proves
+startup routing, not durable storage for every publish: a queue disappearing after readiness is
+not covered. Configure broker persistence and publisher confirmations separately.
+
+Custom enqueuers are probed only when they implement `IInternalQueueProbe`. Otherwise the job logs a warning
+and bypasses readiness; the custom enqueuer must ensure a successful enqueue is a safe handoff.
+A custom receive pipeline must publish through the registered enqueuer for the probe to verify
+its actual path.
 
 ## Extractors
 

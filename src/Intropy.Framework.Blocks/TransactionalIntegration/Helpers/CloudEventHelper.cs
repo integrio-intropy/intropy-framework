@@ -16,8 +16,8 @@ internal static class CloudEventHelper
         var cloudEvent = new CloudEvent
         {
             Id = Guid.NewGuid().ToString(),
-            Type = "transactional-integration.received",
-            Source = new Uri($"urn:${options.ComponentName}"),
+            Type = InternalQueueMessageTypes.Received,
+            Source = SourceUrn(options),
             DataContentType = "application/octet-stream",
             Data = input.Data
         };
@@ -29,4 +29,14 @@ internal static class CloudEventHelper
 
         return cloudEvent;
     }
+
+    /// <summary>A probe of the internal queue: no data, and no metadata to restore.</summary>
+    internal static CloudEvent CreateProbe(string probeId, FrameworkOptions options) => new()
+    {
+        Id = probeId,
+        Type = InternalQueueMessageTypes.Probe,
+        Source = SourceUrn(options)
+    };
+
+    private static Uri SourceUrn(FrameworkOptions options) => new($"urn:${options.ComponentName}");
 }

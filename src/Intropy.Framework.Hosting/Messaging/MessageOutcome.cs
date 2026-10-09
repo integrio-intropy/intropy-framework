@@ -22,5 +22,9 @@ internal enum MessageOutcome
 
     /// <summary>No route handles the message's event type; acknowledged as the loader's
     /// <see cref="UnroutedPolicy"/> says.</summary>
-    Unrouted
+    Unrouted,
+
+    /// <summary>A Transactional Integration's internal queue probe: acknowledged without running any
+    /// pipeline, and left out of the run summary.</summary>
+    Probe
 }

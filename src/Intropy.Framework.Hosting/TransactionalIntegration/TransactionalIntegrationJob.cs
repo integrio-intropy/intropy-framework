@@ -17,6 +17,7 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
 {
     private readonly TransactionalIntegrationReceiver<TCtx> _receiver;
     private readonly SendSideRun<TCtx> _sendSideRun;
+    private readonly InternalQueueReadinessGate? _internalQueueReadinessGate;
     private readonly ILogger<TransactionalIntegrationJob<TCtx>> _logger;
 
     /// <summary>
@@ -27,19 +28,25 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     /// <param name="sendSideRun">The send side: consumes the integration's queue through the
     /// send pipeline, until the subscription goes idle.</param>
     /// <param name="loggerFactory">An instance of <see cref="ILoggerFactory"/>.</param>
+    /// <param name="internalQueueReadinessGate">Holds the sweep back until the internal queue delivers;
+    /// <see langword="null"/> when the receive side's enqueuer cannot be probed.</param>
     internal TransactionalIntegrationJob(
         TransactionalIntegrationReceiver<TCtx> receiver,
         SendSideRun<TCtx> sendSideRun,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        InternalQueueReadinessGate? internalQueueReadinessGate = null)
     {
         _receiver = receiver;
         _sendSideRun = sendSideRun;
+        _internalQueueReadinessGate = internalQueueReadinessGate;
         _logger = loggerFactory.CreateLogger<TransactionalIntegrationJob<TCtx>>();
     }
 
     /// <summary>
-    /// Runs the job once: sweeps the source while subscribing, and
-    /// returns once publishing is done and the subscription has gone idle (or the host cancelled).
+    /// Runs the job once: subscribes, waits until the internal queue delivers (see
+    /// <see cref="InternalQueueReadinessGate"/>), sweeps the source, and returns once publishing is done and the
+    /// subscription has gone idle (or the host cancelled). When the internal queue never delivers, no file is
+    /// touched and the run fails as an infrastructure failure.
     /// </summary>
     /// <returns>Files published (and completed) as <c>Processed</c> and duplicates as
     /// <c>Skipped</c>. <c>Failed</c> counts both sides: files left in place, and messages the run
@@ -49,11 +56,26 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     public async Task<RunSummary> ExecuteAsync(CancellationToken ct)
     {
         var coordinator = new LifecycleCoordinator();
+        var readinessCheck = _internalQueueReadinessGate?.CreateCheck();
 
-        var publisherTask = Task.Run(async () =>
+        if (readinessCheck is null)
+            _logger.LogWarning("Internal queue readiness is not checked: the registered enqueuer does not implement IInternalQueueProbe. " +
+                "It must ensure successful publishes reach durable storage before source files are completed.");
+
+        var subscriberTask = _sendSideRun.ExecuteAsync(coordinator.PublishingCompleteSignal,
+            readinessCheck is null ? null : readinessCheck.Delivered, ct);
+
+        var publisherTask = PublishAsync();
+
+        async Task<RunSummary> PublishAsync()
         {
             try
             {
+                // A file is completed once its publish succeeds: sweep only once a publish is
+                // known to reach a queue.
+                if (readinessCheck is not null)
+                    await readinessCheck.WaitAsync(ct);
+
                 _logger.LogInformation("Starting source item processing");
                 var summary = await _receiver.SweepAsync(ct);
                 _logger.LogInformation("Source item processing completed");
@@ -65,9 +87,7 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
                 coordinator.SignalPublishingFailed(ex);
                 throw;
             }
-        });
-
-        var subscriberTask = _sendSideRun.ExecuteAsync(coordinator.PublishingCompleteSignal, ct);
+        }
 
         await Task.WhenAll(publisherTask, subscriberTask);
         var files = await publisherTask;

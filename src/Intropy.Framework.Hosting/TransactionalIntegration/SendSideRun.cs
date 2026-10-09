@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Intropy.Framework.Blocks.Shared;
+using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.Messaging;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,10 @@ internal class SendSideRun<TCtx>(
 {
     private readonly ILogger _logger = loggerFactory.CreateLogger<SendSideRun<TCtx>>();
 
+    /// <summary>Serves the callback and waits for completion, with nobody told of deliveries.</summary>
+    public Task<RunSummary> ExecuteAsync(Task publishingCompleteSignal, CancellationToken ct = default) =>
+        ExecuteAsync(publishingCompleteSignal, delivered: null, ct);
+
     /// <summary>
     /// Serves the callback and waits for completion: until publishing is done and the queue has
     /// gone idle, or the host cancels.
@@ -36,12 +41,16 @@ internal class SendSideRun<TCtx>(
     /// <param name="publishingCompleteSignal">A task that completes when all files have been published.</param>
     /// <param name="ct">The host's cancellation: it stops waiting for the publisher and the idle
     /// timeout; messages in flight still get the grace period before the callback stops.</param>
+    /// <param name="delivered">Called only for probes, with their message id: lets the
+    /// <see cref="InternalQueueReadinessGate"/> correlate delivery with probes from this run.</param>
     /// <returns>The messages this run consumed, by their last outcome: acknowledged as
     /// <c>Processed</c>, idempotent duplicates as <c>Skipped</c>, and messages left for
     /// redelivery — returned for retry, or still in flight when the grace period ended — as
     /// <c>Failed</c>. A message interrupted because the host is stopping is left for redelivery
-    /// but not counted: host cancellation is not a failure.</returns>
-    public async Task<RunSummary> ExecuteAsync(Task publishingCompleteSignal, CancellationToken ct = default)
+    /// but not counted: host cancellation is not a failure. A internal queue probe is acknowledged and not
+    /// counted either.</returns>
+    public async Task<RunSummary> ExecuteAsync(Task publishingCompleteSignal, Action<string>? delivered,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(publishingCompleteSignal);
         var outcomes = new ConcurrentDictionary<string, MessageOutcome>();
@@ -51,6 +60,14 @@ internal class SendSideRun<TCtx>(
         async Task<HandledMessage> Tally(IncomingMessage message, Activity? activity,
             CancellationToken interrupt, CancellationToken cancellationToken)
         {
+            // A probe carries nothing to send. Acknowledge stale probes too, but let the gate
+            // decide whether this id proves readiness for the current run.
+            if (message.Type == InternalQueueMessageTypes.Probe)
+            {
+                delivered?.Invoke(message.MessageId);
+                return new HandledMessage(new PipelineOutcome(MessageOutcome.Probe));
+            }
+
             var handled = await processor.HandleAsync(message, activity, interrupt, cancellationToken);
             if (handled.Outcome.Outcome is not MessageOutcome.Interrupted)
                 outcomes[message.MessageId] = handled.Outcome.Outcome;

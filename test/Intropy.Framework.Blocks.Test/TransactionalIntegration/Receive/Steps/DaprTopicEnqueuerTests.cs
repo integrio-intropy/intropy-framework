@@ -4,6 +4,7 @@ using CloudNative.CloudEvents;
 using CloudNative.CloudEvents.SystemTextJson;
 using Dapr.Client;
 using Intropy.Framework.Blocks.Shared;
+using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
 using Intropy.Framework.Core.Configuration;
@@ -48,6 +49,32 @@ public class DaprTopicEnqueuerTests
         Assert.Equal("{}"u8.ToArray(), (byte[])envelope.Data!);
         var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>((string)envelope[metadataAttribute]!);
         Assert.Equal("order-1.json", metadata![SourceContextKeys.FileName]);
+    }
+
+    [Fact]
+    public async Task PublishProbeAsync_PublishesAProbeEnvelopeToTheSameTopic()
+    {
+        // The probe must take the files' path, or its round trip proves nothing about them
+        var daprClient = Substitute.For<DaprClient>();
+        (string PubSub, string Topic, byte[] Data, string? ContentType)? published = null;
+        daprClient
+            .PublishByteEventAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+                Arg.Any<string>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => published = (ci.ArgAt<string>(0), ci.ArgAt<string>(1),
+                ci.ArgAt<ReadOnlyMemory<byte>>(2).ToArray(), ci.ArgAt<string>(3)));
+        var probe = new DaprTopicEnqueuer<Context>(daprClient, "internal-orders", "hop", Options);
+
+        await probe.PublishProbeAsync("probe-1", CancellationToken.None);
+
+        Assert.NotNull(published);
+        Assert.Equal(("internal-orders", "hop", "application/cloudevents+json"),
+            (published.Value.PubSub, published.Value.Topic, published.Value.ContentType));
+        var envelope = new JsonEventFormatter().DecodeStructuredModeMessage(published.Value.Data, null, null);
+        Assert.Equal("probe-1", envelope.Id);
+        Assert.Equal(InternalQueueMessageTypes.Probe, envelope.Type);
+        Assert.Equal(new Uri("urn:$orders"), envelope.Source);
+        Assert.Null(envelope.Data);
     }
 
     [Fact]

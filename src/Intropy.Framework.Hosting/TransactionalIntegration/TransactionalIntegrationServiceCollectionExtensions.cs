@@ -25,7 +25,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
     /// <param name="configureOptions">Optional action to configure the integration options; without
-    /// it, every option keeps its default, the internal hop included.</param>
+    /// it, every option keeps its default, the internal queue included.</param>
     /// <param name="configureJob">Optional runner settings: the job name (the trace activity
     /// name, default: the component name) and the sidecar timeouts.</param>
     /// <returns>The service collection for chaining.</returns>
@@ -54,7 +54,10 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <see cref="TransactionalIntegrationOptions.DaprPubSubName"/> /
     /// <see cref="TransactionalIntegrationOptions.DaprTopicName"/>. Both defaults are registered
     /// only when absent: register an <see cref="EnqueueStep{TCtx}"/> to replace the publisher
-    /// (tests register a fake), or a whole <see cref="IReceivePipeline{TCtx}"/>.
+    /// (tests register a fake), or a whole <see cref="IReceivePipeline{TCtx}"/>. A replacement
+    /// enqueuer is probed only if it implements <see cref="IInternalQueueProbe"/>; otherwise readiness is
+    /// bypassed with a warning and the enqueuer owns safe handoff. A replacement receive pipeline
+    /// must publish through that registered enqueuer for the probe to verify its path.
     /// For the described-by-a-definition shape
     /// (<see cref="AddTransactionalIntegration{TCtx}(IServiceCollection, TransactionalIntegrationDefinition{TCtx})"/>),
     /// the pub/sub, topic, source port and context factory are one object, validated at registration.
@@ -82,11 +85,12 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         configureOptions(options);
         // Settle the composed Subscription shape against the legacy members: a value set through
         // both with different values fails here, with the members named. A name set through
-        // neither defaults to the internal hop when the options are resolved.
+        // neither defaults to the internal queue when the options are resolved.
         options.ConsolidateSubscription();
 
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), nameof(configureOptions));
+        options.EnsureValidInternalQueueReadyTimeout(nameof(configureOptions));
 
         ComponentRegistration.MarkRegistered(services, "transactional integration");
         return AddTransactionalIntegrationCore(services, options, contextFactory, configureJob);
@@ -171,6 +175,9 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         if (ComponentConfigurationReader.TimeSpan(configuration, nameof(TransactionalIntegrationOptions.PostIdleGracePeriod),
                 $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.PostIdleGracePeriod)}") is { } grace)
             options.PostIdleGracePeriod = grace;
+        if (ComponentConfigurationReader.TimeSpan(configuration, nameof(TransactionalIntegrationOptions.InternalQueueReadyTimeout),
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.InternalQueueReadyTimeout)}") is { } internalQueueReady)
+            options.InternalQueueReadyTimeout = internalQueueReady;
         if (ComponentConfigurationReader.Int32(configuration, nameof(TransactionalIntegrationOptions.CallbackPort),
                 $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.CallbackPort)}") is { } port)
             options.CallbackPort = port;
@@ -180,12 +187,12 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         TransactionalIntegrationOptions options, ContextFactory<TCtx> contextFactory,
         Action<JobOptions>? configureJob) where TCtx : Context
     {
-        // Register options. A pub/sub or topic left unset is the internal hop the system topology
+        // Register options. A pub/sub or topic left unset is the internal queue the system topology
         // generates for the component, named after its identity, which resolves from DI.
         services.AddSingleton(sp =>
         {
             if (string.IsNullOrEmpty(options.DaprPubSubName) || string.IsNullOrEmpty(options.DaprTopicName))
-                options.UseInternalHopDefaults(sp.GetRequiredService<FrameworkOptions>().ComponentName);
+                options.UseInternalQueueDefaults(sp.GetRequiredService<FrameworkOptions>().ComponentName);
             return options;
         });
 
@@ -220,13 +227,24 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         // The receive side, and the lifecycle hosting both.
         services.AddSingleton(sp => new TransactionalIntegrationReceiver<TCtx>(sp,
             sp.GetRequiredService<FrameworkOptions>(), contextFactory, sp.GetRequiredService<ILoggerFactory>()));
+        // The internal queue is probed through the enqueuer that publishes the files, so a replaced enqueuer
+        // (a test fake, another transport) that cannot be probed sweeps without the gate.
         services.AddSingleton(sp => new TransactionalIntegrationJob<TCtx>(
             sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
             sp.GetRequiredService<SendSideRun<TCtx>>(),
-            sp.GetRequiredService<ILoggerFactory>()));
+            sp.GetRequiredService<ILoggerFactory>(),
+            InternalQueueReadinessGateFor(sp.GetRequiredService<EnqueueStep<TCtx>>(),
+                sp.GetRequiredService<TransactionalIntegrationOptions>(), sp.GetRequiredService<ILoggerFactory>())));
 
         services.AddJob<TransactionalIntegrationJob<TCtx>>(configureJob);
 
         return services;
     }
+
+    private static InternalQueueReadinessGate? InternalQueueReadinessGateFor<TCtx>(EnqueueStep<TCtx> enqueuer,
+        TransactionalIntegrationOptions options, ILoggerFactory loggerFactory) where TCtx : Context =>
+        enqueuer is IInternalQueueProbe probe
+            ? new InternalQueueReadinessGate(probe, options.InternalQueueReadyTimeout, options.InternalQueueProbeInterval,
+                loggerFactory.CreateLogger<InternalQueueReadinessGate>())
+            : null;
 }

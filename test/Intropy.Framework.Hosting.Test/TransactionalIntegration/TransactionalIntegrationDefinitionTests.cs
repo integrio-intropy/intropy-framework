@@ -25,7 +25,7 @@ public class TransactionalIntegrationDefinitionTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    public void UnsetNames_DefaultToTheInternalHopTheTopologyGenerates(string? name)
+    public void UnsetNames_DefaultToTheInternalQueueTheTopologyGenerates(string? name)
     {
         var services = GetServices();
 

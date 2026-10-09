@@ -8,7 +8,9 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Intropy.Framework.Testing.Adapters;
 using Intropy.Framework.Testing.Delivery;
@@ -329,6 +331,133 @@ public class TransactionalIntegrationJobTests
         Assert.Equal(1, summary.Failed);    // m1, left for redelivery
     }
 
+    [Fact]
+    public async Task ExecuteAsync_SweepsOnlyOnceAProbeHasComeBack()
+    {
+        // Verifies the fix for files lost on a first deploy: the broker discards what is
+        // published before the subscription has made its queue, so no file is published (and
+        // deleted) until a probe has made the round trip
+        var source = new InMemoryFileAdapter().AddFile("file1.txt", "one");
+        var internalQueue = new LoopbackInternalQueue(() => _callbackPort, discardFirst: 2);
+        var probesPublishedAtSweep = -1;
+        _receivePipeline.Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                probesPublishedAtSweep = internalQueue.Published;
+                return (new StepResult<SourceItem>.Success(callInfo.Arg<SourceItem>()), callInfo.Arg<Context>());
+            });
+
+        var summary = await Lifecycle(source, internalQueue: internalQueue).ExecuteAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(3, probesPublishedAtSweep);
+        Assert.Equal(1, internalQueue.Delivered);
+        Assert.Empty(source.Files);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 0, Skipped: 0), summary);
+        await _sendPipeline.DidNotReceive().Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AStaleProbeDoesNotUnlockTheSweep()
+    {
+        var source = new InMemoryFileAdapter().AddFile("file1.txt", "one");
+        var internalQueue = new LoopbackInternalQueue(() => _callbackPort, deliverStaleFirst: true);
+        var probesAtSweep = 0;
+        _receivePipeline.Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                probesAtSweep = internalQueue.Published;
+                return (new StepResult<SourceItem>.Success(call.Arg<SourceItem>()), call.Arg<Context>());
+            });
+
+        var summary = await Lifecycle(source, internalQueue: internalQueue).ExecuteAsync(CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(2, probesAtSweep);
+        Assert.Empty(source.Files);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 0, Skipped: 0), summary);
+        await _sendPipeline.DidNotReceive().Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTheInternalQueueNeverDelivers_TouchesNoFileAndFailsAsInfrastructure()
+    {
+        // Verifies that a missing internal queue (every probe discarded) leaves every file in
+        // the source for the next run, and fails the run as an infrastructure failure
+        var source = new InMemoryFileAdapter().AddFile("file1.txt", "one");
+        var internalQueue = new LoopbackInternalQueue(() => _callbackPort, discardFirst: int.MaxValue);
+
+        var job = Lifecycle(source, internalQueue: internalQueue, internalQueueReadyTimeout: TimeSpan.FromMilliseconds(300));
+        await Assert.ThrowsAsync<InfrastructureUnavailableException>(
+            () => job.ExecuteAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.True(source.Files.ContainsKey("file1.txt"));
+        Assert.True(internalQueue.Published > 1);
+        await _receivePipeline.DidNotReceive().Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenAProbePublishFails_PublishesAnother()
+    {
+        // Verifies that a broker briefly refusing publishes does not fail the run
+        var source = new InMemoryFileAdapter().AddFile("file1.txt", "one");
+        var internalQueue = new LoopbackInternalQueue(() => _callbackPort, failFirst: 1);
+        _receivePipeline.Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => (new StepResult<SourceItem>.Success(callInfo.Arg<SourceItem>()), callInfo.Arg<Context>()));
+
+        var summary = await Lifecycle(source, internalQueue: internalQueue).ExecuteAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(1, summary.Processed);
+        Assert.Equal(1, internalQueue.Delivered);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTheHostCancelsWhileProbing_TouchesNoFile()
+    {
+        var source = new InMemoryFileAdapter().AddFile("file1.txt", "one");
+        var internalQueue = new LoopbackInternalQueue(() => _callbackPort, discardFirst: int.MaxValue);
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        var job = Lifecycle(source, internalQueue: internalQueue);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => job.ExecuteAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.True(source.Files.ContainsKey("file1.txt"));
+    }
+
+    /// <summary>An internal queue whose probes are delivered to the run's callback, the way the sidecar would
+    /// once the queue exists: the first <c>discardFirst</c> probes are discarded, as a broker with
+    /// no queue bound does, and the first <c>failFirst</c> publishes throw.</summary>
+    private sealed class LoopbackInternalQueue(Func<int> callbackPort, int discardFirst = 0, int failFirst = 0,
+        bool deliverStaleFirst = false) : IInternalQueueProbe
+    {
+        private int _attempts;
+        private int _published;
+        private int _delivered;
+
+        internal int Published => _published;
+        internal int Delivered => _delivered;
+
+        public async Task PublishProbeAsync(string probeId, CancellationToken ct)
+        {
+            if (Interlocked.Increment(ref _attempts) <= failFirst)
+                throw new InvalidOperationException("Broker unreachable");
+            if (Interlocked.Increment(ref _published) <= discardFirst)
+                return;
+
+            using var delivery = new AppCallbackDelivery(callbackPort(), "test-pubsub", "test-topic");
+            var ack = await delivery.DeliverAsync(new CloudEvent
+            {
+                Id = deliverStaleFirst && Published == 1 ? "probe-from-an-earlier-run" : probeId,
+                Source = new Uri("urn:$test-integration"), Type = InternalQueueMessageTypes.Probe
+            }, ct: ct);
+            if (ack == DeliveryAck.Success)
+                Interlocked.Increment(ref _delivered);
+        }
+    }
+
     private static CloudEvent Event(string id, string data) => new()
     {
         Id = id, Source = new Uri("urn:test-source"), Type = "test-type", DataContentType = "application/json",
@@ -368,7 +497,8 @@ public class TransactionalIntegrationJobTests
         }
     }
 
-    private TransactionalIntegrationJob<Context> Lifecycle(IFileAdapter source, FileCompletion? completion = null)
+    private TransactionalIntegrationJob<Context> Lifecycle(IFileAdapter source, FileCompletion? completion = null,
+        IInternalQueueProbe? internalQueue = null, TimeSpan? internalQueueReadyTimeout = null)
     {
         var services = new ServiceCollection();
         services.AddKeyedSingleton(SourceKey, source);
@@ -387,7 +517,11 @@ public class TransactionalIntegrationJobTests
             CallbackPort = _callbackPort = AppCallbackDelivery.AvailablePort()
         };
         var receiver = new TransactionalIntegrationReceiver<Context>(provider, Identity, NewContext, _loggerFactory);
-        return new TransactionalIntegrationJob<Context>(receiver, Subscriber(options), _loggerFactory);
+        var gate = internalQueue is null
+            ? null
+            : new InternalQueueReadinessGate(internalQueue, internalQueueReadyTimeout ?? TimeSpan.FromSeconds(10), TimeSpan.FromMilliseconds(50),
+                _loggerFactory.CreateLogger("internalQueue"));
+        return new TransactionalIntegrationJob<Context>(receiver, Subscriber(options), _loggerFactory, gate);
     }
 
     /// <summary>Builds the send side around the shared substitutes, composing the processor the

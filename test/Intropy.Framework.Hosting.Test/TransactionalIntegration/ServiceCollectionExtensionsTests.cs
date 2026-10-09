@@ -9,6 +9,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -30,7 +31,7 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_DefaultsUnsetNames_ToTheInternalHopTheTopologyGenerates()
+    public void AddTransactionalIntegration_DefaultsUnsetNames_ToTheInternalQueueTheTopologyGenerates()
     {
         var services = GetServices();
 
@@ -59,7 +60,7 @@ public class ServiceCollectionExtensionsTests
     [Fact]
     public void AddTransactionalIntegration_NamesTheDefaultPubSubAfterTheAppId_ForADottedComponentName()
     {
-        // The topology names the hop after the app id: the component name with dots as dashes.
+        // The topology names the internal queue after the app id: the component name with dots as dashes.
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
         services.AddIntropyFramework(options =>
@@ -112,6 +113,47 @@ public class ServiceCollectionExtensionsTests
             options.DaprTopicName = "test-topic";
             options.CallbackPort = port;
         }));
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(-1L)]
+    [InlineData(-10000L)]
+    [InlineData(long.MaxValue)]
+    [InlineData(42949672950000L)]
+    public void InvalidInternalQueueReadyTimeout_FailsAtRegistrationInBothShapes(long ticks)
+    {
+        var timeout = TimeSpan.FromTicks(ticks);
+        var byOptions = GetServices();
+        var optionsError = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            byOptions.AddTransactionalIntegration(options => options.InternalQueueReadyTimeout = timeout));
+        Assert.Contains("TransactionalIntegrationOptions.InternalQueueReadyTimeout", optionsError.Message);
+        // A rejected registration must not prevent a corrected retry.
+        byOptions.AddTransactionalIntegration(options => options.InternalQueueReadyTimeout = TimeSpan.FromSeconds(1));
+
+        var byDefinition = GetServices();
+        var definitionError = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            byDefinition.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>
+            {
+                Configure = options => options.InternalQueueReadyTimeout = timeout
+            }));
+        Assert.Contains("TransactionalIntegrationOptions.InternalQueueReadyTimeout", definitionError.Message);
+        byDefinition.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>());
+    }
+
+    [Fact]
+    public void ValidInternalQueueReadyTimeout_FlowsThroughConfiguration()
+    {
+        var services = GetServices();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["InternalQueueReadyTimeout"] = "00:00:07" })
+            .Build();
+
+        services.AddTransactionalIntegration(configuration, () => new TransactionalIntegrationDefinition<Context>());
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Equal(TimeSpan.FromSeconds(7),
+            provider.GetRequiredService<TransactionalIntegrationOptions>().InternalQueueReadyTimeout);
     }
 
     [Fact]

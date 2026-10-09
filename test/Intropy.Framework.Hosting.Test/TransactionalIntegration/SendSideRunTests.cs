@@ -143,6 +143,47 @@ public class SendSideRunTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_AcknowledgesAProbe_WithoutTheSendPipelineOrTheSummary()
+    {
+        var options = Options();
+        var publishing = new TaskCompletionSource();
+        var probes = new List<string>();
+        var run = Subscriber(options).ExecuteAsync(publishing.Task, probes.Add);
+        using var delivery = await ConnectAsync(options);
+
+        var ack = await delivery.DeliverAsync(new CloudEvent
+        {
+            Id = "probe-1", Source = new Uri("urn:$test-integration"), Type = InternalQueueMessageTypes.Probe
+        });
+        publishing.SetResult();
+        var summary = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DeliveryAck.Success, ack);
+        Assert.Equal(["probe-1"], probes);
+        Assert.Equal(RunSummary.Empty, summary);
+        await _pipeline.DidNotReceive().Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BusinessMessagesDoNotSignalProbeReadiness()
+    {
+        var options = Options();
+        var publishing = new TaskCompletionSource();
+        var probes = new List<string>();
+        var run = Subscriber(options).ExecuteAsync(publishing.Task, probes.Add);
+        using var delivery = await ConnectAsync(options);
+
+        var ack = await delivery.DeliverAsync(Event("old-business-message"));
+        publishing.SetResult();
+        var summary = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DeliveryAck.Success, ack);
+        Assert.Empty(probes);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 0, Skipped: 0), summary);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_CountsEachMessagesLatestOutcome()
     {
         var attempts = 0;

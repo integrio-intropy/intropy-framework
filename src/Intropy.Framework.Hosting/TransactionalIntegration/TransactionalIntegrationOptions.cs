@@ -22,26 +22,26 @@ public class TransactionalIntegrationOptions
     public SubscriptionOptions Subscription => _subscription;
 
     /// <summary>
-    /// The name of the Dapr PubSub component to use. Optional: unset, it is the internal hop's
+    /// The name of the Dapr PubSub component to use. Optional: unset, it is the internal queue's
     /// pub/sub the system topology generates for the component, <c>internal-&lt;component&gt;</c>
     /// (the component name with dots as dashes).
     /// </summary>
     public string DaprPubSubName { get; set; } = "";
 
     /// <summary>
-    /// The name of the topic to use. Optional: unset, it is the internal hop's topic the system
+    /// The name of the topic to use. Optional: unset, it is the internal queue's topic the system
     /// topology generates for the component, <c>hop</c>.
     /// </summary>
     public string DaprTopicName { get; set; } = "";
 
-    /// <summary>The internal hop's topic the system topology generates for every transactional
+    /// <summary>The internal queue's topic the system topology generates for every transactional
     /// integration.</summary>
-    internal const string InternalHopTopicName = "hop";
+    internal const string InternalQueueTopicName = "hop";
 
-    /// <summary>The internal hop's pub/sub the system topology generates for
+    /// <summary>The internal queue's pub/sub the system topology generates for
     /// <paramref name="componentName"/>: scoped to the component alone, named after its app id
     /// (the component name with dots as dashes).</summary>
-    internal static string InternalHopPubSubName(string componentName) =>
+    internal static string InternalQueuePubSubName(string componentName) =>
         $"internal-{componentName.Replace('.', '-')}";
 
 
@@ -58,6 +58,22 @@ public class TransactionalIntegrationOptions
     /// </summary>
     /// <value>Default: 45 seconds</value>
     public TimeSpan PostIdleGracePeriod { get; set; } = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// The longest a run waits, before it sweeps, for the internal queue to deliver a probe. A
+    /// broker can discard a message published before the subscription has created its queue, so
+    /// no file is published (and completed) until a probe from this run has come back. When none
+    /// comes back in time, the run touches no source file and exits with
+    /// <c>JobExitCodes.InfrastructureFailure</c>. Must be positive and within the .NET timer range.
+    /// Applies only when the receive side's enqueuer can be probed (the built-in Dapr enqueuer).
+    /// Run only one job instance per internal queue; competing consumers can receive each other's
+    /// probes. This startup check does not protect against queue deletion after readiness.
+    /// </summary>
+    /// <value>Default: 60 seconds</value>
+    public TimeSpan InternalQueueReadyTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>How long a run waits for a probe before publishing another.</summary>
+    internal TimeSpan InternalQueueProbeInterval { get; set; } = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// The max amount of time a message is allowed to be processed for.
@@ -100,16 +116,25 @@ public class TransactionalIntegrationOptions
         _subscription.TopicName = DaprTopicName;
     }
 
-    /// <summary>Fills the pub/sub and topic left unset with the internal hop the system topology
+    /// <summary>Fills the pub/sub and topic left unset with the internal queue the system topology
     /// generates for <paramref name="componentName"/>, in both shapes.</summary>
-    internal void UseInternalHopDefaults(string componentName)
+    internal void UseInternalQueueDefaults(string componentName)
     {
         if (string.IsNullOrEmpty(DaprPubSubName))
-            DaprPubSubName = InternalHopPubSubName(componentName);
+            DaprPubSubName = InternalQueuePubSubName(componentName);
         if (string.IsNullOrEmpty(DaprTopicName))
-            DaprTopicName = InternalHopTopicName;
+            DaprTopicName = InternalQueueTopicName;
         _subscription.PubSubName = DaprPubSubName;
         _subscription.TopicName = DaprTopicName;
+    }
+
+    /// <summary>Checks that readiness always has a bounded, usable .NET timer.</summary>
+    internal void EnsureValidInternalQueueReadyTimeout(string paramName)
+    {
+        if (InternalQueueReadyTimeout <= TimeSpan.Zero || InternalQueueReadyTimeout.TotalMilliseconds > uint.MaxValue - 1)
+            throw new ArgumentOutOfRangeException(paramName, InternalQueueReadyTimeout,
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(InternalQueueReadyTimeout)} must be positive and " +
+                $"no greater than {uint.MaxValue - 1} milliseconds.");
     }
 
     private static string Consolidate(string legacyMember, string legacy, string composedMember, string composed)

@@ -29,13 +29,13 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Context
 {
     /// <summary>The name of the Dapr pub/sub component the receive side publishes swept files to.
-    /// Optional: unset, it is the internal hop's pub/sub the system topology generates for the
+    /// Optional: unset, it is the internal queue's pub/sub the system topology generates for the
     /// component. (Member name mirrors
     /// <see cref="TransactionalIntegrationOptions.DaprPubSubName"/>.)</summary>
     public string? DaprPubSubName { get; init; }
 
     /// <summary>The name of the topic the receive side publishes swept files to, and the sidecar
-    /// pushes back to the send side. Optional: unset, it is the internal hop's topic the system
+    /// pushes back to the send side. Optional: unset, it is the internal queue's topic the system
     /// topology generates for the component. (Member name mirrors
     /// <see cref="TransactionalIntegrationOptions.DaprTopicName"/>.)</summary>
     public string? DaprTopicName { get; init; }
@@ -83,10 +83,11 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
             options.DaprPubSubName = DaprPubSubName;
         if (NonEmpty(DaprTopicName))
             options.DaprTopicName = DaprTopicName;
-        // Unset everywhere, the names default to the internal hop when the options are resolved.
+        // Unset everywhere, the names default to the internal queue when the options are resolved.
         options.ConsolidateSubscription();
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), "definition");
+        options.EnsureValidInternalQueueReadyTimeout("definition");
         return options;
     }
 
