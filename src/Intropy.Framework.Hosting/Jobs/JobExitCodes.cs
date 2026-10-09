@@ -20,7 +20,9 @@ public static class JobExitCodes
 
     /// <summary>
     /// The infrastructure failed before the job could run: the Dapr sidecar did
-    /// not become available within <see cref="JobOptions.SidecarTimeout"/>.
+    /// not become available within <see cref="JobOptions.SidecarTimeout"/>, or infrastructure
+    /// the job checks before working did not become usable (a Transactional Integration's
+    /// internal queue delivering nothing within its <c>InternalQueueReadyTimeout</c>).
     /// </summary>
     public const int InfrastructureFailure = 2;
 }
