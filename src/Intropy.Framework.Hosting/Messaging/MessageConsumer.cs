@@ -205,6 +205,9 @@ internal sealed class MessageConsumer : IDisposable
             case MessageOutcome.Skipped:
                 _logger.LogDebug("Message {MessageId} is a duplicate; consumed", message.MessageId);
                 break;
+            case MessageOutcome.Probe:
+                _logger.LogDebug("Message {MessageId} is a internal queue probe; consumed", message.MessageId);
+                break;
             case MessageOutcome.Interrupted:
                 _logger.LogInformation("Message {MessageId} was interrupted by the host stopping; left for redelivery",
                     message.MessageId);
@@ -224,7 +227,7 @@ internal sealed class MessageConsumer : IDisposable
 
     private bool Acknowledges(MessageOutcome outcome) => outcome switch
     {
-        MessageOutcome.Processed or MessageOutcome.Skipped => true,
+        MessageOutcome.Processed or MessageOutcome.Skipped or MessageOutcome.Probe => true,
         MessageOutcome.Unrouted => _settings.AcknowledgeUnrouted,
         _ => false
     };

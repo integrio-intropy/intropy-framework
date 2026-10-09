@@ -95,6 +95,13 @@ public class JobRunner
             activity?.SetStatus(ActivityStatusCode.Error, $"{summary.Failed} item(s) failed");
             return JobExitCodes.JobFailure;
         }
+        catch (InfrastructureUnavailableException e)
+        {
+            _logger.LogError(e, "Job {JobName} could not run: {Reason}", _options.JobName, e.Message);
+            activity?.AddException(e);
+            activity?.SetStatus(ActivityStatusCode.Error, e.Message);
+            return JobExitCodes.InfrastructureFailure;
+        }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Host cancellation is not failure by design: the job is idempotent. A cancellation

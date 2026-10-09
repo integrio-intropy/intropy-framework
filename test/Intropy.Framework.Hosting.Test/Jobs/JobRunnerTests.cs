@@ -89,6 +89,17 @@ public class JobRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_ShouldReturnInfrastructureFailure_WhenJobFindsItsInfrastructureUnavailable()
+    {
+        _job.ExecuteAsync(Arg.Any<CancellationToken>())
+            .ThrowsAsync(new InfrastructureUnavailableException("the internal queue delivered nothing"));
+
+        var result = await CreateRunner().RunAsync();
+
+        Assert.Equal(JobExitCodes.InfrastructureFailure, result);
+    }
+
+    [Fact]
     public async Task RunAsync_ShouldReturnJobFailure_WhenJobThrows()
     {
         _job.ExecuteAsync(Arg.Any<CancellationToken>())
