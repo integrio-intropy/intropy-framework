@@ -132,9 +132,11 @@ public class TransactionalIntegrationRoutesTests
     {
         var services = GetServices();
 
-        Assert.Throws<ArgumentException>(() => services.AddTransactionalIntegration(Definition,
+        var error = Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in"),
             routes => routes.On<OrderFile, string>(m => m.Port("orders-in"), Send).OnAny<OrderFile, string>(Send)));
+
+        Assert.Contains("cannot be combined with other routes", error.Message);
     }
 
     [Fact]
@@ -207,9 +209,13 @@ public class TransactionalIntegrationRoutesTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_RejectsNoRoutes() =>
-        Assert.Throws<ArgumentException>(() =>
+    public void AddTransactionalIntegration_RejectsNoRoutes()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
             GetServices().AddTransactionalIntegration(Definition, sources => sources.Port("orders-in"), _ => { }));
+
+        Assert.Contains("no route is declared", error.Message);
+    }
 
     [Fact]
     public void AddTransactionalIntegration_RejectsAnAlreadyRegisteredSourcePort()

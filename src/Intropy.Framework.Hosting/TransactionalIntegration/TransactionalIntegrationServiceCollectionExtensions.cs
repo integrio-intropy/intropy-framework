@@ -152,10 +152,9 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <param name="configureRoutes">Declares the send routes.</param>
     /// <returns>The service collection for chaining.</returns>
     /// <exception cref="InvalidOperationException">The definition is incomplete or sets a source
-    /// port; no source or route is declared; a route names an undeclared port, a port is routed
-    /// twice or not at all; a source port or a Transactional Integration is already registered.</exception>
-    /// <exception cref="ArgumentException">A route for every file is combined with other
-    /// routes.</exception>
+    /// port; no source or route is declared; a route for every file is combined with other routes;
+    /// a route names an undeclared port, a port is routed twice or not at all; a source port or a
+    /// Transactional Integration is already registered.</exception>
     public static IServiceCollection AddTransactionalIntegration<TCtx>(this IServiceCollection services,
         TransactionalIntegrationDefinition<TCtx> definition, Action<FileSources> configureSources,
         Action<TransactionalIntegrationRoutes<TCtx>> configureRoutes) where TCtx : Context
@@ -174,9 +173,9 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         configureSources(sources);
         var routes = new TransactionalIntegrationRoutes<TCtx>();
         configureRoutes(routes);
+        sources.EnsureRoutedBy([.. routes.Matches], "Transactional Integration");
         var contextFactory = definition.ResolveContextFactory();
         var table = new MessageRouteTable(routes.Build(contextFactory));
-        sources.EnsureRoutedBy([.. routes.Matches], "Transactional Integration");
         ComponentRegistration.EnsureSingleKind(services, "transactional integration");
         SourcePortServiceCollectionExtensions.AddSourcePorts(services, sources.Ports);
         ComponentRegistration.MarkRegistered(services, "transactional integration");

@@ -166,7 +166,8 @@ routes its messages, the span and both messaging metrics also carry the route in
 `intropy.loader.route`: a loader's event type, or a Transactional Integration's send route (its
 ports, for example `orders-se+orders-no`). A component with several source
 ports sweeps them one after another in one run, so `intropy.source.port` on
-`intropy.sweep.files` tells the ports apart. A run that never started, because the sidecar didn't come up,
+`intropy.sweep.files` tells the ports apart. An extractor's routes show in `pipeline.name`
+(`{component}.Process.{route}`, for example `orders-extractor.Process.orders-se+orders-no`). A run that never started, because the sidecar didn't come up,
 is counted with exit code `2`. Job durations use buckets from 1 second to 1 hour. Message
 durations use the buckets that the messaging conventions advise.
 

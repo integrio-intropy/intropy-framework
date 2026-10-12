@@ -288,6 +288,67 @@ switch (result)
 }
 ```
 
+## Several source ports and routes
+
+A hosted extractor (see the Hosting README) can sweep several source ports and send each port's
+files through the pipeline for its data: for example orders and invoices from the same partner,
+delivered to different folders. Each port carries one kind of data, in one format. Declare the ports
+as **sources** and the pipelines as **routes**, the same shape as a
+[Transactional Integration's send routes](transactional-integration.md#several-source-ports-and-send-routes):
+
+```csharp
+builder.Services.AddExtractor<OrderContext>(
+    sources => sources
+        .Port("orders-in")
+        .Port("invoices-in", FileCompletion.Archive("processed")),
+    routes => routes
+        .On<OrderFile, Order>(m => m.Port("orders-in"), (builder, sp) => builder
+            .WithDeserializer<OrderDeserializer>()
+            .WithIdempotency((order, _) => order.Id, (order, _) => order.ChangedAt)
+            /* validator, transformer, serializer, sender as for any extractor */)
+        .On<InvoiceFile, Invoice>(m => m.Port("invoices-in"), (builder, sp) => builder
+            .WithDeserializer<InvoiceDeserializer>()
+            /* ... */)),
+    (metadata, isRetry) => new OrderContext(metadata, isRetry));
+```
+
+Each route's pipeline is typed on its own data (`On<TInput, TOutput>`) and configured exactly like
+`AddExtractor`'s; only the context type is shared by the whole extractor. On the base `Context`,
+leave out the context factory: `AddExtractor(sources, routes)`. Each port's file adapter is
+registered keyed by the port name, as for a single port. Don't call `AddSourcePort`: the sources
+declare the ports.
+
+A route names the ports whose files it handles: `m.Port("orders-in")`, or several ports that carry
+the same data, `m.Port("orders-se", "orders-no")`. When every port carries the same data, declare
+one route for all of them with `OnAny`. The startup checks are the Transactional Integration's: no
+source or no route, a route naming an undeclared port, a port handled by no route or by more than
+one, and `OnAny` combined with routes by port all fail the registration. Before any file is listed,
+each port's pipeline is built once, so a route that cannot be composed fails the run naming the
+route. The ports are swept one after another, in declaration order; a port that fails does not stop
+the others, but the run still fails, naming every port that failed.
+
+### What the routes add to each pipeline
+
+Each route's pipeline is built for one port at a time, and that port changes two things:
+
+- **The published event carries the port.** Every CloudEvent the pipeline sends has the
+  `intropysourceport` extension, set by the framework, never from the context. A consumer can
+  filter on it; most route on the CloudEvent type instead, which each route sets on its own.
+- **Idempotency records are kept per port.** The id is `{port}:{id}`, so order `123` from one port
+  and invoice `123` from another are never duplicates of each other, and adding a port never
+  changes the records of the others. When several ports deliver copies of the same feed and a
+  record seen on one should be a duplicate on all of them, share the records:
+  `.WithIdempotency(idExtractor, dateExtractor, scope: IdempotencyScope.Entity)`.
+
+!!! warning "Moving an existing extractor to routes"
+    An extractor registered without routes keys its records on the id alone. Moved to routes, its
+    ids gain the port prefix, so files that are already recorded would be processed again. Keep the
+    old records with `scope: IdempotencyScope.Entity` on that port's route, or accept a one-time
+    re-run.
+
+The pipelines are named `{component}.Process.{route}`, where the route is its ports, for example
+`orders-extractor.Process.orders-se+orders-no`; an `OnAny` route keeps `{component}.Process`.
+
 ## Related
 
 - [Transactional Integration](transactional-integration.md) — the two-pipeline alternative

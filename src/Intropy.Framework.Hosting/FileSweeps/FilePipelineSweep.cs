@@ -39,7 +39,7 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// <see cref="JobRunner"/> owns the sidecar lifecycle, job tracing, and exit codes.
 /// </para>
 /// </remarks>
-/// <typeparam name="TPipeline">The pipeline service, resolved per file.</typeparam>
+/// <typeparam name="TPipeline">The pipeline, resolved per file (<see cref="ResolvePipeline"/>).</typeparam>
 /// <typeparam name="TResult">The pipeline's result value.</typeparam>
 /// <typeparam name="TCtx">The pipeline context.</typeparam>
 internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
@@ -54,7 +54,7 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
     private readonly ILogger _logger = loggerFactory.CreateLogger<FilePipelineSweep<TPipeline, TResult, TCtx>>();
 
     /// <summary>The component's identity, registered with <c>AddIntropyFramework</c>.</summary>
-    private string ComponentName => frameworkOptions.ComponentName;
+    protected string ComponentName => frameworkOptions.ComponentName;
 
     /// <inheritdoc />
     public string Port => source.Name;
@@ -67,7 +67,7 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
         _ = provider.GetKeyedService<IFileAdapter>(source.Name) ?? throw new InvalidOperationException(
             $"Component '{ComponentName}': no IFileAdapter is registered for the source port '{source.Name}'.");
         await using (var validationScope = provider.CreateAsyncScope())
-            _ = validationScope.ServiceProvider.GetRequiredService<TPipeline>();
+            _ = ResolvePipeline(validationScope.ServiceProvider);
     }
 
     /// <inheritdoc />
@@ -79,13 +79,17 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
         new FileSweep(provider, source.Name, ComponentName, source.Completion, loggerFactory)
             .SweepAsync(HandleFileAsync, ct);
 
+    /// <summary>The pipeline for this port's files, in <paramref name="scope"/>: by default the
+    /// component's registered <typeparamref name="TPipeline"/>.</summary>
+    protected virtual TPipeline ResolvePipeline(IServiceProvider scope) => scope.GetRequiredService<TPipeline>();
+
     /// <summary>Reads <paramref name="file"/> and runs it through <paramref name="pipeline"/>.</summary>
     protected abstract Task<StepResult<TResult>> RunPipelineAsync(TPipeline pipeline, SweptFile file, TCtx context,
         CancellationToken ct);
 
     private async Task<FileOutcome> HandleFileAsync(SweptFile file, CancellationToken ct)
     {
-        var pipeline = file.Services.GetRequiredService<TPipeline>();
+        var pipeline = ResolvePipeline(file.Services);
         var context = CreateContext(file);
         var result = await RunPipelineAsync(pipeline, file, context, ct);
         switch (result)

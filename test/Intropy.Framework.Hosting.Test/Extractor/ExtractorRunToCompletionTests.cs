@@ -36,7 +36,7 @@ public class ExtractorRunToCompletionTests
         await provider.ValidateExtractorCompositionAsync<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>();
 
         var job = provider.GetRequiredService<IJob>();
-        Assert.IsType<ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>>(job);
+        Assert.IsType<ExtractorJob<ExtractorTestProcess.TestContext>>(job);
         Assert.Equal("orders-extractor", provider.GetRequiredService<JobOptions>().JobName);
         Assert.Empty(provider.GetRequiredService<DaprClient>().ReceivedCalls()); // no external calls
     }

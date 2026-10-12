@@ -340,7 +340,7 @@ public class ExtractorJobCancellationTests
         Assert.Empty(fakes.Topic.Events);
     }
 
-    private static ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>
+    private static ExtractorJob<ExtractorTestProcess.TestContext>
         CreateSweep(IServiceCollection services)
     {
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });

@@ -42,9 +42,10 @@ public static class SourcePortServiceCollectionExtensions
         return services;
     }
 
-    /// <summary>Registers the source ports of a component that declares several in one place (a
-    /// Transactional Integration's sources): all of them, or none when a source port is already
-    /// registered. The ports' adapters are registered separately, keyed by port name.</summary>
+    /// <summary>Registers the source ports of a component that declares them in one place (the
+    /// sources of an extractor or a Transactional Integration with routes): all of them, or none
+    /// when a source port is already registered. The ports' adapters are registered separately,
+    /// keyed by port name.</summary>
     /// <exception cref="InvalidOperationException">A source port is already registered.</exception>
     internal static void AddSourcePorts(IServiceCollection services, IReadOnlyList<SourcePort> ports)
     {

@@ -3,7 +3,7 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// <summary>
 /// The source ports a file-driven component sweeps, each with what happens to a file once the
 /// component has handled it. Which pipeline a file goes through is declared separately, by the
-/// component's routes (for a Transactional Integration,
+/// component's routes (<see cref="Extractor.ExtractorRoutes{TCtx}"/>,
 /// <see cref="TransactionalIntegration.TransactionalIntegrationRoutes{TCtx}"/>), each selecting
 /// files with a <see cref="FileMatch"/>.
 /// </summary>
@@ -36,18 +36,24 @@ public sealed class FileSources
     /// <summary>The declared ports, in declaration order.</summary>
     internal IReadOnlyList<SourcePort> Ports => _ports;
 
-    /// <summary>Checks that the sources and a component's routes agree: at least one port is
-    /// declared, every port a route names is declared, and every declared port is handled by exactly
-    /// one route.</summary>
+    /// <summary>Checks that the sources and a component's routes agree: at least one port and one
+    /// route are declared, a route for every file is the only route, every port a route names is
+    /// declared, and every declared port is handled by exactly one route.</summary>
     /// <param name="matches">The routes' matches, in declaration order; null for a route for every
     /// file.</param>
-    /// <param name="componentKind">The component kind, for errors ("Transactional Integration").</param>
+    /// <param name="componentKind">The component kind, for errors ("Extractor").</param>
     /// <exception cref="InvalidOperationException">The sources and the routes disagree.</exception>
     internal void EnsureRoutedBy(IReadOnlyCollection<FileMatch?> matches, string componentKind)
     {
         if (_ports.Count == 0)
             throw new InvalidOperationException(
                 $"{componentKind} composition failed: no source port is declared; declare one with Port.");
+        if (matches.Count == 0)
+            throw new InvalidOperationException(
+                $"{componentKind} composition failed: no route is declared; declare one with On or OnAny.");
+        if (matches.Count > 1 && matches.Contains(null))
+            throw new InvalidOperationException(
+                $"{componentKind} composition failed: a route for every file (OnAny) cannot be combined with other routes.");
         var swept = _ports.Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
         if (matches.SelectMany(m => m?.Ports ?? []).FirstOrDefault(port => !swept.Contains(port)) is { } unknown)
             throw new InvalidOperationException(

@@ -198,14 +198,14 @@ public class ExtractorJobIsolationTests
             c => Assert.NotEmpty(c.GetParameters()));
     }
 
-    private static (ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext> Sweep,
+    private static (ExtractorJob<ExtractorTestProcess.TestContext> Sweep,
         ExtractorSweepTestProcess.ProbeCollector Collector) CreateProbedSweep(params string[] files)
     {
         var (sweep, _, collector) = CreateProbedSweepStateful(files);
         return (sweep, collector);
     }
 
-    private static (ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext> Sweep,
+    private static (ExtractorJob<ExtractorTestProcess.TestContext> Sweep,
         ExtractorSweepTestProcess.SweepFakes Fakes, ExtractorSweepTestProcess.ProbeCollector Collector)
         CreateProbedSweepStateful(params string[] files)
     {
@@ -223,7 +223,7 @@ public class ExtractorJobIsolationTests
         return (sweep, fakes, collector);
     }
 
-    private static ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>
+    private static ExtractorJob<ExtractorTestProcess.TestContext>
         CreateSweep(IServiceCollection services)
     {
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
