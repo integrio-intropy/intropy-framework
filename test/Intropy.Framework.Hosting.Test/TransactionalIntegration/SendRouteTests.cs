@@ -13,16 +13,18 @@ using NSubstitute;
 namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
 
 /// <summary>
-/// The Transactional Integration's message handler: rebuilds the integration's context from what
-/// the receive side propagated, runs the message's data through the send pipeline, and maps the
-/// result to the message's outcome.
+/// A Transactional Integration's send routes, through the routing handler the send side runs: a
+/// route rebuilds the integration's context from what the receive side propagated, runs the
+/// message's data through its send pipeline, and maps the result to the message's outcome. A
+/// declared route matches on the source port and file name the framework recorded on the message,
+/// never on the editable metadata.
 /// </summary>
-public class MessageProcessorTests
+public class SendRouteTests
 {
     private readonly ISendPipeline<OrderContext> _pipeline = Substitute.For<ISendPipeline<OrderContext>>();
 
-    private MessageProcessor<OrderContext> Processor() =>
-        new(_pipeline, (metadata, isRetry) => new OrderContext(metadata, isRetry), "test-integration");
+    private RoutingMessageHandler Processor() =>
+        SendRouting.Handler(_pipeline, (metadata, isRetry) => new OrderContext(metadata, isRetry));
 
     private static IncomingMessage Message(string id = "msg-1", IDictionary<string, string>? extensions = null) =>
         IncomingMessage.From(MessageConsumerTests.Request(id, extensions: extensions));
@@ -117,6 +119,64 @@ public class MessageProcessorTests
         Assert.Equal(MessageOutcome.Interrupted, handled.Outcome.Outcome);
         Assert.Null(handled.Outcome.ErrorType);
     }
+
+    [Fact]
+    public async Task HandleAsync_WithoutRoutes_ReportsNoRouteName()
+    {
+        PipelineReturns(new StepResult<string>.Success(""));
+
+        var handled = await Processor().HandleAsync(Message(), null, CancellationToken.None, CancellationToken.None);
+
+        Assert.Null(handled.Route);
+    }
+
+    [Theory]
+    [InlineData("orders-in", "order-1.csv", true)]
+    [InlineData("orders-in", "ORDER-1.CSV", true)] // file name patterns ignore case
+    [InlineData("orders-in", "order-1.xml", false)]
+    [InlineData("invoices-in", "order-1.csv", false)]
+    [InlineData(null, "order-1.csv", false)] // an unknown port never matches a port criterion
+    [InlineData("orders-in", null, false)]
+    public void DeclaredRoute_MatchesOnTheRecordedPortAndFileName(string? port, string? fileName, bool matches)
+    {
+        var route = Declared(m => m.Port("orders-in", "orders-no").FileName("*.csv"));
+        var extensions = new Dictionary<string, string>();
+        if (port is not null)
+            extensions[CloudEventExtensionKeys.SourcePort] = port;
+        if (fileName is not null)
+            extensions[CloudEventExtensionKeys.FileName] = fileName;
+
+        Assert.Equal(matches, route.Matches(Message("msg-1", extensions)));
+    }
+
+    [Fact]
+    public void DeclaredRoute_IgnoresTheEditableMetadata()
+    {
+        // A receive step rewrote source_port and file_name; the framework-recorded extensions decide.
+        var route = Declared(m => m.Port("invoices-in"));
+
+        Assert.False(route.Matches(Message("msg-1", new Dictionary<string, string>
+        {
+            [CloudEventExtensionKeys.SourcePort] = "orders-in",
+            [CloudEventExtensionKeys.FileName] = "order-1.csv",
+            ["metadata"] = "{\"source_port\":\"invoices-in\"}"
+        })));
+    }
+
+    [Fact]
+    public void DeclaredRoute_IsNamedAfterItsMatch()
+    {
+        Assert.Equal("orders-in+orders-no(*.csv|*.txt)",
+            Declared(m => m.Port("orders-in", "orders-no").FileName("*.csv", "*.txt")).Name);
+        Assert.Equal("*(*.xml)", Declared(m => m.FileName("*.xml")).Name);
+        Assert.Null(new DeclaredSendRoute<string, string, OrderContext>(null, (send, _) => send,
+            (metadata, isRetry) => new OrderContext(metadata, isRetry)).Name);
+    }
+
+    private static DeclaredSendRoute<string, string, OrderContext> Declared(
+        Func<TransactionalIntegrationMatch, TransactionalIntegrationMatch> match) =>
+        new(match(new TransactionalIntegrationMatch()), (send, _) => send,
+            (metadata, isRetry) => new OrderContext(metadata, isRetry));
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);
 }

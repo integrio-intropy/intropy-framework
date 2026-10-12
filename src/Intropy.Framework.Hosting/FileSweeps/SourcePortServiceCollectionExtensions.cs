@@ -42,12 +42,23 @@ public static class SourcePortServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>Registers the source ports of a component that declares several in one place (a
+    /// Transactional Integration's sources): all of them, or none when a source port is already
+    /// registered. The ports' adapters are registered separately, keyed by port name.</summary>
+    /// <exception cref="InvalidOperationException">A source port is already registered.</exception>
+    internal static void AddSourcePorts(IServiceCollection services, IReadOnlyList<SourcePort> ports)
+    {
+        EnsureNoSourcePort(services, string.Join("', '", ports.Select(p => p.Name)));
+        foreach (var port in ports)
+            services.AddSingleton(port);
+    }
+
     private static void EnsureNoSourcePort(IServiceCollection services, string port)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(port);
         if (services.Any(d => d.ServiceType == typeof(SourcePort)))
             throw new InvalidOperationException(
-                $"A source port is already registered; a component sweeps one source (adding '{port}').");
+                $"A source port is already registered; a component declares its source ports once (adding '{port}').");
     }
 }

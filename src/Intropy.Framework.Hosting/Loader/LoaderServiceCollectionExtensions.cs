@@ -198,7 +198,7 @@ public static class LoaderServiceCollectionExtensions
     private static IServiceCollection AddLoaderCore(IServiceCollection services, LoaderOptions options,
         LoaderRoutes routes)
     {
-        var table = new LoaderRouteTable(routes.Routes);
+        var table = new MessageRouteTable(routes.Routes);
 
         services.AddSingleton(options);
         services.AddSingleton(table);
@@ -211,15 +211,16 @@ public static class LoaderServiceCollectionExtensions
                 host.ShutdownTimeout = required;
         });
 
-        services.AddSingleton(provider => new LoaderMessageHandler(
-            provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider)));
+        services.AddSingleton(provider => new RoutingMessageHandler(
+            provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider),
+            message => $"No route handles event type '{message.Type}'", defaultPathIsUnrouted: true));
 
         services.AddSingleton(new MessageConsumerSettings(options.PubSubName, options.TopicName,
             options.MaxMessageProcessingTime, options.ShutdownGracePeriod,
             AcknowledgeUnrouted: options.Unrouted == UnroutedPolicy.Ack));
         services.AddHostedService(provider => new LoaderService(
             provider.GetRequiredService<MessageConsumerSettings>(),
-            provider.GetRequiredService<LoaderMessageHandler>(),
+            provider.GetRequiredService<RoutingMessageHandler>(),
             table,
             options,
             ComponentName(provider),

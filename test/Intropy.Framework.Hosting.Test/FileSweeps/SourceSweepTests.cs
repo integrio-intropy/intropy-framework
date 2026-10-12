@@ -2,13 +2,15 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Intropy.Framework.Hosting.Test.FileSweeps;
 
 /// <summary>
 /// The run's sweep over a component's source ports: no port fails the run before anything is
-/// swept, every port is validated before any port is swept, and the ports' summaries are added
-/// together in registration order.
+/// swept, every port is validated before any port is swept, the ports' summaries are added
+/// together in registration order, and one failing port of several does not stop the others but
+/// still fails the run.
 /// </summary>
 public class SourceSweepTests
 {
@@ -58,7 +60,7 @@ public class SourceSweepTests
     }
 
     [Fact]
-    public async Task SweepAsync_WhenAPortsSweepThrows_PropagatesTheFailure()
+    public async Task SweepAsync_WithOnePort_PropagatesItsFailureUnchanged()
     {
         // A listing failure is never reported as an empty successful sweep.
         var calls = new List<string>();
@@ -68,6 +70,53 @@ public class SourceSweepTests
         var error = await Assert.ThrowsAsync<IOException>(() => sweep.SweepAsync(CancellationToken.None));
 
         Assert.Equal("SFTP unreachable", error.Message);
+    }
+
+    [Fact]
+    public async Task SweepAsync_WithSeveralPorts_SweepsTheOthersWhenOneFails_ThenFailsTheRunNamingIt()
+    {
+        var calls = new List<string>();
+        var listingFailure = new IOException("SFTP unreachable");
+        var sweep = Sweep(["orders-in", "invoices-in", "stock-in"], port => port.Name == "orders-in"
+            ? new RecordingPortSweep(port.Name, calls, sweepFailure: listingFailure)
+            : new RecordingPortSweep(port.Name, calls, summary: new RunSummary(Processed: 1, Failed: 0, Skipped: 0)));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => sweep.SweepAsync(CancellationToken.None));
+
+        Assert.Equal(["validate orders-in", "validate invoices-in", "validate stock-in",
+            "sweep orders-in", "sweep invoices-in", "sweep stock-in"], calls);
+        Assert.Equal("Component 'test-component': sweeping source port(s) 'orders-in' failed", error.Message);
+        var inner = Assert.IsType<AggregateException>(error.InnerException);
+        Assert.Same(listingFailure, Assert.Single(inner.InnerExceptions));
+    }
+
+    [Fact]
+    public async Task SweepAsync_WithSeveralFailingPorts_NamesEveryFailedPort()
+    {
+        var sweep = Sweep(["orders-in", "invoices-in"], port =>
+            new RecordingPortSweep(port.Name, [], sweepFailure: new IOException($"{port.Name} unreachable")));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => sweep.SweepAsync(CancellationToken.None));
+
+        Assert.Equal("Component 'test-component': sweeping source port(s) 'orders-in', 'invoices-in' failed",
+            error.Message);
+        Assert.Equal(2, Assert.IsType<AggregateException>(error.InnerException).InnerExceptions.Count);
+    }
+
+    [Fact]
+    public async Task SweepAsync_WithSeveralPorts_PropagatesAFailureWhileTheHostCancels()
+    {
+        // Host cancellation ends the run; it is not a port failure to isolate.
+        using var cts = new CancellationTokenSource();
+        var calls = new List<string>();
+        var sweep = Sweep(["orders-in", "invoices-in"], port => port.Name == "orders-in"
+            ? new RecordingPortSweep(port.Name, calls, sweepFailure: new OperationCanceledException(),
+                onSweep: _ => cts.Cancel())
+            : new RecordingPortSweep(port.Name, calls));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() => sweep.SweepAsync(cts.Token));
+
+        Assert.DoesNotContain("sweep invoices-in", calls);
     }
 
     [Fact]
@@ -87,7 +136,7 @@ public class SourceSweepTests
         var services = new ServiceCollection();
         foreach (var port in ports)
             services.AddSingleton(new SourcePort(port, FileCompletion.Delete));
-        return new SourceSweep(services.BuildServiceProvider(), Identity, createSweep);
+        return new SourceSweep(services.BuildServiceProvider(), Identity, createSweep, NullLoggerFactory.Instance);
     }
 
     private sealed class RecordingPortSweep(

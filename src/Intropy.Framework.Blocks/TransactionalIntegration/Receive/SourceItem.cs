@@ -12,4 +12,9 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 public record SourceItem(
     string Id,
     byte[] Data
-);
+)
+{
+    /// <summary>The source port the item was swept from, when the framework swept it. The send side
+    /// of a Transactional Integration with send routes routes on it, and on <see cref="Id"/>.</summary>
+    public string? Port { get; init; }
+}

@@ -69,7 +69,8 @@ public class TransactionalIntegrationJobTests
         Assert.Empty(source.Files);
         Assert.Equal(2, summary.Processed);
         await _receivePipeline.Received(1).Execute(
-            Arg.Is<SourceItem>(item => item.Id == "file1.txt" && item.Data.SequenceEqual(firstContent)),
+            Arg.Is<SourceItem>(item => item.Id == "file1.txt" && item.Data.SequenceEqual(firstContent)
+                && item.Port == SourceKey),
             Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
@@ -142,8 +143,7 @@ public class TransactionalIntegrationJobTests
         services.AddSingleton(receivePipeline);
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         ContextFactory<OrderContext> factory = (metadata, isRetry) => new OrderContext(metadata, isRetry);
-        var sendProcessor = new MessageProcessor<OrderContext>(Substitute.For<ISendPipeline<OrderContext>>(), factory,
-            "test-integration");
+        var sendHandler = SendRouting.Handler(Substitute.For<ISendPipeline<OrderContext>>(), factory);
         var options = new TransactionalIntegrationOptions
         {
             DaprPubSubName = _options.DaprPubSubName,
@@ -154,7 +154,7 @@ public class TransactionalIntegrationJobTests
         };
         var lifecycle = new TransactionalIntegrationJob<OrderContext>(
             new TransactionalIntegrationReceiver<OrderContext>(provider, Identity, factory, _loggerFactory),
-            new SendSideRun<OrderContext>(sendProcessor, options, "test-integration", _loggerFactory),
+            new SendSideRun(sendHandler, options, "test-integration", _loggerFactory),
             _loggerFactory);
 
         await lifecycle.ExecuteAsync(CancellationToken.None);
@@ -393,9 +393,8 @@ public class TransactionalIntegrationJobTests
 
     /// <summary>Builds the send side around the shared substitutes, composing the processor the
     /// way the DI registration does.</summary>
-    private SendSideRun<Context> Subscriber(TransactionalIntegrationOptions options) =>
-        new(new MessageProcessor<Context>(_sendPipeline, NewContext, "test-integration"),
-            options, "test-integration", _loggerFactory);
+    private SendSideRun Subscriber(TransactionalIntegrationOptions options) =>
+        new(SendRouting.Handler(_sendPipeline, NewContext), options, "test-integration", _loggerFactory);
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);
 }

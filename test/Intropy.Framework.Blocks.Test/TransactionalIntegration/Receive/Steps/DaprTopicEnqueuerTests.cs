@@ -55,6 +55,31 @@ public class DaprTopicEnqueuerTests
         Assert.Equal("orders-in", metadata[SourceContextKeys.SourcePort]); // reaches the send side
     }
 
+    [Theory]
+    [InlineData("orders-in")]
+    [InlineData(null)]
+    public async Task ExecuteAsync_CarriesTheItemsSourcePort_AsItsOwnExtension(string? port)
+    {
+        var daprClient = Substitute.For<DaprClient>();
+        byte[]? data = null;
+        daprClient
+            .PublishByteEventAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<ReadOnlyMemory<byte>>(),
+                Arg.Any<string>(), Arg.Any<Dictionary<string, string>?>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask)
+            .AndDoes(ci => data = ci.ArgAt<ReadOnlyMemory<byte>>(2).ToArray());
+        var enqueuer = new DaprTopicEnqueuer<Context>(daprClient, "internal-orders", "hop", Options);
+        var item = new SourceItem("order-1.json", "{}"u8.ToArray()) { Port = port };
+        // The context claims another port: routing must not depend on the editable metadata.
+        var context = new Context(new Dictionary<string, string> { [SourceContextKeys.SourcePort] = "spoofed" });
+
+        await enqueuer.ExecuteAsync(item, context, CancellationToken.None);
+
+        var portAttribute = CloudEventAttribute.CreateExtension(CloudEventExtensionKeys.SourcePort,
+            CloudEventAttributeType.String);
+        var envelope = new JsonEventFormatter().DecodeStructuredModeMessage(data, null, [portAttribute]);
+        Assert.Equal(port, (string?)envelope[portAttribute]);
+    }
+
     [Fact]
     public async Task ExecuteAsync_PublishesUnderAProducerSpan_WhoseContextTheEnvelopeCarries()
     {

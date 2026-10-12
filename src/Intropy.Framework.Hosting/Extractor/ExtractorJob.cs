@@ -30,7 +30,8 @@ internal sealed class ExtractorJob<TInput, TOutput, TCtx>(
     where TCtx : Context
 {
     private readonly SourceSweep _sweep = new(provider, frameworkOptions, source =>
-        new ExtractorPortSweep<TInput, TOutput, TCtx>(source, provider, frameworkOptions, contextFactory, loggerFactory));
+        new ExtractorPortSweep<TInput, TOutput, TCtx>(source, provider, frameworkOptions, contextFactory, loggerFactory),
+        loggerFactory);
 
     /// <summary>Runs one sweep of the source port.</summary>
     public Task<RunSummary> ExecuteAsync(CancellationToken ct) => _sweep.SweepAsync(ct);

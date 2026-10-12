@@ -10,4 +10,14 @@ public static class CloudEventExtensionKeys
     /// <summary>The pipeline context metadata, as a JSON object of string keys and values,
     /// propagated with each message so the consumer rebuilds the context it was sent with.</summary>
     public const string Metadata = "metadata";
+
+    /// <summary>The source port a Transactional Integration swept the message's file from. Set by
+    /// the framework from the sweep, never from the context metadata, so the send side can route on
+    /// it.</summary>
+    public const string SourcePort = "intropysourceport";
+
+    /// <summary>The name of the source file a Transactional Integration swept the message from. Set
+    /// by the framework from the sweep, next to <see cref="SourcePort"/>, so the send side can route on
+    /// it.</summary>
+    public const string FileName = "intropyfilename";
 }
