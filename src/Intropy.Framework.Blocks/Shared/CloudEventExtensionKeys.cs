@@ -15,9 +15,4 @@ public static class CloudEventExtensionKeys
     /// the framework from the sweep, never from the context metadata, so the send side can route on
     /// it.</summary>
     public const string SourcePort = "intropysourceport";
-
-    /// <summary>The name of the source file a Transactional Integration swept the message from. Set
-    /// by the framework from the sweep, next to <see cref="SourcePort"/>, so the send side can route on
-    /// it.</summary>
-    public const string FileName = "intropyfilename";
 }

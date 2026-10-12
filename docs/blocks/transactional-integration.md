@@ -108,7 +108,11 @@ The receive side needs no component code. The lifecycle sweeps the source with `
 completes the file only after the pipeline succeeded. A file that cannot be read or published stays
 for the next run and fails the run (exit 1). Each file gets a fresh `Context` with the file name in
 its metadata under `SourceContextKeys.FileName` (`"file_name"`) and the port it was swept from under
-`SourceContextKeys.SourcePort` (`"source_port"`). Both travel with the message to the send side.
+`SourceContextKeys.SourcePort` (`"source_port"`). Both travel with the message, so send-side steps
+can read them. The framework also records the port as a CloudEvent extension of its own
+(`intropysourceport`), set from the sweep rather than from the metadata.
+[Send routes](#several-source-ports-and-send-routes) match on it, so a step that changes the
+metadata cannot misroute a file.
 
 `AddTransactionalIntegration` registers the receive pipeline. Its one step is a
 `DaprTopicEnqueuer<TCtx>`, which publishes each item to `DaprPubSubName` / `DaprTopicName` as a
@@ -151,6 +155,102 @@ builder.Services.AddSendPipeline<Order, Invoice, Context>("order-send",
             sp.GetRequiredService<IBusinessIncidentServiceClient>(),
             ctx => ctx.Metadata["message_id"]));
 ```
+
+## Several source ports and send routes
+
+One integration can sweep several source ports and send each port's files through the send
+pipeline for its data: for example orders and invoices from the same partner, delivered to
+different folders. Each port carries one kind of data, in one format. Declare the ports as
+**sources** and the send pipelines as **routes**:
+
+```csharp
+builder.Services.AddTransactionalIntegration(
+    new TransactionalIntegrationDefinition<Context>(),
+    sources => sources
+        .Port("orders-in")
+        .Port("invoices-in", FileCompletion.Archive("processed")),
+    routes => routes
+        .On<OrderFile, Order>(m => m.Port("orders-in"), (send, sp) => send
+            .WithDeserializer(new OrderDeserializer())
+            /* validator, transformer, serializer, sender as for any send pipeline */)
+        .On<InvoiceFile, Invoice>(m => m.Port("invoices-in"), (send, sp) => send
+            .WithDeserializer(new InvoiceDeserializer())
+            /* ... */));
+```
+
+The definition holds what belongs to the whole integration: the pub/sub and topic, the context
+factory, the options and the runner settings. Leave its `SourcePort` and `Completion` unset; the
+sources declare them. Each port's file adapter is registered keyed by the port name, as for a
+single port (for example `services.AddFileAdapter("orders-in", configuration.GetSection("Ports:orders-in"))`).
+Don't call `AddSourcePort` or register an `ISendPipeline`: the sources and routes declare both. A
+configuration-bound overload, `AddTransactionalIntegration(configuration, factory, sources, routes)`,
+binds the definition's values the same way as for a single port.
+
+Each route's send pipeline is typed on its own data (`On<TInput, TOutput>`) and configured exactly
+like `AddSendPipeline`'s; only the context type is shared by the whole integration.
+
+### How a file finds its route
+
+A route names the ports whose files it handles: `m.Port("orders-in")`, or several ports that carry
+the same data, `m.Port("orders-se", "orders-no")`. Ports match exactly, and each port is handled by
+exactly one route. When every port carries the same data, declare one route for all of them with
+`OnAny`:
+
+```csharp
+sources => sources.Port("orders-se").Port("orders-no"),
+routes => routes.OnAny<OrderFile, Order>((send, sp) => send /* ... */)
+```
+
+An integration has either one `OnAny` route or routes by port, not both.
+
+### What is checked at startup
+
+Registration fails if:
+
+- no source or no route is declared;
+- a route names a port that is not declared as a source;
+- a declared port is handled by no route, or by more than one;
+- an `OnAny` route is combined with routes by port;
+- the definition sets `SourcePort` or `Completion`, or a source port is already registered.
+
+Every route's send pipeline is built once at startup, so a route that cannot be composed fails the
+run before any file is touched, naming the route.
+
+Because every port has a route, every swept file reaches a send pipeline. A message that reaches
+the send side from a port no route handles, because the routes changed while it was queued, is left
+for redelivery and counted as failed. It is never acknowledged silently.
+
+### Sweeping and failures
+
+The ports are swept one after another, in the order they are declared, within one run. If listing
+or sweeping one port fails, the other ports are still swept. The run then fails, and the error names
+every port that failed. Each port's spans and `intropy.sweep.files` metrics carry its name in
+`intropy.source.port`.
+
+### Idempotency
+
+Idempotency is configured per route, in its send pipeline. Records are scoped by component, so when
+two routes can produce the same id for different things (order `123` and invoice `123`), include
+the port or the kind of data in the id. `WithIdempotency` passes the context, which holds the port:
+
+```csharp
+.WithIdempotency(sp.GetRequiredService<IIdempotencyServiceClient>(),
+    (invoice, ctx) => $"{ctx.Metadata[SourceContextKeys.SourcePort]}:{invoice.Number}",
+    (invoice, ctx) => invoice.IssuedAt)
+```
+
+Leave the port out when several ports deliver copies of the same feed and a record should be
+processed once, whichever port it arrived on.
+
+### One integration or several?
+
+One integration with several ports runs on one schedule, in one process, and reports one exit
+code. That suits data that belongs to one business flow. Use separate integrations when the sources
+need their own schedules, scale independently, or have different owners.
+
+If you move a running single-port integration to sources and routes, drain its queue first.
+Messages enqueued by older framework versions don't carry the port extension, so no
+route matches them and they end up in the dead-letter queue.
 
 ## Context propagation
 

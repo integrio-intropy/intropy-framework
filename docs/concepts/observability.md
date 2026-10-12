@@ -160,8 +160,13 @@ The `Intropy.Framework.Hosting` meter reports what scheduled jobs are usually al
 | `messaging.process.duration` | Histogram | `s` | Same as `messaging.client.consumed.messages` |
 
 `intropy.message.outcome` is `processed`, `skipped` (a duplicate), `failed` (left for
-redelivery; `error.type` says why), or `interrupted` (left for redelivery because the host was
-stopping, which is not a failure). A run that never started, because the sidecar didn't come up,
+redelivery; `error.type` says why), `unrouted` (no route handles the message), or `interrupted`
+(left for redelivery because the host was stopping, which is not a failure). When a component
+routes its messages, the span and both messaging metrics also carry the route in
+`intropy.loader.route`: a loader's event type, or a Transactional Integration's send route (its
+ports, for example `orders-se+orders-no`). A component with several source
+ports sweeps them one after another in one run, so `intropy.source.port` on
+`intropy.sweep.files` tells the ports apart. A run that never started, because the sidecar didn't come up,
 is counted with exit code `2`. Job durations use buckets from 1 second to 1 hour. Message
 durations use the buckets that the messaging conventions advise.
 

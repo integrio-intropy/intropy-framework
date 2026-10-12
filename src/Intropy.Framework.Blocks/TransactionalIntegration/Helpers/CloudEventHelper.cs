@@ -26,14 +26,10 @@ internal static class CloudEventHelper
         cloudEvent = MessagingTelemetry.Propagate(activity, cloudEvent);
         var attr = CloudEventAttribute.CreateExtension(CloudEventExtensionKeys.Metadata, CloudEventAttributeType.String);
         cloudEvent[attr] = JsonSerializer.Serialize(context.Metadata);
-        // The routing facts of a swept file, from the sweep itself: the send side routes on them.
+        // The swept file's port, from the sweep itself: the send side routes on it.
         if (input.Port is { Length: > 0 } port)
-        {
             cloudEvent[CloudEventAttribute.CreateExtension(CloudEventExtensionKeys.SourcePort,
                 CloudEventAttributeType.String)] = port;
-            cloudEvent[CloudEventAttribute.CreateExtension(CloudEventExtensionKeys.FileName,
-                CloudEventAttributeType.String)] = input.Id;
-        }
 
         return cloudEvent;
     }

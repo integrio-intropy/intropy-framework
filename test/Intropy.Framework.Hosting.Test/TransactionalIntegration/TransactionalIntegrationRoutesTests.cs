@@ -18,9 +18,9 @@ namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
 
 /// <summary>
 /// A Transactional Integration with send routes: its sources declare the ports it sweeps, its routes
-/// which send pipeline each file's message goes through, and the registration checks that the two
-/// agree. The receive side tags each item with its port and keeps a file no route handles in the
-/// source. A misdeclared integration is rejected at registration without leaving anything behind.
+/// which send pipeline each port's messages go through, and the registration checks that the two
+/// agree. The receive side tags each item with its port. A misdeclared integration is rejected at
+/// registration without leaving anything behind.
 /// </summary>
 public class TransactionalIntegrationRoutesTests
 {
@@ -28,12 +28,12 @@ public class TransactionalIntegrationRoutesTests
 
     [Fact]
     public void Port_RejectsAnEmptyPort() =>
-        Assert.Throws<ArgumentException>(() => new TransactionalIntegrationSources().Port(" "));
+        Assert.Throws<ArgumentException>(() => new FileSources().Port(" "));
 
     [Fact]
     public void Port_RejectsADuplicatePort()
     {
-        var sources = new TransactionalIntegrationSources().Port("orders-in");
+        var sources = new FileSources().Port("orders-in");
 
         var error = Assert.Throws<ArgumentException>(() => sources.Port("orders-in"));
 
@@ -41,7 +41,7 @@ public class TransactionalIntegrationRoutesTests
     }
 
     [Fact]
-    public void On_RejectsAMatchWithoutCriteria()
+    public void On_RejectsAMatchWithoutAPort()
     {
         var error = Assert.Throws<ArgumentException>(() =>
             new TransactionalIntegrationRoutes<Context>().On<OrderFile, string>(m => m, Send));
@@ -50,10 +50,10 @@ public class TransactionalIntegrationRoutesTests
     }
 
     [Fact]
-    public void Match_RejectsEmptyCriteria()
+    public void Match_RejectsAnEmptyPortList()
     {
-        Assert.Throws<ArgumentException>(() => new TransactionalIntegrationMatch().Port());
-        Assert.Throws<ArgumentException>(() => new TransactionalIntegrationMatch().FileName(" "));
+        Assert.Throws<ArgumentException>(() => new FileMatch().Port());
+        Assert.Throws<ArgumentException>(() => new FileMatch().Port(" "));
     }
 
     [Fact]
@@ -72,11 +72,10 @@ public class TransactionalIntegrationRoutesTests
     }
 
     [Fact]
-    public async Task AddTransactionalIntegration_ReceivesFromEveryPort_AndKeepsAFileNoRouteHandles()
+    public async Task AddTransactionalIntegration_ReceivesFromEveryPort_TaggingEachItemWithItsPort()
     {
         var services = GetServices();
-        var orders = new InMemoryFileAdapter().AddFile("order-1.csv", "o").AddFile("order-2.json", "?");
-        services.AddKeyedSingleton<IFileAdapter>("orders-in", orders);
+        services.AddKeyedSingleton<IFileAdapter>("orders-in", new InMemoryFileAdapter().AddFile("order-1.csv", "o"));
         services.AddKeyedSingleton<IFileAdapter>("invoices-in", new InMemoryFileAdapter().AddFile("invoice-1.xml", "i"));
         var received = new List<SourceItem>();
         var receivePipeline = Substitute.For<IReceivePipeline<Context>>();
@@ -87,7 +86,7 @@ public class TransactionalIntegrationRoutesTests
         services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in").Port("invoices-in"),
             routes => routes
-                .On<OrderFile, string>(m => m.Port("orders-in").FileName("*.csv"), Send)
+                .On<OrderFile, string>(m => m.Port("orders-in"), Send)
                 .On<InvoiceFile, string>(m => m.Port("invoices-in"), Send));
 
         var summary = await services.BuildServiceProvider()
@@ -95,9 +94,7 @@ public class TransactionalIntegrationRoutesTests
 
         Assert.Equal([("order-1.csv", "orders-in"), ("invoice-1.xml", "invoices-in")],
             received.Select(item => (item.Id, item.Port)));
-        // The file no route handles was never published: it stays and fails the run.
-        Assert.Equal(new RunSummary(Processed: 2, Failed: 1, Skipped: 0), summary);
-        Assert.True(orders.Files.ContainsKey("order-2.json"));
+        Assert.Equal(new RunSummary(Processed: 2, Failed: 0, Skipped: 0), summary);
     }
 
     [Fact]
@@ -165,12 +162,26 @@ public class TransactionalIntegrationRoutesTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_AcceptsARouteOnFileNameOnly_ForEveryPort()
+    public void AddTransactionalIntegration_RejectsAPortRoutedTwice()
     {
         var services = GetServices();
 
-        services.AddTransactionalIntegration(Definition, sources => sources.Port("orders-in").Port("invoices-in"),
-            routes => routes.On<OrderFile, string>(m => m.FileName("*.csv"), Send));
+        var error = Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(Definition,
+            sources => sources.Port("orders-in").Port("invoices-in"),
+            routes => routes
+                .On<OrderFile, string>(m => m.Port("orders-in"), Send)
+                .On<InvoiceFile, string>(m => m.Port("invoices-in", "orders-in"), Send)));
+
+        Assert.Contains("'orders-in' is handled by more than one route", error.Message);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_RoutesSeveralPortsThroughOneRoute()
+    {
+        var services = GetServices();
+
+        services.AddTransactionalIntegration(Definition, sources => sources.Port("orders-se").Port("orders-no"),
+            routes => routes.On<OrderFile, string>(m => m.Port("orders-se", "orders-no"), Send));
 
         Assert.Equal(2, services.BuildServiceProvider().GetServices<SourcePort>().Count());
     }

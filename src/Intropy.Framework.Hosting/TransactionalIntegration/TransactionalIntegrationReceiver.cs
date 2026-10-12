@@ -12,19 +12,16 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// pipeline, which publishes it to the integration's queue. A file is completed (deleted or
 /// archived) only after it is on the queue.
 /// </summary>
-/// <remarks>With send routes, <c>isRouted</c> says whether a route handles a file from a port with
-/// a name; a file none handles stays in the source (see <see cref="ReceivePortSweep{TCtx}"/>).</remarks>
 /// <typeparam name="TCtx">The integration's context type.</typeparam>
 internal sealed class TransactionalIntegrationReceiver<TCtx>(
     IServiceProvider provider,
     FrameworkOptions frameworkOptions,
     ContextFactory<TCtx> contextFactory,
-    ILoggerFactory loggerFactory,
-    Func<string, string, bool>? isRouted = null)
+    ILoggerFactory loggerFactory)
     where TCtx : Context
 {
     private readonly SourceSweep _sweep = new(provider, frameworkOptions, source =>
-        new ReceivePortSweep<TCtx>(source, provider, frameworkOptions, contextFactory, loggerFactory, isRouted),
+        new ReceivePortSweep<TCtx>(source, provider, frameworkOptions, contextFactory, loggerFactory),
         loggerFactory);
 
     /// <summary>Sweeps the source once.</summary>

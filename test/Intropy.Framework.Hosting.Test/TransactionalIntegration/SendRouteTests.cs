@@ -4,6 +4,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.Test.Messaging;
 using Intropy.Framework.Hosting.TransactionalIntegration;
@@ -131,20 +132,17 @@ public class SendRouteTests
     }
 
     [Theory]
-    [InlineData("orders-in", "order-1.csv", true)]
-    [InlineData("orders-in", "ORDER-1.CSV", true)] // file name patterns ignore case
-    [InlineData("orders-in", "order-1.xml", false)]
-    [InlineData("invoices-in", "order-1.csv", false)]
-    [InlineData(null, "order-1.csv", false)] // an unknown port never matches a port criterion
-    [InlineData("orders-in", null, false)]
-    public void DeclaredRoute_MatchesOnTheRecordedPortAndFileName(string? port, string? fileName, bool matches)
+    [InlineData("orders-in", true)]
+    [InlineData("orders-no", true)]
+    [InlineData("invoices-in", false)]
+    [InlineData("ORDERS-IN", false)] // ports match exactly
+    [InlineData(null, false)] // a message naming no port never matches
+    public void DeclaredRoute_MatchesOnTheRecordedPort(string? port, bool matches)
     {
-        var route = Declared(m => m.Port("orders-in", "orders-no").FileName("*.csv"));
+        var route = Declared(m => m.Port("orders-in", "orders-no"));
         var extensions = new Dictionary<string, string>();
         if (port is not null)
             extensions[CloudEventExtensionKeys.SourcePort] = port;
-        if (fileName is not null)
-            extensions[CloudEventExtensionKeys.FileName] = fileName;
 
         Assert.Equal(matches, route.Matches(Message("msg-1", extensions)));
     }
@@ -152,30 +150,27 @@ public class SendRouteTests
     [Fact]
     public void DeclaredRoute_IgnoresTheEditableMetadata()
     {
-        // A receive step rewrote source_port and file_name; the framework-recorded extensions decide.
+        // A receive step rewrote source_port; the framework-recorded extension decides.
         var route = Declared(m => m.Port("invoices-in"));
 
         Assert.False(route.Matches(Message("msg-1", new Dictionary<string, string>
         {
             [CloudEventExtensionKeys.SourcePort] = "orders-in",
-            [CloudEventExtensionKeys.FileName] = "order-1.csv",
             ["metadata"] = "{\"source_port\":\"invoices-in\"}"
         })));
     }
 
     [Fact]
-    public void DeclaredRoute_IsNamedAfterItsMatch()
+    public void DeclaredRoute_IsNamedAfterItsPorts()
     {
-        Assert.Equal("orders-in+orders-no(*.csv|*.txt)",
-            Declared(m => m.Port("orders-in", "orders-no").FileName("*.csv", "*.txt")).Name);
-        Assert.Equal("*(*.xml)", Declared(m => m.FileName("*.xml")).Name);
+        Assert.Equal("orders-in+orders-no", Declared(m => m.Port("orders-in", "orders-no")).Name);
         Assert.Null(new DeclaredSendRoute<string, string, OrderContext>(null, (send, _) => send,
             (metadata, isRetry) => new OrderContext(metadata, isRetry)).Name);
     }
 
     private static DeclaredSendRoute<string, string, OrderContext> Declared(
-        Func<TransactionalIntegrationMatch, TransactionalIntegrationMatch> match) =>
-        new(match(new TransactionalIntegrationMatch()), (send, _) => send,
+        Func<FileMatch, FileMatch> match) =>
+        new(match(new FileMatch()), (send, _) => send,
             (metadata, isRetry) => new OrderContext(metadata, isRetry));
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);

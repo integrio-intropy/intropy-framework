@@ -4,6 +4,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
+using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -80,10 +81,10 @@ internal sealed class RegisteredSendRoute<TCtx>(ContextFactory<TCtx> contextFact
 }
 
 /// <summary>A send route declared with <see cref="TransactionalIntegrationRoutes{TCtx}"/>: the files
-/// its match selects — by the source port and file name the framework recorded on the message — or
-/// every file (a null match), through a send pipeline built in the message's own scope.</summary>
+/// its match selects — by the source port the framework recorded on the message — or every file (a
+/// null match), through a send pipeline built in the message's own scope.</summary>
 internal sealed class DeclaredSendRoute<TInput, TOutput, TCtx>(
-    TransactionalIntegrationMatch? match,
+    FileMatch? match,
     Func<SendPipelineBuilder<TInput, TOutput, TCtx>, IServiceProvider, SendPipelineBuilder<TInput, TOutput, TCtx>> configureSend,
     ContextFactory<TCtx> contextFactory) : SendRoute<TCtx>(contextFactory) where TCtx : Context
 {
@@ -92,8 +93,7 @@ internal sealed class DeclaredSendRoute<TInput, TOutput, TCtx>(
     public override bool IsCatchAll => match is null;
 
     public override bool Matches(IncomingMessage message) =>
-        match is null || match.Matches(message.GetExtension(CloudEventExtensionKeys.SourcePort),
-            message.GetExtension(CloudEventExtensionKeys.FileName));
+        match is null || match.Matches(message.GetExtension(CloudEventExtensionKeys.SourcePort));
 
     protected override ISendPipeline<TCtx> Resolve(IServiceProvider scope, string componentName) =>
         RouteComposition.Build("Transactional Integration", Name, componentName, () =>

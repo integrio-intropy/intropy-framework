@@ -130,15 +130,14 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// Adds a Transactional Integration with send routes: the <paramref name="definition"/>
     /// describes the integration (the optional pub/sub and topic, the context factory, the options
     /// and the runner settings), <paramref name="configureSources"/> declares the source ports it
-    /// sweeps, and <paramref name="configureRoutes"/> which send pipeline each file's message goes
-    /// through, by its source port and file name. Validated at registration, so a misconfigured
-    /// integration fails at startup.
+    /// sweeps, and <paramref name="configureRoutes"/> which send pipeline each port's messages go
+    /// through. Validated at registration, so a misconfigured integration fails at startup.
     /// </summary>
     /// <remarks>
     /// Every port's files go through the one receive side to the integration's queue. The framework
-    /// records each file's port and name on its message, so a step cannot misroute it. A file no
-    /// route handles stays in the source and fails the run. The ports are swept one after another,
-    /// in declaration order; a port that fails does not stop the others, but the run still fails.
+    /// records each file's port on its message, so a step cannot misroute it. The ports are swept one
+    /// after another, in declaration order; a port that fails does not stop the others, but the run
+    /// still fails.
     /// NOTE: You must register the component identity (<c>AddIntropyFramework</c>),
     /// <c>DaprClient</c>, and each port's file adapter, keyed by the port name. Do not register an
     /// <c>ISendPipeline</c> or call <c>AddSourcePort</c>: the sources and routes declare both.
@@ -153,12 +152,12 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// <param name="configureRoutes">Declares the send routes.</param>
     /// <returns>The service collection for chaining.</returns>
     /// <exception cref="InvalidOperationException">The definition is incomplete or sets a source
-    /// port; no source or route is declared; a route names an undeclared port, or a port no route
-    /// handles; a source port or a Transactional Integration is already registered.</exception>
+    /// port; no source or route is declared; a route names an undeclared port, a port is routed
+    /// twice or not at all; a source port or a Transactional Integration is already registered.</exception>
     /// <exception cref="ArgumentException">A route for every file is combined with other
     /// routes.</exception>
     public static IServiceCollection AddTransactionalIntegration<TCtx>(this IServiceCollection services,
-        TransactionalIntegrationDefinition<TCtx> definition, Action<TransactionalIntegrationSources> configureSources,
+        TransactionalIntegrationDefinition<TCtx> definition, Action<FileSources> configureSources,
         Action<TransactionalIntegrationRoutes<TCtx>> configureRoutes) where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(services);
@@ -171,25 +170,24 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             throw new InvalidOperationException(
                 "Transactional Integration composition failed: SourcePort/Completion — an integration with routes " +
                 "declares its source ports and their completions with its sources; leave the definition's unset.");
-        var sources = new TransactionalIntegrationSources();
+        var sources = new FileSources();
         configureSources(sources);
         var routes = new TransactionalIntegrationRoutes<TCtx>();
         configureRoutes(routes);
         var contextFactory = definition.ResolveContextFactory();
         var table = new MessageRouteTable(routes.Build(contextFactory));
-        EnsureRoutesCoverSources(sources.Ports, routes);
+        sources.EnsureRoutedBy([.. routes.Matches], "Transactional Integration");
         ComponentRegistration.EnsureSingleKind(services, "transactional integration");
         SourcePortServiceCollectionExtensions.AddSourcePorts(services, sources.Ports);
         ComponentRegistration.MarkRegistered(services, "transactional integration");
 
-        return AddTransactionalIntegrationCore(services, options, contextFactory, definition.ConfigureJob, table,
-            routes.Handles);
+        return AddTransactionalIntegrationCore(services, options, contextFactory, definition.ConfigureJob, table);
     }
 
     /// <summary>
     /// Adds a Transactional Integration with send routes, with the integration's values bound from
     /// <paramref name="configuration"/>. See
-    /// <see cref="AddTransactionalIntegration{TCtx}(IServiceCollection, TransactionalIntegrationDefinition{TCtx}, Action{TransactionalIntegrationSources}, Action{TransactionalIntegrationRoutes{TCtx}})"/>
+    /// <see cref="AddTransactionalIntegration{TCtx}(IServiceCollection, TransactionalIntegrationDefinition{TCtx}, Action{FileSources}, Action{TransactionalIntegrationRoutes{TCtx}})"/>
     /// for the sources and routes, and
     /// <see cref="AddTransactionalIntegration{TCtx}(IServiceCollection, IConfiguration, Func{TransactionalIntegrationDefinition{TCtx}})"/>
     /// for how the configuration and the factory's definition combine.
@@ -206,30 +204,10 @@ public static class TransactionalIntegrationServiceCollectionExtensions
     /// configuration value is malformed.</exception>
     public static IServiceCollection AddTransactionalIntegration<TCtx>(this IServiceCollection services,
         IConfiguration configuration, Func<TransactionalIntegrationDefinition<TCtx>> factory,
-        Action<TransactionalIntegrationSources> configureSources, Action<TransactionalIntegrationRoutes<TCtx>> configureRoutes)
+        Action<FileSources> configureSources, Action<TransactionalIntegrationRoutes<TCtx>> configureRoutes)
         where TCtx : Context =>
         services.AddTransactionalIntegration(TransactionalIntegrationDefinition<TCtx>.BoundTo(configuration, factory),
             configureSources, configureRoutes);
-
-    /// <summary>Checks that the sources and the routes agree: at least one of each, every port a
-    /// route names is swept, and every swept port has a route that can handle its files.</summary>
-    private static void EnsureRoutesCoverSources<TCtx>(IReadOnlyList<SourcePort> sources,
-        TransactionalIntegrationRoutes<TCtx> routes) where TCtx : Context
-    {
-        if (sources.Count == 0)
-            throw new InvalidOperationException(
-                "Transactional Integration composition failed: no source port is declared; declare one with Port.");
-        var matches = routes.Matches.ToList();
-        var swept = sources.Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
-        if (matches.SelectMany(m => m?.Ports ?? []).FirstOrDefault(port => !swept.Contains(port)) is { } unknown)
-            throw new InvalidOperationException(
-                $"Transactional Integration composition failed: a route names source port '{unknown}', which is not " +
-                "declared; declare it with Port.");
-        if (sources.FirstOrDefault(port => !matches.Any(m => m is null || m.Ports.Count == 0 ||
-                m.Ports.Contains(port.Name, StringComparer.Ordinal))) is { } unrouted)
-            throw new InvalidOperationException(
-                $"Transactional Integration composition failed: no route handles source port '{unrouted.Name}'.");
-    }
 
     /// <param name="services">The service collection to add services to.</param>
     /// <param name="configuration">The section holding the integration's values: the pub/sub and
@@ -282,12 +260,10 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             options.CallbackPort = port;
     }
 
-    // routes: the send routes, or null for the one caller-registered send pipeline for every file;
-    // isRouted: whether a route handles a file from a port with a name, or null without routes.
+    // routes: the send routes, or null for the one caller-registered send pipeline for every file.
     private static IServiceCollection AddTransactionalIntegrationCore<TCtx>(IServiceCollection services,
         TransactionalIntegrationOptions options, ContextFactory<TCtx> contextFactory,
-        Action<JobOptions>? configureJob, MessageRouteTable? routes = null,
-        Func<string, string, bool>? isRouted = null) where TCtx : Context
+        Action<JobOptions>? configureJob, MessageRouteTable? routes = null) where TCtx : Context
     {
         // Register options. A pub/sub or topic left unset is the internal hop the system topology
         // generates for the component, named after its identity, which resolves from DI.
@@ -326,8 +302,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             table.Verify(scopes, componentName);
             return new SendSideRun(
                 new RoutingMessageHandler(scopes, table, componentName,
-                    message => $"No send route matches file '{message.GetExtension(CloudEventExtensionKeys.FileName)}' " +
-                        $"from source port '{message.GetExtension(CloudEventExtensionKeys.SourcePort)}'",
+                    message => $"No send route handles source port '{message.GetExtension(CloudEventExtensionKeys.SourcePort)}'",
                     // The internal hop's Subscription has no rules: every message takes its default route.
                     defaultPathIsUnrouted: false),
                 sp.GetRequiredService<TransactionalIntegrationOptions>(),
@@ -337,8 +312,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
 
         // The receive side, and the lifecycle hosting both.
         services.AddSingleton(sp => new TransactionalIntegrationReceiver<TCtx>(sp,
-            sp.GetRequiredService<FrameworkOptions>(), contextFactory, sp.GetRequiredService<ILoggerFactory>(),
-            isRouted));
+            sp.GetRequiredService<FrameworkOptions>(), contextFactory, sp.GetRequiredService<ILoggerFactory>()));
         services.AddSingleton(sp => new TransactionalIntegrationJob<TCtx>(
             sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
             sp.GetRequiredService<SendSideRun>(),
