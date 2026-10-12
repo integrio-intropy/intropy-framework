@@ -73,11 +73,13 @@ internal static class ExtractorSweepTestProcess
     };
 
     /// <summary>A fresh context per call, with caller-owned metadata on top of the context's
-    /// own entries — the sweep must preserve both alongside its <c>file_name</c> key.</summary>
+    /// own entries — the sweep must preserve both alongside its <c>file_name</c> key. The caller
+    /// also claims a <c>source_port</c>, which the framework owns and must overwrite.</summary>
     private static ExtractorTestProcess.TestContext NewCallerContext(string fileName)
     {
         var context = new ExtractorTestProcess.TestContext();
         context.Metadata["caller"] = $"caller-{fileName}";
+        context.Metadata[SourceContextKeys.SourcePort] = "caller-port";
         return context;
     }
 
@@ -94,18 +96,19 @@ internal static class ExtractorSweepTestProcess
         }
     }
 
-    /// <summary>Records one entry per processed file: file name, caller metadata, and the
+    /// <summary>Records one entry per processed file: file name, source port, caller metadata, and the
     /// scope-unique probe id. Singleton per test provider.</summary>
     internal sealed class ProbeCollector
     {
-        private readonly ConcurrentQueue<(string FileName, string Caller, Guid ScopeId)> _entries = [];
+        private readonly ConcurrentQueue<(string FileName, string SourcePort, string Caller, Guid ScopeId)> _entries = [];
         private readonly ConcurrentQueue<Guid> _disposedScopeIds = [];
 
-        public void Record(string fileName, string caller, Guid scopeId) => _entries.Enqueue((fileName, caller, scopeId));
+        public void Record(string fileName, string sourcePort, string caller, Guid scopeId) =>
+            _entries.Enqueue((fileName, sourcePort, caller, scopeId));
 
         public void RecordDisposed(Guid scopeId) => _disposedScopeIds.Enqueue(scopeId);
 
-        public IReadOnlyList<(string FileName, string Caller, Guid ScopeId)> Entries => [.. _entries];
+        public IReadOnlyList<(string FileName, string SourcePort, string Caller, Guid ScopeId)> Entries => [.. _entries];
 
         public IReadOnlyList<Guid> DisposedScopeIds => [.. _disposedScopeIds];
     }
@@ -133,6 +136,7 @@ internal static class ExtractorSweepTestProcess
         {
             collector.Record(
                 context.Metadata[SourceContextKeys.FileName],
+                context.Metadata.GetValueOrDefault(SourceContextKeys.SourcePort, "<missing>"),
                 context.Metadata.GetValueOrDefault("caller", "<missing>"),
                 probe.Id);
             return Task.FromResult<(BusinessStepResult<ExtractorTestProcess.Input>, ExtractorTestProcess.TestContext)>(

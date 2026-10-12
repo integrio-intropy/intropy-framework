@@ -132,7 +132,9 @@ defaults to the component name; it and the sidecar timeouts are set through the 
 
 The framework writes the source file name into each context's metadata under
 `SourceContextKeys.FileName` (`"file_name"`) before any step runs, so incident selectors can
-name a file that failed to deserialize.
+name a file that failed to deserialize. The port the file was swept from is written next to it,
+under `SourceContextKeys.SourcePort` (`"source_port"`). Both keys are the framework's: a value
+the context factory sets is overwritten.
 
 ### Replacing dependencies
 

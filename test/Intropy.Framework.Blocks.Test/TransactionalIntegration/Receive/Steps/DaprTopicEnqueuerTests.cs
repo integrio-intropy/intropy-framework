@@ -34,7 +34,11 @@ public class DaprTopicEnqueuerTests
                 ci.ArgAt<ReadOnlyMemory<byte>>(2).ToArray(), ci.ArgAt<string>(3)));
         var enqueuer = new DaprTopicEnqueuer<Context>(daprClient, "internal-orders", "hop", Options);
         var item = new SourceItem("order-1.json", "{}"u8.ToArray());
-        var context = new Context(new Dictionary<string, string> { [SourceContextKeys.FileName] = "order-1.json" });
+        var context = new Context(new Dictionary<string, string>
+        {
+            [SourceContextKeys.FileName] = "order-1.json",
+            [SourceContextKeys.SourcePort] = "orders-in",
+        });
 
         var (result, _) = await enqueuer.ExecuteAsync(item, context, CancellationToken.None);
 
@@ -48,6 +52,7 @@ public class DaprTopicEnqueuerTests
         Assert.Equal("{}"u8.ToArray(), (byte[])envelope.Data!);
         var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>((string)envelope[metadataAttribute]!);
         Assert.Equal("order-1.json", metadata![SourceContextKeys.FileName]);
+        Assert.Equal("orders-in", metadata[SourceContextKeys.SourcePort]); // reaches the send side
     }
 
     [Fact]

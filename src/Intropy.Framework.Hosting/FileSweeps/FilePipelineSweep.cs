@@ -21,7 +21,8 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// <para>
 /// The sweep owns what every file-driven component shares: resolving the pipeline once before any
 /// file is listed (a misconfigured component fails the run once, not once per file), a fresh
-/// context per file with <see cref="SourceContextKeys.FileName"/> set, the pipeline resolved in
+/// context per file with <see cref="SourceContextKeys.FileName"/> and
+/// <see cref="SourceContextKeys.SourcePort"/> set, the pipeline resolved in
 /// the file's own scope, and the mapping of pipeline results to sweep outcomes —
 /// <see cref="StepResult{T}.Cancelled"/> is a duplicate, <see cref="StepResult{T}.Aborted"/> an
 /// interruption that never completes the file. A component supplies how one file is read and
@@ -82,7 +83,7 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
     private async Task<FileOutcome> HandleFileAsync(SweptFile file, CancellationToken ct)
     {
         var pipeline = file.Services.GetRequiredService<TPipeline>();
-        var context = CreateContext(file.Name);
+        var context = CreateContext(file);
         var result = await RunPipelineAsync(pipeline, file, context, ct);
         switch (result)
         {
@@ -111,9 +112,13 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
     }
 
     // Source identity is available before any step runs so incident routing can name a poisoned
-    // file. The framework owns this key; a caller-provided value is overwritten.
-    private TCtx CreateContext(string fileName) =>
+    // file and its port. The framework owns these keys; a caller-provided value is overwritten.
+    private TCtx CreateContext(SweptFile file) =>
         ContextCreation.Create(contextFactory,
-            new Dictionary<string, string> { [SourceContextKeys.FileName] = fileName },
-            isRetry: false, ComponentName, fileName);
+            new Dictionary<string, string>
+            {
+                [SourceContextKeys.FileName] = file.Name,
+                [SourceContextKeys.SourcePort] = file.Port,
+            },
+            isRetry: false, ComponentName, file.Name);
 }

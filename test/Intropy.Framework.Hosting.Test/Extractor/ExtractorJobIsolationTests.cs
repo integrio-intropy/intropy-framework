@@ -75,6 +75,18 @@ public class ExtractorJobIsolationTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_StampsTheSourcePortOnEachFilesContext_OverwritingTheCallersValue()
+    {
+        // The caller's context factory claims source_port = "caller-port"; the framework owns the key.
+        var (sweep, collector) = CreateProbedSweep("order-1.json", "order-2.json");
+
+        await sweep.ExecuteAsync(CancellationToken.None);
+
+        Assert.Equal(2, collector.Entries.Count);
+        Assert.All(collector.Entries, e => Assert.Equal(ExtractorSweepTestProcess.SourceKey, e.SourcePort));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_DerivedContextValuesSurviveTheFullPipeline()
     {
         var fakes = new ExtractorSweepTestProcess.SweepFakes();

@@ -74,10 +74,10 @@ public class TransactionalIntegrationJobTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_GivesEachFileAFreshContextNamingTheSourceFile()
+    public async Task ExecuteAsync_GivesEachFileAFreshContextNamingTheSourceFileAndPort()
     {
-        // Verifies that the receive pipeline sees the framework's source file key, the same
-        // key extractors get, and that contexts are not shared between files
+        // Verifies that the receive pipeline sees the framework's source file and port keys, the
+        // same keys extractors get, and that contexts are not shared between files
         var source = new InMemoryFileAdapter().AddFile("file1.txt", "one").AddFile("file2.txt", "two");
         var contexts = new List<Context>();
         _receivePipeline.Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -90,6 +90,7 @@ public class TransactionalIntegrationJobTests
         await Lifecycle(source).ExecuteAsync(CancellationToken.None);
 
         Assert.Equal(["file1.txt", "file2.txt"], contexts.Select(c => c.Metadata[SourceContextKeys.FileName]));
+        Assert.All(contexts, c => Assert.Equal(SourceKey, c.Metadata[SourceContextKeys.SourcePort]));
         Assert.NotSame(contexts[0], contexts[1]);
     }
 

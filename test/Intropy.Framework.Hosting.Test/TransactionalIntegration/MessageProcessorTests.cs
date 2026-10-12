@@ -41,12 +41,13 @@ public class MessageProcessorTests
 
         await Processor().HandleAsync(Message("msg-1", new Dictionary<string, string>
         {
-            ["metadata"] = "{\"file_name\":\"orders.csv\"}",
+            ["metadata"] = "{\"file_name\":\"orders.csv\",\"source_port\":\"orders-in\"}",
             ["retrycount"] = "1"
         }), null, CancellationToken.None, CancellationToken.None);
 
         Assert.NotNull(received);
         Assert.Equal("orders.csv", received.Metadata[SourceContextKeys.FileName]);
+        Assert.Equal("orders-in", received.Metadata[SourceContextKeys.SourcePort]);
         Assert.Equal("msg-1", received.Metadata[ContextKeys.MessageId]);
         Assert.True(received.IsRetry);
     }

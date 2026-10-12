@@ -12,15 +12,19 @@ public sealed class SweptFile
     private readonly IFileAdapter _source;
     private byte[]? _content;
 
-    internal SweptFile(string name, IFileAdapter source, IServiceProvider services)
+    internal SweptFile(string name, string port, IFileAdapter source, IServiceProvider services)
     {
         Name = name;
+        Port = port;
         _source = source;
         Services = services;
     }
 
     /// <summary>The file's name in the source.</summary>
     public string Name { get; }
+
+    /// <summary>The source port the file was listed from.</summary>
+    public string Port { get; }
 
     /// <summary>The file's own scope: resolve per-file services (such as the pipeline) here.</summary>
     public IServiceProvider Services { get; }
