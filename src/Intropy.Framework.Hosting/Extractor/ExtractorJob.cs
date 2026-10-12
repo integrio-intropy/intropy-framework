@@ -1,10 +1,6 @@
-using System.Text;
-using CloudNative.CloudEvents;
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
-using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
-using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.Logging;
@@ -12,12 +8,12 @@ using Microsoft.Extensions.Logging;
 namespace Intropy.Framework.Hosting.Extractor;
 
 /// <summary>
-/// The extractor's run-to-completion job: one sweep of the source port, where each source file is
-/// read as UTF-8 text and run through the composed
-/// <see cref="Extractor{TInput,TOutput,TCtx}"/> pipeline. A published file (or one routed as a
-/// delivered business incident) and an idempotent duplicate are completed as the source port
-/// says (<c>AddSourcePort</c>); a failed file stays for
-/// the next scheduled run — the idempotency check makes the retry safe.
+/// The extractor's run-to-completion job: one sweep of the source port
+/// (<see cref="ExtractorPortSweep{TInput,TOutput,TCtx}"/>), where each source file is read as
+/// UTF-8 text and run through the composed <see cref="Extractor{TInput,TOutput,TCtx}"/> pipeline.
+/// A published file (or one routed as a delivered business incident) and an idempotent duplicate
+/// are completed as the source port says (<c>AddSourcePort</c>); a failed file stays for the next
+/// scheduled run — the idempotency check makes the retry safe.
 /// </summary>
 /// <remarks>
 /// Delivery semantics: publication happens before the idempotency recording, and delivery is
@@ -30,24 +26,12 @@ internal sealed class ExtractorJob<TInput, TOutput, TCtx>(
     IServiceProvider provider,
     FrameworkOptions frameworkOptions,
     ContextFactory<TCtx> contextFactory,
-    ILoggerFactory loggerFactory)
-    : FilePipelineSweep<Extractor<TInput, TOutput, TCtx>, CloudEvent, TCtx>(provider, frameworkOptions, contextFactory,
-        loggerFactory), IJob
+    ILoggerFactory loggerFactory) : IJob
     where TCtx : Context
 {
+    private readonly SourceSweep _sweep = new(provider, frameworkOptions, source =>
+        new ExtractorPortSweep<TInput, TOutput, TCtx>(source, provider, frameworkOptions, contextFactory, loggerFactory));
+
     /// <summary>Runs one sweep of the source port.</summary>
-    public Task<RunSummary> ExecuteAsync(CancellationToken ct) => SweepAsync(ct);
-
-    protected override async Task<StepResult<CloudEvent>> RunPipelineAsync(Extractor<TInput, TOutput, TCtx> pipeline,
-        SweptFile file, TCtx context, CancellationToken ct)
-    {
-        // A listed file with no content is stuck: fail it and keep it so the run exits 1 instead
-        // of silently skipping it. An empty file reads as string.Empty on every adapter.
-        var content = await file.ReadTextAsync(Encoding.UTF8, ct);
-        if (content.Length == 0)
-            return new StepResult<CloudEvent>.TechnicalFailure(new TechnicalFailure("The file has no content"));
-
-        var (result, _) = await pipeline.Execute(content, context, detachTrace: false, ct);
-        return result;
-    }
+    public Task<RunSummary> ExecuteAsync(CancellationToken ct) => _sweep.SweepAsync(ct);
 }

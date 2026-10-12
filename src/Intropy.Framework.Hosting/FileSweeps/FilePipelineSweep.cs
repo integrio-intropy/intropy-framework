@@ -11,11 +11,11 @@ using Microsoft.Extensions.Logging;
 namespace Intropy.Framework.Hosting.FileSweeps;
 
 /// <summary>
-/// One sweep of a file-driven component's source port with a pipeline per file:
-/// <see cref="FileSweep"/> lists the source and completes each file, and this runs each file
+/// One sweep of one of a file-driven component's source ports with a pipeline per file:
+/// <see cref="FileSweep"/> lists the port and completes each file, and this runs each file
 /// through the component's pipeline. A handled file and an idempotent duplicate are completed; a
-/// failed file stays for the next run. It is a part of a run, not the job itself: the
-/// component's <see cref="IJob"/> runs it.
+/// failed file stays for the next run. It is a part of a run, not the job itself:
+/// <see cref="SourceSweep"/> runs one per port, and the component's <see cref="IJob"/> runs that.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -43,10 +43,11 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// <typeparam name="TResult">The pipeline's result value.</typeparam>
 /// <typeparam name="TCtx">The pipeline context.</typeparam>
 internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
+    SourcePort source,
     IServiceProvider provider,
     FrameworkOptions frameworkOptions,
     ContextFactory<TCtx> contextFactory,
-    ILoggerFactory loggerFactory)
+    ILoggerFactory loggerFactory) : IPortSweep
     where TPipeline : notnull
     where TCtx : Context
 {
@@ -55,26 +56,28 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
     /// <summary>The component's identity, registered with <c>AddIntropyFramework</c>.</summary>
     private string ComponentName => frameworkOptions.ComponentName;
 
-    /// <summary>Sweeps the source once.</summary>
-    /// <returns>Handled files as <c>Processed</c>, duplicates as <c>Skipped</c>, and files left
-    /// in place as <c>Failed</c>. A cancelled sweep returns the counts recorded so far.</returns>
-    /// <exception cref="InvalidOperationException">Thrown before any file is listed when no
-    /// component identity, source port (<c>AddSourcePort</c>) or source adapter is registered, or the
-    /// pipeline cannot be composed. Listing failures propagate too; a listing failure is never
-    /// reported as an empty successful sweep.</exception>
-    public async Task<RunSummary> SweepAsync(CancellationToken ct)
+    /// <inheritdoc />
+    public string Port => source.Name;
+
+    /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">No source adapter is registered for the port,
+    /// or the pipeline cannot be composed.</exception>
+    public async Task ValidateAsync()
     {
-        var componentName = ComponentName;
-        var source = provider.GetService<SourcePort>() ?? throw new InvalidOperationException(
-            $"Component '{componentName}': no source port is registered. Call AddSourcePort.");
         _ = provider.GetKeyedService<IFileAdapter>(source.Name) ?? throw new InvalidOperationException(
-            $"Component '{componentName}': no IFileAdapter is registered for the source port '{source.Name}'.");
+            $"Component '{ComponentName}': no IFileAdapter is registered for the source port '{source.Name}'.");
         await using (var validationScope = provider.CreateAsyncScope())
             _ = validationScope.ServiceProvider.GetRequiredService<TPipeline>();
-
-        var sweep = new FileSweep(provider, source.Name, componentName, source.Completion, loggerFactory);
-        return await sweep.SweepAsync(HandleFileAsync, ct);
     }
+
+    /// <inheritdoc />
+    /// <returns>Handled files as <c>Processed</c>, duplicates as <c>Skipped</c>, and files left
+    /// in place as <c>Failed</c>. A cancelled sweep returns the counts recorded so far.</returns>
+    /// <exception cref="InvalidOperationException">Listing failures propagate; a listing failure
+    /// is never reported as an empty successful sweep.</exception>
+    public Task<RunSummary> SweepAsync(CancellationToken ct) =>
+        new FileSweep(provider, source.Name, ComponentName, source.Completion, loggerFactory)
+            .SweepAsync(HandleFileAsync, ct);
 
     /// <summary>Reads <paramref name="file"/> and runs it through <paramref name="pipeline"/>.</summary>
     protected abstract Task<StepResult<TResult>> RunPipelineAsync(TPipeline pipeline, SweptFile file, TCtx context,

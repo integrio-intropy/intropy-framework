@@ -1,15 +1,15 @@
 using Intropy.Framework.Blocks.Shared;
-using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Core.Configuration;
-using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.Logging;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
 
 /// <summary>
-/// The receive side of a Transactional Integration: one sweep of the source port, where each source
-/// file is run through the receive pipeline, which publishes it to the integration's queue. A file is completed (deleted or
+/// The receive side of a Transactional Integration: one sweep of the source port
+/// (<see cref="ReceivePortSweep{TCtx}"/>), where each source file is run through the receive
+/// pipeline, which publishes it to the integration's queue. A file is completed (deleted or
 /// archived) only after it is on the queue.
 /// </summary>
 /// <typeparam name="TCtx">The integration's context type.</typeparam>
@@ -18,14 +18,15 @@ internal sealed class TransactionalIntegrationReceiver<TCtx>(
     FrameworkOptions frameworkOptions,
     ContextFactory<TCtx> contextFactory,
     ILoggerFactory loggerFactory)
-    : FilePipelineSweep<IReceivePipeline<TCtx>, SourceItem, TCtx>(provider, frameworkOptions, contextFactory, loggerFactory)
     where TCtx : Context
 {
-    protected override async Task<StepResult<SourceItem>> RunPipelineAsync(IReceivePipeline<TCtx> pipeline,
-        SweptFile file, TCtx context, CancellationToken ct)
-    {
-        var item = new SourceItem(file.Name, await file.ReadAsync(ct));
-        var (result, _) = await pipeline.Execute(item, context, detachTrace: false, ct);
-        return result;
-    }
+    private readonly SourceSweep _sweep = new(provider, frameworkOptions, source =>
+        new ReceivePortSweep<TCtx>(source, provider, frameworkOptions, contextFactory, loggerFactory));
+
+    /// <summary>Sweeps the source once.</summary>
+    /// <returns>Files published (and completed) as <c>Processed</c>, duplicates as
+    /// <c>Skipped</c>, and files left in place as <c>Failed</c>.</returns>
+    /// <exception cref="InvalidOperationException">Thrown before any file is listed when the
+    /// integration cannot sweep its source; listing failures propagate too.</exception>
+    public Task<RunSummary> SweepAsync(CancellationToken ct) => _sweep.SweepAsync(ct);
 }
