@@ -284,7 +284,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         services.AddSingleton(sp =>
         {
             if (string.IsNullOrEmpty(options.DaprPubSubName) || string.IsNullOrEmpty(options.DaprTopicName))
-                options.UseInternalQueueDefaults(sp.GetRequiredService<FrameworkOptions>().ComponentName);
+                options.UseInternalQueueDefaults(sp.GetRequiredService<FrameworkOptions>());
             return options;
         });
 

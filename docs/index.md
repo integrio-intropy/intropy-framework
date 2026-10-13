@@ -38,8 +38,9 @@ builder.Services.AddIntropyFramework(opts => opts.ComponentName = "order-process
 
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    opts.DaprPubSubName = "pubsub";
-    opts.DaprTopicName = "orders";
+    // The internal queue defaults to <system>-pubsub / internal-<component>; the system name
+    // comes from INTROPY_SYSTEM_NAME, which the deployment sets.
+    opts.IdleTimeout = TimeSpan.FromSeconds(5);
 });
 
 builder.Services.AddSendPipeline<OrderMessage, InvoiceMessage, Context>("order-to-invoice",
