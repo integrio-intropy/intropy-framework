@@ -39,7 +39,7 @@ public sealed class TransactionalIntegrationRoutes<TCtx> where TCtx : Context
     /// <typeparam name="TInput">The route's deserialized input.</typeparam>
     /// <typeparam name="TOutput">What the route sends to the target.</typeparam>
     /// <returns>The routes, for chaining.</returns>
-    /// <exception cref="ArgumentException"><paramref name="match"/> names no port.</exception>
+    /// <exception cref="ArgumentException"><paramref name="match"/> names no port, or returns null.</exception>
     public TransactionalIntegrationRoutes<TCtx> On<TInput, TOutput>(
         Func<FileMatch, FileMatch> match,
         Func<SendPipelineBuilder<TInput, TOutput, TCtx>, IServiceProvider, SendPipelineBuilder<TInput, TOutput, TCtx>> configureSend)

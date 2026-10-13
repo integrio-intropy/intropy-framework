@@ -22,7 +22,6 @@ internal static class CloudEventHelper
             Data = input.Data
         };
 
-        
         cloudEvent = MessagingTelemetry.Propagate(activity, cloudEvent);
         var attr = CloudEventAttribute.CreateExtension(CloudEventExtensionKeys.Metadata, CloudEventAttributeType.String);
         cloudEvent[attr] = JsonSerializer.Serialize(context.Metadata);

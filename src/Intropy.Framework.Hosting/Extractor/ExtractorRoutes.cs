@@ -40,7 +40,7 @@ public sealed class ExtractorRoutes<TCtx> where TCtx : Context
     /// <typeparam name="TInput">The route's deserialized input.</typeparam>
     /// <typeparam name="TOutput">The route's published payload.</typeparam>
     /// <returns>The routes, for chaining.</returns>
-    /// <exception cref="ArgumentException"><paramref name="match"/> names no port.</exception>
+    /// <exception cref="ArgumentException"><paramref name="match"/> names no port, or returns null.</exception>
     public ExtractorRoutes<TCtx> On<TInput, TOutput>(
         Func<FileMatch, FileMatch> match,
         Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline)
