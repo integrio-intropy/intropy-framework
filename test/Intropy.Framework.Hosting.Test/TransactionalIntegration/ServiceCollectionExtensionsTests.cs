@@ -38,11 +38,11 @@ public class ServiceCollectionExtensionsTests
         services.AddTransactionalIntegration(_ => { });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("internal-orders-integration", options.DaprPubSubName);
-        Assert.Equal("hop", options.DaprTopicName);
+        Assert.Equal("order-flow-pubsub", options.DaprPubSubName);
+        Assert.Equal("internal-orders-integration", options.DaprTopicName);
         // Both shapes read the defaults.
-        Assert.Equal("internal-orders-integration", options.Subscription.PubSubName);
-        Assert.Equal("hop", options.Subscription.TopicName);
+        Assert.Equal("order-flow-pubsub", options.Subscription.PubSubName);
+        Assert.Equal("internal-orders-integration", options.Subscription.TopicName);
     }
 
     [Fact]
@@ -53,12 +53,12 @@ public class ServiceCollectionExtensionsTests
         services.AddTransactionalIntegration(options => options.DaprTopicName = "test-topic");
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("internal-orders-integration", options.DaprPubSubName);
+        Assert.Equal("order-flow-pubsub", options.DaprPubSubName);
         Assert.Equal("test-topic", options.DaprTopicName);
     }
 
     [Fact]
-    public void AddTransactionalIntegration_NamesTheDefaultPubSubAfterTheAppId_ForADottedComponentName()
+    public void AddTransactionalIntegration_NamesTheDefaultTopicAfterTheAppId_ForADottedComponentName()
     {
         // The topology names the internal queue after the app id: the component name with dots as dashes.
         var services = new ServiceCollection();
@@ -67,12 +67,52 @@ public class ServiceCollectionExtensionsTests
         {
             options.ComponentName = "int1055.order-sync";
             options.ServiceNamespace = "example";
+            options.SystemName = "order-flow";
         });
 
         services.AddTransactionalIntegration(_ => { });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("internal-int1055-order-sync", options.DaprPubSubName);
+        Assert.Equal("internal-int1055-order-sync", options.DaprTopicName);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_Throws_WhenThePubSubAndTheSystemNameAreBothUnset()
+    {
+        // The default pub/sub is the system's: without a system name there is nothing to default to,
+        // and guessing would publish through a component the deployment does not render.
+        var services = new ServiceCollection();
+        services.AddSingleton(_ => new DaprClientBuilder().Build());
+        services.AddIntropyFramework(options =>
+        {
+            options.ComponentName = "orders-integration";
+            options.ServiceNamespace = "example";
+        });
+
+        services.AddTransactionalIntegration(_ => { });
+
+        var provider = services.BuildServiceProvider();
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => provider.GetRequiredService<TransactionalIntegrationOptions>());
+        Assert.Contains("INTROPY_SYSTEM_NAME", exception.Message);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_NeedsNoSystemName_WhenThePubSubIsSet()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(_ => new DaprClientBuilder().Build());
+        services.AddIntropyFramework(options =>
+        {
+            options.ComponentName = "orders-integration";
+            options.ServiceNamespace = "example";
+        });
+
+        services.AddTransactionalIntegration(options => options.DaprPubSubName = "orders-bus");
+
+        var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
+        Assert.Equal("orders-bus", options.DaprPubSubName);
+        Assert.Equal("internal-orders-integration", options.DaprTopicName);
     }
 
     [Fact]
@@ -302,6 +342,7 @@ public class ServiceCollectionExtensionsTests
         {
             options.ComponentName = "orders-integration";
             options.ServiceNamespace = "example";
+            options.SystemName = "order-flow";
         });
         return services;
     }

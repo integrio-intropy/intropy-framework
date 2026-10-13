@@ -1,3 +1,4 @@
+using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
@@ -22,26 +23,25 @@ public class TransactionalIntegrationOptions
     public SubscriptionOptions Subscription => _subscription;
 
     /// <summary>
-    /// The name of the Dapr PubSub component to use. Optional: unset, it is the internal queue's
-    /// pub/sub the system topology generates for the component, <c>internal-&lt;component&gt;</c>
-    /// (the component name with dots as dashes).
+    /// The name of the Dapr PubSub component to use. Optional: unset, it is the system's pub/sub,
+    /// <c>&lt;system&gt;-pubsub</c> (see <see cref="FrameworkOptions.SystemPubSubName"/>), which carries
+    /// the internal queue the system topology generates for the component.
     /// </summary>
     public string DaprPubSubName { get; set; } = "";
 
     /// <summary>
     /// The name of the topic to use. Optional: unset, it is the internal queue's topic the system
-    /// topology generates for the component, <c>hop</c>.
+    /// topology generates for the component, <c>internal-&lt;component&gt;</c> (the component name
+    /// with dots as dashes).
     /// </summary>
     public string DaprTopicName { get; set; } = "";
 
-    /// <summary>The internal queue's topic the system topology generates for every transactional
-    /// integration.</summary>
-    internal const string InternalQueueTopicName = "hop";
-
-    /// <summary>The internal queue's pub/sub the system topology generates for
-    /// <paramref name="componentName"/>: scoped to the component alone, named after its app id
-    /// (the component name with dots as dashes).</summary>
-    internal static string InternalQueuePubSubName(string componentName) =>
+    /// <summary>The internal queue's topic the system topology generates for
+    /// <paramref name="componentName"/>, named after its app id (the component name with dots as
+    /// dashes). The topic, not the pub/sub, is what keeps the queues apart: brokers name their
+    /// exchanges and topics after it, so integrations sharing a topic name would receive each
+    /// other's files whatever Dapr component they publish through.</summary>
+    internal static string InternalQueueTopicName(string componentName) =>
         $"internal-{componentName.Replace('.', '-')}";
 
 
@@ -117,13 +117,18 @@ public class TransactionalIntegrationOptions
     }
 
     /// <summary>Fills the pub/sub and topic left unset with the internal queue the system topology
-    /// generates for <paramref name="componentName"/>, in both shapes.</summary>
-    internal void UseInternalQueueDefaults(string componentName)
+    /// generates for the component <paramref name="framework"/> names, in both shapes.</summary>
+    /// <exception cref="InvalidOperationException">The pub/sub is unset and so is the system name it
+    /// defaults from.</exception>
+    internal void UseInternalQueueDefaults(FrameworkOptions framework)
     {
         if (string.IsNullOrEmpty(DaprPubSubName))
-            DaprPubSubName = InternalQueuePubSubName(componentName);
+            DaprPubSubName = framework.SystemPubSubName ?? throw new InvalidOperationException(
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(DaprPubSubName)} is unset and so is the system " +
+                $"name it defaults from (<system>-pubsub): set {nameof(FrameworkOptions)}.{nameof(FrameworkOptions.SystemName)}, " +
+                $"the INTROPY_SYSTEM_NAME environment variable, or {nameof(DaprPubSubName)}.");
         if (string.IsNullOrEmpty(DaprTopicName))
-            DaprTopicName = InternalQueueTopicName;
+            DaprTopicName = InternalQueueTopicName(framework.ComponentName);
         _subscription.PubSubName = DaprPubSubName;
         _subscription.TopicName = DaprTopicName;
     }

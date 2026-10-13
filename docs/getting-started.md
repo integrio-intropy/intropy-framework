@@ -25,16 +25,17 @@ builder.Services.AddIntropyFramework(opts => opts.ComponentName = "order-process
 
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    opts.DaprPubSubName = "pubsub";
-    opts.DaprTopicName = "orders";
+    // The internal queue defaults to <system>-pubsub / internal-<component>; the system name
+    // comes from INTROPY_SYSTEM_NAME, which the deployment sets.
+    opts.IdleTimeout = TimeSpan.FromSeconds(5);
 });
 ```
 
-`AddIntropyFramework` registers `FrameworkOptions` and validates the component name. You can also set the `INTROPY_COMPONENT_NAME` environment variable and call `AddIntropyFramework()` without a delegate.
+`AddIntropyFramework` registers `FrameworkOptions` and validates the component name. You can also set the `INTROPY_COMPONENT_NAME` environment variable and call `AddIntropyFramework()` without a delegate. The system the component runs in, `SystemName`, comes from the `INTROPY_SYSTEM_NAME` environment variable, which the deployment sets. It wins over a value set in the delegate; set `SystemName` in code only for tests or runs without a system topology.
 
 To export traces and metrics, configure OpenTelemetry with [Intropy.Telemetry](https://github.com/integrio-intropy/intropy-telemetry). Use the component name as its `ServiceName`, and add the framework's meters. See [Observability](concepts/observability.md#collecting-the-telemetry).
 
-`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `JobRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are optional. If you don't set them, they default to the internal hop that the system topology generates for the component: `internal-<component>` (the component name with dots replaced by dashes) and `hop`.
+`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `JobRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are optional. If you don't set them, they default to the internal queue that the system topology generates for the component: the system's pub/sub, `<system>-pubsub`, and the topic `internal-<component>` (the component name with dots replaced by dashes). The pub/sub default needs `SystemName`; without it, and without `DaprPubSubName`, registration fails. Each integration gets its own topic because the broker separates queues by topic, not by Dapr component.
 
 ## Define your data models
 

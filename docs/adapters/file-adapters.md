@@ -149,8 +149,9 @@ builder.Services.AddKeyedSingleton<IFileAdapter>("order-source", (sp, _) =>
 builder.Services.AddSourcePort("order-source"); // the adapter above is registered under the port name
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    opts.DaprPubSubName = "pubsub";
-    opts.DaprTopicName = "orders";
+    // The internal queue defaults to <system>-pubsub / internal-<component>; the system name
+    // comes from INTROPY_SYSTEM_NAME, which the deployment sets.
+    opts.IdleTimeout = TimeSpan.FromSeconds(5);
 });
 ```
 

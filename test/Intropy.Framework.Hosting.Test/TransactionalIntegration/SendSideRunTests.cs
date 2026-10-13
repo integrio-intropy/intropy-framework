@@ -24,8 +24,8 @@ namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
 /// </summary>
 public class SendSideRunTests
 {
-    private const string PubSub = "internal-test-integration";
-    private const string Topic = "hop";
+    private const string PubSub = "pubsub";
+    private const string Topic = "internal-test-integration";
 
     private readonly ISendPipeline<Context> _pipeline = Substitute.For<ISendPipeline<Context>>();
 
