@@ -200,6 +200,34 @@ public class TransactionalIntegrationJobTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenTheSweepFails_ConsumesTheQueueBeforeFailingTheRun()
+    {
+        // One broken source port must not hold the other ports' messages on the queue: the run
+        // consumes what reached the queue, then fails naming the sweep's error.
+        _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => ((StepResult<string>)new StepResult<string>.Success(""), callInfo.Arg<Context>()));
+        var listingMayFail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = Substitute.For<IFileAdapter>();
+        source.ListAsync().Returns<Task<List<Adapters.Common.FileEntry>>>(async _ =>
+        {
+            await listingMayFail.Task;
+            throw new InvalidOperationException("couldn't find output binding");
+        });
+        var run = Lifecycle(source).ExecuteAsync(CancellationToken.None);
+        using var delivery = await ConnectAsync();
+
+        listingMayFail.SetResult();
+        await Task.Delay(100);
+        var ack = await delivery.DeliverAsync(Event("m1", "ok"));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        Assert.Equal("couldn't find output binding", error.Message);
+        Assert.Equal(DeliveryAck.Success, ack);
+        await _sendPipeline.Received(1).Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithArchiveCompletion_ArchivesThePublishedFile()
     {
         // Verifies that the configured completion is applied after publishing

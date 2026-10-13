@@ -31,7 +31,9 @@ internal class SendSideRun(
     /// Serves the callback and waits for completion: until publishing is done and the queue has
     /// gone idle, or the host cancels.
     /// </summary>
-    /// <param name="publishingCompleteSignal">A task that completes when all files have been published.</param>
+    /// <param name="publishingCompleteSignal">A task that completes when all files have been published,
+    /// or faults when the sweep failed. Either way the queue is consumed until it goes idle: a failed
+    /// sweep still published the files it could.</param>
     /// <param name="ct">The host's cancellation: it stops waiting for the publisher and the idle
     /// timeout; messages in flight still get the grace period before the callback stops.</param>
     /// <returns>The messages this run consumed, by their last outcome: acknowledged as
@@ -71,8 +73,19 @@ internal class SendSideRun(
         try
         {
             _logger.LogInformation("Waiting for publisher to complete...");
-            await publishingCompleteSignal.WaitAsync(ct);
-            _logger.LogInformation("Publisher completed. Starting idle timeout monitoring.");
+            try
+            {
+                await publishingCompleteSignal.WaitAsync(ct);
+                _logger.LogInformation("Publisher completed. Starting idle timeout monitoring.");
+            }
+            // A failed sweep still published what it could (with several ports, every port but the
+            // failed ones): consume it before the run fails, so one broken port does not hold the
+            // others' messages on the queue. The job reports the sweep's failure.
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    "Publisher failed. Consuming the messages already on the queue before the run fails.");
+            }
 
             // The idle window measures quiet time after the sweep, not the process's whole
             // lifetime: the clock restarts here so a sweep longer than IdleTimeout cannot make

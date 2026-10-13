@@ -91,6 +91,25 @@ public class SendSideRunTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenPublishingFails_ConsumesTheQueueUntilItGoesIdle()
+    {
+        // A failed sweep still published what it could: those messages are consumed in this run,
+        // not held on the queue until a run whose sweep succeeds.
+        var options = Options();
+        var publishing = new TaskCompletionSource();
+        var run = Subscriber(options).ExecuteAsync(publishing.Task);
+        using var delivery = await ConnectAsync(options);
+
+        publishing.SetException(new InvalidOperationException("sweeping source port 'returns' failed"));
+        await Task.Delay(100);
+        var ack = await delivery.DeliverAsync(Event("published-before-the-failure"));
+        var summary = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DeliveryAck.Success, ack);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 0, Skipped: 0), summary);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_OpensAFreshIdleWindow_WhenMonitoringStarts()
     {
         // A sweep outlasting the idle timeout must not look already-idle at the first poll: the

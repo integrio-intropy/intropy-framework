@@ -40,6 +40,8 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     /// <summary>
     /// Runs the job once: sweeps the source while subscribing, and
     /// returns once publishing is done and the subscription has gone idle (or the host cancelled).
+    /// A failed sweep fails the run, but only after the queue has gone idle: the messages it did
+    /// publish (with several ports, the other ports' files) are consumed in the same run.
     /// </summary>
     /// <returns>Files published (and completed) as <c>Processed</c> and duplicates as
     /// <c>Skipped</c>. <c>Failed</c> counts both sides: files left in place, and messages the run
