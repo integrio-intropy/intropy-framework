@@ -228,6 +228,14 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         services.AddTransactionalIntegration(
             TransactionalIntegrationDefinition<TCtx>.BoundTo(configuration, factory));
 
+    /// <summary>Why no send route handles a message: the source port the receive side stamped it
+    /// with, or (none) when it was published without the stamp — it names no port, rather than a
+    /// port with an empty name.</summary>
+    internal static string DescribeUnroutedSend(IncomingMessage message) =>
+        message.GetExtension(CloudEventExtensionKeys.SourcePort) is { Length: > 0 } port
+            ? $"No send route handles source port '{port}'"
+            : "No send route handles source port '(none)': it names no port";
+
     /// <summary>Binds a configuration section onto the integration options: every key the section
     /// carries sets the member it names — the legacy <c>DaprPubSubName</c>/<c>DaprTopicName</c>
     /// spellings and the composed <see cref="TransactionalIntegrationOptions.Subscription"/>
@@ -301,7 +309,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             table.Verify(scopes, componentName);
             return new SendSideRun(
                 new RoutingMessageHandler(scopes, table, componentName,
-                    message => $"No send route handles source port '{message.GetExtension(CloudEventExtensionKeys.SourcePort)}'",
+                    DescribeUnroutedSend,
                     // The internal hop's Subscription has no rules: every message takes its default route.
                     defaultPathIsUnrouted: false),
                 sp.GetRequiredService<TransactionalIntegrationOptions>(),

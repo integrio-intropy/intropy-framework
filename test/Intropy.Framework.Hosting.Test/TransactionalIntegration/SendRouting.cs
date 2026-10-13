@@ -18,11 +18,11 @@ internal static class SendRouting
 
     /// <summary>The handler of an integration with <paramref name="routes"/>.</summary>
     internal static RoutingMessageHandler Handler(MessageRouteTable routes,
-        Action<IServiceCollection>? configure = null)
+        Action<IServiceCollection>? configure = null, Func<IncomingMessage, string>? describeUnrouted = null)
     {
         var services = new ServiceCollection();
         configure?.Invoke(services);
         return new RoutingMessageHandler(services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
-            routes, "test-integration", _ => "no send route matches", defaultPathIsUnrouted: false);
+            routes, "test-integration", describeUnrouted ?? (_ => "no send route matches"), defaultPathIsUnrouted: false);
     }
 }

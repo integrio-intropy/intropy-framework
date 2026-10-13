@@ -8,6 +8,7 @@ using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.Test.Messaging;
 using Intropy.Framework.Hosting.TransactionalIntegration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -132,6 +133,35 @@ public class SendRouteTests
     }
 
     [Theory]
+    [InlineData(null, "No send route handles source port '(none)': it names no port")]
+    [InlineData("", "No send route handles source port '(none)': it names no port")]
+    [InlineData("orders-in", "No send route handles source port 'orders-in'")]
+    public void UnroutedSend_NamesTheStampedPort_OrRendersNoneWhenTheStampIsAbsent(string? port, string expected)
+    {
+        var extensions = port is null
+            ? new Dictionary<string, string>()
+            : new Dictionary<string, string> { [CloudEventExtensionKeys.SourcePort] = port };
+
+        Assert.Equal(expected,
+            TransactionalIntegrationServiceCollectionExtensions.DescribeUnroutedSend(Message(extensions: extensions)));
+    }
+
+    [Fact]
+    public async Task HandleAsync_AMessageWithoutAStamp_IsUnrouted_NamesNoPortRatherThanAnEmptyOne()
+    {
+        // The message was published without the stamp: it names no port, not a port with an
+        // empty name.
+        var handler = SendRouting.Handler(
+            new MessageRouteTable([new NeverMatchingRoute()]),
+            describeUnrouted: TransactionalIntegrationServiceCollectionExtensions.DescribeUnroutedSend);
+
+        var handled = await handler.HandleAsync(Message(), null, CancellationToken.None, CancellationToken.None);
+
+        Assert.Equal(MessageOutcome.Unrouted, handled.Outcome.Outcome);
+        Assert.Equal("No send route handles source port '(none)': it names no port", handled.Outcome.Description);
+    }
+
+    [Theory]
     [InlineData("orders-in", true)]
     [InlineData("orders-no", true)]
     [InlineData("invoices-in", false)]
@@ -172,6 +202,22 @@ public class SendRouteTests
         Func<FileMatch, FileMatch> match) =>
         new(match(new FileMatch()), (send, _) => send,
             (metadata, isRetry) => new OrderContext(metadata, isRetry));
+
+    /// <summary>A route whose match is never true, so every message reaches the unrouted path.</summary>
+    private sealed class NeverMatchingRoute : IMessageRoute
+    {
+        public string? Name => "never";
+
+        public bool IsCatchAll => false;
+
+        public bool Matches(IncomingMessage message) => false;
+
+        public void Verify(IServiceProvider scope, string componentName) { }
+
+        public Task<PipelineOutcome> ExecuteAsync(IncomingMessage message, IServiceScopeFactory scopes,
+            string componentName, CancellationToken interrupt, CancellationToken cancellationToken) =>
+            Task.FromResult(new PipelineOutcome(MessageOutcome.Processed));
+    }
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);
 }
