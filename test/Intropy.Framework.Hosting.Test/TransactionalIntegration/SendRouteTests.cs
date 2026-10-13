@@ -169,7 +169,7 @@ public class SendRouteTests
     [InlineData(null, false)] // a message naming no port never matches
     public void DeclaredRoute_MatchesOnTheRecordedPort(string? port, bool matches)
     {
-        var route = Declared(m => m.Port("orders-in", "orders-no"));
+        var route = Declared("orders-in", "orders-no");
         var extensions = new Dictionary<string, string>();
         if (port is not null)
             extensions[CloudEventExtensionKeys.SourcePort] = port;
@@ -181,7 +181,7 @@ public class SendRouteTests
     public void DeclaredRoute_IgnoresTheEditableMetadata()
     {
         // A receive step rewrote source_port; the framework-recorded extension decides.
-        var route = Declared(m => m.Port("invoices-in"));
+        var route = Declared("invoices-in");
 
         Assert.False(route.Matches(Message("msg-1", new Dictionary<string, string>
         {
@@ -193,14 +193,13 @@ public class SendRouteTests
     [Fact]
     public void DeclaredRoute_IsNamedAfterItsPorts()
     {
-        Assert.Equal("orders-in+orders-no", Declared(m => m.Port("orders-in", "orders-no")).Name);
+        Assert.Equal("orders-in+orders-no", Declared("orders-in", "orders-no").Name);
         Assert.Null(new DeclaredSendRoute<string, string, OrderContext>(null, (send, _) => send,
             (metadata, isRetry) => new OrderContext(metadata, isRetry)).Name);
     }
 
-    private static DeclaredSendRoute<string, string, OrderContext> Declared(
-        Func<FileMatch, FileMatch> match) =>
-        new(match(new FileMatch()), (send, _) => send,
+    private static DeclaredSendRoute<string, string, OrderContext> Declared(params string[] ports) =>
+        new(new FileMatch(ports), (send, _) => send,
             (metadata, isRetry) => new OrderContext(metadata, isRetry));
 
     /// <summary>A route whose match is never true, so every message reaches the unrouted path.</summary>

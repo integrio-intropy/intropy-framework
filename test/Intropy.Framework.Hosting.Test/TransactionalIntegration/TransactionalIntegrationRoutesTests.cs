@@ -41,19 +41,19 @@ public class TransactionalIntegrationRoutesTests
     }
 
     [Fact]
-    public void On_RejectsAMatchWithoutAPort()
+    public void On_RejectsNoPorts()
     {
         var error = Assert.Throws<ArgumentException>(() =>
-            new TransactionalIntegrationRoutes<Context>().On<OrderFile, string>(m => m, Send));
+            new TransactionalIntegrationRoutes<Context>().On<OrderFile, string>([], Send));
 
         Assert.Contains("use OnAny", error.Message);
     }
 
     [Fact]
-    public void Match_RejectsAnEmptyPortList()
+    public void FileMatch_RejectsAnEmptyPortList()
     {
-        Assert.Throws<ArgumentException>(() => new FileMatch().Port());
-        Assert.Throws<ArgumentException>(() => new FileMatch().Port(" "));
+        Assert.Throws<ArgumentException>(() => new FileMatch([]));
+        Assert.Throws<ArgumentException>(() => new FileMatch([" "]));
     }
 
     [Fact]
@@ -86,8 +86,8 @@ public class TransactionalIntegrationRoutesTests
         services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in").Port("invoices-in"),
             routes => routes
-                .On<OrderFile, string>(m => m.Port("orders-in"), Send)
-                .On<InvoiceFile, string>(m => m.Port("invoices-in"), Send));
+                .On<OrderFile, string>(["orders-in"], Send)
+                .On<InvoiceFile, string>(["invoices-in"], Send));
 
         var summary = await services.BuildServiceProvider()
             .GetRequiredService<TransactionalIntegrationReceiver<Context>>().SweepAsync(CancellationToken.None);
@@ -102,7 +102,7 @@ public class TransactionalIntegrationRoutesTests
     {
         var services = GetServices();
         services.AddTransactionalIntegration(Definition, sources => sources.Port("orders-in"),
-            routes => routes.On<OrderFile, string>(m => m.Port("orders-in"), (send, _) => send));
+            routes => routes.On<OrderFile, string>(["orders-in"], (send, _) => send));
 
         var error = Assert.Throws<InvalidOperationException>(() =>
             services.BuildServiceProvider().GetRequiredService<SendSideRun>());
@@ -134,7 +134,7 @@ public class TransactionalIntegrationRoutesTests
 
         var error = Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in"),
-            routes => routes.On<OrderFile, string>(m => m.Port("orders-in"), Send).OnAny<OrderFile, string>(Send)));
+            routes => routes.On<OrderFile, string>(["orders-in"], Send).OnAny<OrderFile, string>(Send)));
 
         Assert.Contains("cannot be combined with other routes", error.Message);
     }
@@ -146,7 +146,7 @@ public class TransactionalIntegrationRoutesTests
 
         var error = Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in"),
-            routes => routes.On<OrderFile, string>(m => m.Port("orders-in", "stock-in"), Send)));
+            routes => routes.On<OrderFile, string>(["orders-in", "stock-in"], Send)));
 
         Assert.Contains("'stock-in', which is not declared", error.Message);
     }
@@ -158,7 +158,7 @@ public class TransactionalIntegrationRoutesTests
 
         var error = Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in").Port("invoices-in"),
-            routes => routes.On<OrderFile, string>(m => m.Port("orders-in"), Send)));
+            routes => routes.On<OrderFile, string>(["orders-in"], Send)));
 
         Assert.Contains("no route handles source port 'invoices-in'", error.Message);
     }
@@ -171,8 +171,8 @@ public class TransactionalIntegrationRoutesTests
         var error = Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in").Port("invoices-in"),
             routes => routes
-                .On<OrderFile, string>(m => m.Port("orders-in"), Send)
-                .On<InvoiceFile, string>(m => m.Port("invoices-in", "orders-in"), Send)));
+                .On<OrderFile, string>(["orders-in"], Send)
+                .On<InvoiceFile, string>(["invoices-in", "orders-in"], Send)));
 
         Assert.Contains("'orders-in' is handled by more than one route", error.Message);
     }
@@ -183,7 +183,7 @@ public class TransactionalIntegrationRoutesTests
         var services = GetServices();
 
         services.AddTransactionalIntegration(Definition, sources => sources.Port("orders-se").Port("orders-no"),
-            routes => routes.On<OrderFile, string>(m => m.Port("orders-se", "orders-no"), Send));
+            routes => routes.On<OrderFile, string>(["orders-se", "orders-no"], Send));
 
         Assert.Equal(2, services.BuildServiceProvider().GetServices<SourcePort>().Count());
     }
@@ -246,7 +246,7 @@ public class TransactionalIntegrationRoutesTests
         var services = GetServices();
         Assert.Throws<InvalidOperationException>(() => services.AddTransactionalIntegration(Definition,
             sources => sources.Port("orders-in").Port("invoices-in"),
-            routes => routes.On<OrderFile, string>(m => m.Port("orders-in"), Send)));
+            routes => routes.On<OrderFile, string>(["orders-in"], Send)));
 
         services.AddTransactionalIntegration(Definition, sources => sources.Port("orders-in"),
             routes => routes.OnAny<OrderFile, string>(Send));

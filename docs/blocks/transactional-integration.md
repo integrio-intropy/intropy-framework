@@ -170,10 +170,10 @@ builder.Services.AddTransactionalIntegration(
         .Port("orders-in")
         .Port("invoices-in", FileCompletion.Archive("processed")),
     routes => routes
-        .On<OrderFile, Order>(m => m.Port("orders-in"), (send, sp) => send
+        .On<OrderFile, Order>(["orders-in"], (send, sp) => send
             .WithDeserializer(new OrderDeserializer())
             /* validator, transformer, serializer, sender as for any send pipeline */)
-        .On<InvoiceFile, Invoice>(m => m.Port("invoices-in"), (send, sp) => send
+        .On<InvoiceFile, Invoice>(["invoices-in"], (send, sp) => send
             .WithDeserializer(new InvoiceDeserializer())
             /* ... */));
 ```
@@ -191,9 +191,9 @@ like `AddSendPipeline`'s; only the context type is shared by the whole integrati
 
 ### How a file finds its route
 
-A route names the ports whose files it handles: `m.Port("orders-in")`, or several ports that carry
-the same data, `m.Port("orders-se", "orders-no")`. Ports match exactly, and each port is handled by
-exactly one route. When every port carries the same data, declare one route for all of them with
+A route names the ports whose files it handles: `["orders-in"]`, or several ports that carry the
+same data, `["orders-se", "orders-no"]`. Ports match exactly, and each port is handled by exactly
+one route. When every port carries the same data, declare one route for all of them with
 `OnAny`:
 
 ```csharp

@@ -132,7 +132,7 @@ defaults to the component name; it and the sidecar timeouts are set through the 
 
 To sweep several source ports, each through the pipeline for its data, register the extractor with
 sources and routes instead: `AddExtractor(sources => sources.Port("orders-in").Port("invoices-in"),
-routes => routes.On<OrderFile, Order>(m => m.Port("orders-in"), ...).On<InvoiceFile, Invoice>(...))`.
+routes => routes.On<OrderFile, Order>(["orders-in"], ...).On<InvoiceFile, Invoice>(["invoices-in"], ...))`.
 See "Several source ports and routes" in the Extractor block docs (`docs/blocks/extractor.md`).
 
 The framework writes the source file name into each context's metadata under

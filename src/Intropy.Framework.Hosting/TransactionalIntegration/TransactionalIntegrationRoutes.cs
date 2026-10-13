@@ -14,8 +14,8 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <remarks>
 /// <code>
 /// routes =&gt; routes
-///     .On&lt;OrderFile, Order&gt;(m =&gt; m.Port("orders-se", "orders-no"), (send, sp) =&gt; send...)
-///     .On&lt;InvoiceFile, Invoice&gt;(m =&gt; m.Port("invoices-in"), (send, sp) =&gt; send...)
+///     .On&lt;OrderFile, Order&gt;(["orders-se", "orders-no"], (send, sp) =&gt; send...)
+///     .On&lt;InvoiceFile, Invoice&gt;(["invoices-in"], (send, sp) =&gt; send...)
 /// </code>
 /// <para>
 /// Each source port is handled by exactly one route. An integration either has one route for every
@@ -32,26 +32,26 @@ public sealed class TransactionalIntegrationRoutes<TCtx> where TCtx : Context
 {
     private readonly List<Declaration> _routes = [];
 
-    /// <summary>Sends the files <paramref name="match"/> selects through a send pipeline.</summary>
-    /// <param name="match">Selects the files this route handles, by their source port.</param>
+    /// <summary>Sends the files of <paramref name="ports"/> through a send pipeline.</summary>
+    /// <param name="ports">The source ports whose files this route handles, matched exactly on
+    /// what the framework records from the sweep.</param>
     /// <param name="configureSend">Configures the route's send pipeline builder, given the message's
     /// scope — the same shape as <c>AddSendPipeline</c>.</param>
     /// <typeparam name="TInput">The route's deserialized input.</typeparam>
     /// <typeparam name="TOutput">What the route sends to the target.</typeparam>
     /// <returns>The routes, for chaining.</returns>
-    /// <exception cref="ArgumentException"><paramref name="match"/> names no port, or returns null.</exception>
+    /// <exception cref="ArgumentException">No port is given, or a port is null or whitespace.</exception>
     public TransactionalIntegrationRoutes<TCtx> On<TInput, TOutput>(
-        Func<FileMatch, FileMatch> match,
+        string[] ports,
         Func<SendPipelineBuilder<TInput, TOutput, TCtx>, IServiceProvider, SendPipelineBuilder<TInput, TOutput, TCtx>> configureSend)
     {
-        ArgumentNullException.ThrowIfNull(match);
-        ArgumentNullException.ThrowIfNull(configureSend);
-        var criteria = match(new FileMatch()) ??
-            throw new ArgumentException("The match returned null.", nameof(match));
-        if (criteria.IsEmpty)
+        ArgumentNullException.ThrowIfNull(ports);
+        if (ports.Length == 0)
             throw new ArgumentException("A route names at least one source port; use OnAny for every port.",
-                nameof(match));
+                nameof(ports));
+        ArgumentNullException.ThrowIfNull(configureSend);
 
+        var criteria = new FileMatch(ports);
         _routes.Add(new Declaration(criteria, contextFactory =>
             new DeclaredSendRoute<TInput, TOutput, TCtx>(criteria, configureSend, contextFactory)));
         return this;

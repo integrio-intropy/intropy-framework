@@ -41,8 +41,8 @@ public class ExtractorRoutesTests
         _orders.AddFile("order.csv", "o-1");
         _invoices.AddFile("invoice.xml", "i-1");
         await using var provider = Register(routes => routes
-            .On<Order, Order>(m => m.Port("orders-se"), Pipeline<Order>(id => new Order(id), "orders.accepted"))
-            .On<Invoice, Invoice>(m => m.Port("invoices-no"), Pipeline<Invoice>(id => new Invoice(id), "invoices.accepted")));
+            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted"))
+            .On<Invoice, Invoice>(["invoices-no"], Pipeline<Invoice>(id => new Invoice(id), "invoices.accepted")));
 
         var summary = await RunAsync(provider);
 
@@ -86,8 +86,8 @@ public class ExtractorRoutesTests
     {
         _orders.AddFile("order.csv", "o-1");
         await using var provider = Register(routes => routes
-            .On<Order, Order>(m => m.Port("orders-se"), Pipeline<Order>(id => new Order(id), "orders.accepted"))
-            .On<Invoice, Invoice>(m => m.Port("invoices-no"), (builder, _) => builder));
+            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted"))
+            .On<Invoice, Invoice>(["invoices-no"], (builder, _) => builder));
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(provider));
 
@@ -100,7 +100,7 @@ public class ExtractorRoutesTests
     public void AddExtractor_RejectsAPortNoRouteHandles()
     {
         var error = Assert.Throws<InvalidOperationException>(() => GetServices().AddExtractor(Sources,
-            routes => routes.On<Order, Order>(m => m.Port("orders-se"), (builder, _) => builder)));
+            routes => routes.On<Order, Order>(["orders-se"], (builder, _) => builder)));
 
         Assert.Contains("no route handles source port 'invoices-no'", error.Message);
     }
@@ -110,7 +110,7 @@ public class ExtractorRoutesTests
     {
         var error = Assert.Throws<InvalidOperationException>(() => GetServices().AddExtractor(Sources,
             routes => routes
-                .On<Order, Order>(m => m.Port("orders-se"), (builder, _) => builder)
+                .On<Order, Order>(["orders-se"], (builder, _) => builder)
                 .OnAny<Invoice, Invoice>((builder, _) => builder)));
 
         Assert.Contains("cannot be combined with other routes", error.Message);
@@ -125,9 +125,9 @@ public class ExtractorRoutesTests
     }
 
     [Fact]
-    public void On_RejectsAMatchWithoutAPort() =>
+    public void On_RejectsNoPorts() =>
         Assert.Throws<ArgumentException>(() =>
-            new ExtractorRoutes<Context>().On<Order, Order>(m => m, (builder, _) => builder));
+            new ExtractorRoutes<Context>().On<Order, Order>([], (builder, _) => builder));
 
     [Fact]
     public void AddExtractor_RejectsAnAlreadyRegisteredSourcePort()
@@ -147,7 +147,7 @@ public class ExtractorRoutesTests
         // A corrected retry registers: the rejected attempt left no marker and no port.
         var services = GetServices();
         Assert.Throws<InvalidOperationException>(() => services.AddExtractor(Sources,
-            routes => routes.On<Order, Order>(m => m.Port("orders-se"), (builder, _) => builder)));
+            routes => routes.On<Order, Order>(["orders-se"], (builder, _) => builder)));
 
         services.AddExtractor(Sources, routes => routes.OnAny<Order, Order>((builder, _) => builder));
 

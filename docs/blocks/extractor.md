@@ -302,11 +302,11 @@ builder.Services.AddExtractor<OrderContext>(
         .Port("orders-in")
         .Port("invoices-in", FileCompletion.Archive("processed")),
     routes => routes
-        .On<OrderFile, Order>(m => m.Port("orders-in"), (builder, sp) => builder
+        .On<OrderFile, Order>(["orders-in"], (builder, sp) => builder
             .WithDeserializer<OrderDeserializer>()
             .WithIdempotency((order, _) => order.Id, (order, _) => order.ChangedAt)
             /* validator, transformer, serializer, sender as for any extractor */)
-        .On<InvoiceFile, Invoice>(m => m.Port("invoices-in"), (builder, sp) => builder
+        .On<InvoiceFile, Invoice>(["invoices-in"], (builder, sp) => builder
             .WithDeserializer<InvoiceDeserializer>()
             /* ... */)),
     (metadata, isRetry) => new OrderContext(metadata, isRetry));
@@ -318,9 +318,9 @@ leave out the context factory: `AddExtractor(sources, routes)`. Each port's file
 registered keyed by the port name, as for a single port. Don't call `AddSourcePort`: the sources
 declare the ports.
 
-A route names the ports whose files it handles: `m.Port("orders-in")`, or several ports that carry
-the same data, `m.Port("orders-se", "orders-no")`. When every port carries the same data, declare
-one route for all of them with `OnAny`. The startup checks are the Transactional Integration's: no
+A route names the ports whose files it handles: `["orders-in"]`, or several ports that carry the
+same data, `["orders-se", "orders-no"]`. When every port carries the same data, declare one route
+for all of them with `OnAny`. The startup checks are the Transactional Integration's: no
 source or no route, a route naming an undeclared port, a port handled by no route or by more than
 one, and `OnAny` combined with routes by port all fail the registration. Before any file is listed,
 each port's pipeline is built once, so a route that cannot be composed fails the run naming the

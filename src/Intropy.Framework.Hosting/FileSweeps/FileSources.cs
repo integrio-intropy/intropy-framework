@@ -4,8 +4,8 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// The source ports a file-driven component sweeps, each with what happens to a file once the
 /// component has handled it. Which pipeline a file goes through is declared separately, by the
 /// component's routes (<see cref="Extractor.ExtractorRoutes{TCtx}"/>,
-/// <see cref="TransactionalIntegration.TransactionalIntegrationRoutes{TCtx}"/>), each selecting
-/// files with a <see cref="FileMatch"/>.
+/// <see cref="TransactionalIntegration.TransactionalIntegrationRoutes{TCtx}"/>), each naming the
+/// ports whose files it handles.
 /// </summary>
 /// <remarks>
 /// The ports' file adapters are registered keyed by port name, as for a single source port. The

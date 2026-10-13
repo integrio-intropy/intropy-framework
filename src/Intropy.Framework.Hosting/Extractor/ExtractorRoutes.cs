@@ -13,8 +13,8 @@ namespace Intropy.Framework.Hosting.Extractor;
 /// <remarks>
 /// <code>
 /// routes =&gt; routes
-///     .On&lt;OrderFile, OrderPublished&gt;(m =&gt; m.Port("orders-se", "orders-no"), (builder, sp) =&gt; builder...)
-///     .On&lt;InvoiceFile, InvoicePublished&gt;(m =&gt; m.Port("invoices-in"), (builder, sp) =&gt; builder...)
+///     .On&lt;OrderFile, OrderPublished&gt;(["orders-se", "orders-no"], (builder, sp) =&gt; builder...)
+///     .On&lt;InvoiceFile, InvoicePublished&gt;(["invoices-in"], (builder, sp) =&gt; builder...)
 /// </code>
 /// <para>
 /// Each source port is handled by exactly one route. An extractor either has one route for every
@@ -33,27 +33,26 @@ public sealed class ExtractorRoutes<TCtx> where TCtx : Context
 {
     private readonly List<ExtractorRoute<TCtx>> _routes = [];
 
-    /// <summary>Runs the files <paramref name="match"/> selects through a pipeline.</summary>
-    /// <param name="match">Selects the files this route handles, by their source port.</param>
+    /// <summary>Runs the files of <paramref name="ports"/> through a pipeline.</summary>
+    /// <param name="ports">The source ports whose files this route handles, matched exactly on
+    /// what the framework records from the sweep.</param>
     /// <param name="configurePipeline">Configures the route's pipeline builder, given the file's
     /// scope — the same shape as <c>AddExtractor</c>'s.</param>
     /// <typeparam name="TInput">The route's deserialized input.</typeparam>
     /// <typeparam name="TOutput">The route's published payload.</typeparam>
     /// <returns>The routes, for chaining.</returns>
-    /// <exception cref="ArgumentException"><paramref name="match"/> names no port, or returns null.</exception>
+    /// <exception cref="ArgumentException">No port is given, or a port is null or whitespace.</exception>
     public ExtractorRoutes<TCtx> On<TInput, TOutput>(
-        Func<FileMatch, FileMatch> match,
+        string[] ports,
         Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline)
     {
-        ArgumentNullException.ThrowIfNull(match);
-        ArgumentNullException.ThrowIfNull(configurePipeline);
-        var criteria = match(new FileMatch()) ??
-            throw new ArgumentException("The match returned null.", nameof(match));
-        if (criteria.IsEmpty)
+        ArgumentNullException.ThrowIfNull(ports);
+        if (ports.Length == 0)
             throw new ArgumentException("A route names at least one source port; use OnAny for every port.",
-                nameof(match));
+                nameof(ports));
+        ArgumentNullException.ThrowIfNull(configurePipeline);
 
-        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(criteria, configurePipeline));
+        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new FileMatch(ports), configurePipeline));
         return this;
     }
 
