@@ -75,6 +75,18 @@ public class ExtractorJobIsolationTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_StampsTheSourcePortOnEachFilesContext_OverwritingTheCallersValue()
+    {
+        // The caller's context factory claims source_port = "caller-port"; the framework owns the key.
+        var (sweep, collector) = CreateProbedSweep("order-1.json", "order-2.json");
+
+        await sweep.ExecuteAsync(CancellationToken.None);
+
+        Assert.Equal(2, collector.Entries.Count);
+        Assert.All(collector.Entries, e => Assert.Equal(ExtractorSweepTestProcess.SourceKey, e.SourcePort));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_DerivedContextValuesSurviveTheFullPipeline()
     {
         var fakes = new ExtractorSweepTestProcess.SweepFakes();
@@ -186,14 +198,14 @@ public class ExtractorJobIsolationTests
             c => Assert.NotEmpty(c.GetParameters()));
     }
 
-    private static (ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext> Sweep,
+    private static (ExtractorJob<ExtractorTestProcess.TestContext> Sweep,
         ExtractorSweepTestProcess.ProbeCollector Collector) CreateProbedSweep(params string[] files)
     {
         var (sweep, _, collector) = CreateProbedSweepStateful(files);
         return (sweep, collector);
     }
 
-    private static (ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext> Sweep,
+    private static (ExtractorJob<ExtractorTestProcess.TestContext> Sweep,
         ExtractorSweepTestProcess.SweepFakes Fakes, ExtractorSweepTestProcess.ProbeCollector Collector)
         CreateProbedSweepStateful(params string[] files)
     {
@@ -211,7 +223,7 @@ public class ExtractorJobIsolationTests
         return (sweep, fakes, collector);
     }
 
-    private static ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>
+    private static ExtractorJob<ExtractorTestProcess.TestContext>
         CreateSweep(IServiceCollection services)
     {
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });

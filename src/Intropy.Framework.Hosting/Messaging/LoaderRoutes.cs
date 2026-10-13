@@ -11,7 +11,7 @@ namespace Intropy.Framework.Hosting.Messaging;
 /// </summary>
 public sealed class LoaderRoutes
 {
-    private readonly List<ILoaderRoute> _routes = [];
+    private readonly List<IMessageRoute> _routes = [];
 
     /// <summary>Routes messages of CloudEvent type <paramref name="eventType"/> to a loader
     /// pipeline.</summary>
@@ -32,10 +32,10 @@ public sealed class LoaderRoutes
         ArgumentException.ThrowIfNullOrWhiteSpace(eventType);
         ArgumentNullException.ThrowIfNull(configurePipeline);
         ArgumentNullException.ThrowIfNull(contextFactory);
-        if (_routes.Any(r => r.EventType is null))
+        if (_routes.Any(r => r.IsCatchAll))
             throw new ArgumentException("A loader that handles every event type cannot also have typed routes.",
                 nameof(eventType));
-        if (_routes.Any(r => string.Equals(r.EventType, eventType, StringComparison.Ordinal)))
+        if (_routes.Any(r => string.Equals(r.Name, eventType, StringComparison.Ordinal)))
             throw new ArgumentException($"A route for event type '{eventType}' is already registered.", nameof(eventType));
 
         _routes.Add(new LoaderRoute<TInput, TOutput, TCtx>(eventType, configurePipeline, contextFactory));
@@ -73,7 +73,7 @@ public sealed class LoaderRoutes
         {
             case null:
                 break;
-            case { EventType: null }:
+            case { IsCatchAll: true }:
                 throw new ArgumentException("An every-event-type route is already registered; a loader handles " +
                     "its topic either with one pipeline or with typed routes, not two catch-alls.");
             default:
@@ -96,5 +96,5 @@ public sealed class LoaderRoutes
         return routes;
     }
 
-    internal IReadOnlyList<ILoaderRoute> Routes => _routes;
+    internal IReadOnlyList<IMessageRoute> Routes => _routes;
 }

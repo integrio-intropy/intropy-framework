@@ -1,10 +1,5 @@
-using System.Text;
-using CloudNative.CloudEvents;
-using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
-using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
-using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.Logging;
@@ -12,12 +7,12 @@ using Microsoft.Extensions.Logging;
 namespace Intropy.Framework.Hosting.Extractor;
 
 /// <summary>
-/// The extractor's run-to-completion job: one sweep of the source port, where each source file is
-/// read as UTF-8 text and run through the composed
-/// <see cref="Extractor{TInput,TOutput,TCtx}"/> pipeline. A published file (or one routed as a
-/// delivered business incident) and an idempotent duplicate are completed as the source port
-/// says (<c>AddSourcePort</c>); a failed file stays for
-/// the next scheduled run — the idempotency check makes the retry safe.
+/// The extractor's run-to-completion job: one sweep of each source port
+/// (<see cref="ExtractorPortSweep{TCtx}"/>), where each source file is read as UTF-8 text and run
+/// through the pipeline of the port's route. A published file (or one routed as a delivered
+/// business incident) and an idempotent duplicate are completed as the source port says
+/// (<c>AddSourcePort</c>, or the extractor's sources); a failed file stays for the next scheduled
+/// run — the idempotency check makes the retry safe.
 /// </summary>
 /// <remarks>
 /// Delivery semantics: publication happens before the idempotency recording, and delivery is
@@ -25,29 +20,24 @@ namespace Intropy.Framework.Hosting.Extractor;
 /// next run processes the file again and may publish it a second time. (A source file that could
 /// not be deleted after a fully recorded success is different: the record exists, so the
 /// redelivery is cancelled as a duplicate.)
+/// <para>
+/// Each port's files go through the pipeline of the route that handles the port (the
+/// <c>routeFor</c> argument), chosen once per run.
+/// </para>
 /// </remarks>
-internal sealed class ExtractorJob<TInput, TOutput, TCtx>(
+internal sealed class ExtractorJob<TCtx>(
     IServiceProvider provider,
     FrameworkOptions frameworkOptions,
+    Func<SourcePort, ExtractorRoute<TCtx>> routeFor,
     ContextFactory<TCtx> contextFactory,
-    ILoggerFactory loggerFactory)
-    : FilePipelineSweep<Extractor<TInput, TOutput, TCtx>, CloudEvent, TCtx>(provider, frameworkOptions, contextFactory,
-        loggerFactory), IJob
+    ILoggerFactory loggerFactory) : IJob
     where TCtx : Context
 {
-    /// <summary>Runs one sweep of the source port.</summary>
-    public Task<RunSummary> ExecuteAsync(CancellationToken ct) => SweepAsync(ct);
+    private readonly SourceSweep _sweep = new(provider, frameworkOptions, source =>
+        new ExtractorPortSweep<TCtx>(source, routeFor(source), provider, frameworkOptions, contextFactory,
+            loggerFactory),
+        loggerFactory);
 
-    protected override async Task<StepResult<CloudEvent>> RunPipelineAsync(Extractor<TInput, TOutput, TCtx> pipeline,
-        SweptFile file, TCtx context, CancellationToken ct)
-    {
-        // A listed file with no content is stuck: fail it and keep it so the run exits 1 instead
-        // of silently skipping it. An empty file reads as string.Empty on every adapter.
-        var content = await file.ReadTextAsync(Encoding.UTF8, ct);
-        if (content.Length == 0)
-            return new StepResult<CloudEvent>.TechnicalFailure(new TechnicalFailure("The file has no content"));
-
-        var (result, _) = await pipeline.Execute(content, context, detachTrace: false, ct);
-        return result;
-    }
+    /// <summary>Runs one sweep of each source port.</summary>
+    public Task<RunSummary> ExecuteAsync(CancellationToken ct) => _sweep.SweepAsync(ct);
 }

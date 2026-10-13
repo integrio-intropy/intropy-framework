@@ -7,8 +7,10 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Jobs;
+using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Intropy.Framework.Testing.Delivery;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
@@ -40,13 +42,9 @@ public class SendSideRunTests
         CallbackPort = AppCallbackDelivery.AvailablePort()
     };
 
-    private SendSideRun<Context> Subscriber(TransactionalIntegrationOptions options,
-        TimeProvider? time = null)
-    {
-        var processor = new MessageProcessor<Context>(_pipeline, (metadata, isRetry) => new Context(metadata, isRetry),
-            "test-integration");
-        return new SendSideRun<Context>(processor, options, "test-integration", NullLoggerFactory.Instance, time);
-    }
+    private SendSideRun Subscriber(TransactionalIntegrationOptions options, TimeProvider? time = null) =>
+        new(SendRouting.Handler(_pipeline, (metadata, isRetry) => new Context(metadata, isRetry)), options,
+            "test-integration", NullLoggerFactory.Instance, time);
 
     /// <summary>The send pipeline's result for each message, by its message id.</summary>
     private void PipelineReturns(Func<string, StepResult<string>> result) =>
@@ -90,6 +88,25 @@ public class SendSideRunTests
         publishing.SetResult();
 
         await run.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenPublishingFails_ConsumesTheQueueUntilItGoesIdle()
+    {
+        // A failed sweep still published what it could: those messages are consumed in this run,
+        // not held on the queue until a run whose sweep succeeds.
+        var options = Options();
+        var publishing = new TaskCompletionSource();
+        var run = Subscriber(options).ExecuteAsync(publishing.Task);
+        using var delivery = await ConnectAsync(options);
+
+        publishing.SetException(new InvalidOperationException("sweeping source port 'returns' failed"));
+        await Task.Delay(100);
+        var ack = await delivery.DeliverAsync(Event("published-before-the-failure"));
+        var summary = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(DeliveryAck.Success, ack);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 0, Skipped: 0), summary);
     }
 
     [Fact]
@@ -140,6 +157,54 @@ public class SendSideRunTests
 
         Assert.Equal([DeliveryAck.Success, DeliveryAck.Success, DeliveryAck.Retry], acks);
         Assert.Equal(new RunSummary(Processed: 1, Failed: 1, Skipped: 1), summary);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_LeavesAnUnroutedMessageForRedelivery_AndCountsItFailed()
+    {
+        // An integration with send routes: a message no route matches has no send pipeline. It is
+        // never acknowledged, and the run does not report success.
+        var options = Options();
+        var handler = SendRouting.Handler(new MessageRouteTable([new PortRoute("orders-in")]));
+        var publishing = new TaskCompletionSource();
+        var run = new SendSideRun(handler, options, "test-integration", NullLoggerFactory.Instance)
+            .ExecuteAsync(publishing.Task);
+        using var delivery = await ConnectAsync(options);
+
+        var acks = new[]
+        {
+            await delivery.DeliverAsync(FromPort(Event("routed"), "orders-in")),
+            await delivery.DeliverAsync(FromPort(Event("unrouted"), "stock-in"))
+        };
+        publishing.SetResult();
+        var summary = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal([DeliveryAck.Success, DeliveryAck.Retry], acks);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 1, Skipped: 0), summary);
+    }
+
+    /// <summary>A send route for one source port whose pipeline always succeeds.</summary>
+    private sealed class PortRoute(string port) : IMessageRoute
+    {
+        public string? Name => port;
+
+        public bool IsCatchAll => false;
+
+        public bool Matches(IncomingMessage message) =>
+            message.GetExtension(CloudEventExtensionKeys.SourcePort) == port;
+
+        public void Verify(IServiceProvider scope, string componentName) { }
+
+        public Task<PipelineOutcome> ExecuteAsync(IncomingMessage message, IServiceScopeFactory scopes,
+            string componentName, CancellationToken interrupt, CancellationToken cancellationToken) =>
+            Task.FromResult(new PipelineOutcome(MessageOutcome.Processed));
+    }
+
+    private static CloudEvent FromPort(CloudEvent cloudEvent, string port)
+    {
+        cloudEvent[CloudEventAttribute.CreateExtension(CloudEventExtensionKeys.SourcePort,
+            CloudEventAttributeType.String)] = port;
+        return cloudEvent;
     }
 
     [Fact]

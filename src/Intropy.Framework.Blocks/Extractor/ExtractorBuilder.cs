@@ -34,6 +34,7 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private readonly IServiceProvider _serviceProvider;
     private readonly FrameworkOptions _frameworkOptions;
     private readonly ILogger _logger;
+    private readonly string? _sourcePort;
 
     private DeserializeStep<TInput, TCtx>? _deserializer;
     private ValidateStep<TInput, TCtx>? _validator;
@@ -52,16 +53,18 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// </summary>
     /// <param name="pipelineName">The name of the pipeline.</param>
     /// <param name="serviceProvider">An instance of <see cref="IServiceProvider"/> to get required services from DI</param>
+    /// <param name="sourcePort">The source port of a pipeline for one port, or null.</param>
     /// <exception cref="ArgumentException">Thrown if <b>pipelineName</b> is null or empty</exception>
     /// <exception cref="ArgumentNullException">Thrown if any required parameters are null</exception>
     /// <exception cref="InvalidOperationException">Thrown if any required services are not registered in DI</exception>
-    private ExtractorBuilder(string pipelineName, IServiceProvider serviceProvider)
+    private ExtractorBuilder(string pipelineName, IServiceProvider serviceProvider, string? sourcePort)
     {
         ArgumentException.ThrowIfNullOrEmpty(pipelineName);
         ArgumentNullException.ThrowIfNull(serviceProvider);
 
         _pipelineName = pipelineName;
         _serviceProvider = serviceProvider;
+        _sourcePort = sourcePort;
 
         _logger = _serviceProvider.GetService<ILoggerFactory>()
                       ?.CreateLogger<Extractor<TInput, TOutput, TCtx>>() ??
@@ -82,7 +85,33 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     public static ExtractorBuilder<TInput, TOutput, TCtx> Create(string pipelineName,
         IServiceProvider serviceProvider)
     {
-        return new ExtractorBuilder<TInput, TOutput, TCtx>(pipelineName, serviceProvider);
+        return new ExtractorBuilder<TInput, TOutput, TCtx>(pipelineName, serviceProvider, sourcePort: null);
+    }
+
+    /// <summary>
+    /// Creates a builder for the files of one source port of an extractor that sweeps several, each
+    /// through its route's pipeline. The hosting layer creates port builders when it composes a
+    /// route; components configure them.
+    /// </summary>
+    /// <remarks>
+    /// The port is stamped on every CloudEvent the pipeline sends, as the
+    /// <see cref="CloudEventExtensionKeys.SourcePort"/> extension, and scopes the pipeline's
+    /// idempotency records (see
+    /// <see cref="WithIdempotency(Func{TInput, TCtx, string}, Func{TInput, TCtx, DateTimeOffset}, Func{TInput, string}?, IdempotencyScope)"/>).
+    /// Internal: the port is the hosting layer's decision, not the component's — a component
+    /// declares its source ports and routes to the hosting layer, which builds each route's builder
+    /// with the port it swept. Use <see cref="Create(string, IServiceProvider)"/> for a pipeline
+    /// without a port.
+    /// </remarks>
+    /// <param name="pipelineName">The name of the pipeline.</param>
+    /// <param name="serviceProvider">An instance of <see cref="IServiceProvider"/> used to get required services from DI.</param>
+    /// <param name="sourcePort">The source port the pipeline's files are swept from.</param>
+    /// <returns>The builder.</returns>
+    internal static ExtractorBuilder<TInput, TOutput, TCtx> Create(string pipelineName,
+        IServiceProvider serviceProvider, string sourcePort)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePort);
+        return new ExtractorBuilder<TInput, TOutput, TCtx>(pipelineName, serviceProvider, sourcePort);
     }
 
     /// <summary>
@@ -384,19 +413,33 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// Configures automatic idempotency handling using dependency injection to resolve the <see cref="IIdempotencyServiceClient"/>.
     /// This method configures both the check and recording steps.
     /// </summary>
+    /// <remarks>
+    /// In an extractor that routes several source ports, <paramref name="scope"/> decides whether the
+    /// port's idempotency records are its own (<see cref="IdempotencyScope.Route"/>, the default: the
+    /// id is <c>{source port}:{id}</c>) or shared with every port (<see cref="IdempotencyScope.Entity"/>:
+    /// the id alone, so a record seen on one port is a duplicate on every other). An extractor with
+    /// one pipeline for its source (no routes) is always keyed on the id alone.
+    /// </remarks>
     /// <param name="idExtractor">Function to extract the unique ID from the payload.</param>
     /// <param name="dateExtractor">Function to extract the event date from the payload.</param>
     /// <param name="hashGenerator">Optional function to generate a hash of the payload. If not provided, uses a default implementation (JSON serialization + SHA256).</param>
+    /// <param name="scope">Which records this port's idempotency is checked against.</param>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="IIdempotencyServiceClient"/> is not registered in the service provider.</exception>
     /// <exception cref="ArgumentNullException">Thrown when any of the required parameters are null.</exception>
     public ExtractorBuilder<TInput, TOutput, TCtx> WithIdempotency(
         Func<TInput, TCtx, string> idExtractor,
         Func<TInput, TCtx, DateTimeOffset> dateExtractor,
-        Func<TInput, string>? hashGenerator = null)
+        Func<TInput, string>? hashGenerator = null,
+        IdempotencyScope scope = IdempotencyScope.Route)
     {
         ArgumentNullException.ThrowIfNull(idExtractor);
         ArgumentNullException.ThrowIfNull(dateExtractor);
+        if (scope == IdempotencyScope.Route && _sourcePort is { } port)
+        {
+            var recordId = idExtractor;
+            idExtractor = (input, context) => $"{port}:{recordId(input, context)}";
+        }
 
         var client = _serviceProvider.GetService<IIdempotencyServiceClient>()
                      ?? throw new InvalidOperationException(
@@ -458,7 +501,7 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
             _validator,
             _transformer,
             _serializer,
-            _sender,
+            _sourcePort is null ? _sender : new SourcePortStamp<TCtx>(_sender, _sourcePort),
             _idempotencyChecker,
             _idempotencyRecorder,
             _businessIncidentRouter

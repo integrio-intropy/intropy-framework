@@ -286,6 +286,10 @@ through the queue into the SendPipeline. Each file gets a fresh `Context` whose 
 travels with the message, so the SendPipeline sees it too. The receive pipeline is resolved once
 before the source is listed: a missing registration fails the run instead of every file.
 
+An integration can also sweep several source ports and send each port's files through the send
+pipeline for its data. See
+[Several source ports and send routes](../../../docs/blocks/transactional-integration.md#several-source-ports-and-send-routes).
+
 To use your own context type in both pipelines, register with
 `AddTransactionalIntegration<TCtx>(contextFactory, ...)`. The `ContextFactory<TCtx>` receives the
 metadata and retry flag (`(metadata, isRetry) => new OrderContext(metadata, isRetry)`) and is
@@ -294,6 +298,6 @@ called for each file and each message.
 ## Data Types
 
 ```csharp
-// A source file with its content, ready for publishing
-public record SourceItem(string Id, byte[] Data);
+// A source file with its content, ready for publishing; Port is the source port it was swept from
+public record SourceItem(string Id, byte[] Data) { public string? Port { get; init; } }
 ```

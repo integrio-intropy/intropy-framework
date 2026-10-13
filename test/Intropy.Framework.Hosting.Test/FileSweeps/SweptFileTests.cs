@@ -14,7 +14,7 @@ public class SweptFileTests
         // The sweep's contract: content is read once, whatever order the handler and the
         // completion read it in — an archive after a text read must not fetch the file again
         var source = new CountingAdapter("order-1.json"u8.ToArray());
-        var file = new SweptFile("order-1.json", source, new ServiceCollection().BuildServiceProvider());
+        var file = new SweptFile("order-1.json", "source", source, new ServiceCollection().BuildServiceProvider());
 
         var text = await file.ReadTextAsync(Encoding.UTF8);
         var archived = await file.ReadAsync();
@@ -30,7 +30,7 @@ public class SweptFileTests
     public async Task ReadTextAsync_ReadsAnEmptyFileAsEmpty()
     {
         var source = new CountingAdapter([]);
-        var file = new SweptFile("empty.json", source, new ServiceCollection().BuildServiceProvider());
+        var file = new SweptFile("empty.json", "source", source, new ServiceCollection().BuildServiceProvider());
 
         Assert.Equal(string.Empty, await file.ReadTextAsync(Encoding.UTF8));
     }
@@ -39,7 +39,7 @@ public class SweptFileTests
     public async Task ReadAsync_ForwardsCancellationToTheSource()
     {
         var source = new CountingAdapter([]);
-        var file = new SweptFile("order-1.json", source, new ServiceCollection().BuildServiceProvider());
+        var file = new SweptFile("order-1.json", "source", source, new ServiceCollection().BuildServiceProvider());
         using var cts = new CancellationTokenSource();
 
         await file.ReadTextAsync(Encoding.UTF8, cts.Token);

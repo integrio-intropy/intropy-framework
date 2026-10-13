@@ -128,6 +128,78 @@ public static class ExtractorServiceCollectionExtensions
         return AddExtractorCore(services, pipeline, contextFactory, definition.ConfigureJob);
     }
 
+    /// <summary>
+    /// Registers one extractor component with routes: <paramref name="configureSources"/> declares
+    /// the source ports it sweeps, and <paramref name="configureRoutes"/> which pipeline each port's
+    /// files go through. Validated at registration, so a misdeclared extractor fails at startup.
+    /// </summary>
+    /// <remarks>
+    /// The ports are swept one after another, in declaration order; a port that fails does not stop
+    /// the others, but the run still fails. Each route's pipeline is built for one port at a time, in
+    /// each file's own scope: it stamps the port on every event it publishes (the
+    /// <see cref="CloudEventExtensionKeys.SourcePort"/> extension) and keeps its idempotency records
+    /// per port unless it shares them (<see cref="IdempotencyScope"/>). Before any file is listed,
+    /// the job builds each port's pipeline once, so a missing registration fails the run once.
+    /// Caller-owned: the component identity (<c>AddIntropyFramework</c>), logging, <c>DaprClient</c>,
+    /// the platform-service clients, the process steps, and each port's file adapter, keyed by the
+    /// port name. Do not call <c>AddSourcePort</c>: the sources declare the ports. Only one extractor
+    /// component may be registered per service provider.
+    /// </remarks>
+    /// <typeparam name="TCtx">The context type shared by every route's pipeline.</typeparam>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="configureSources">Declares the source ports and their completions.</param>
+    /// <param name="configureRoutes">Declares the routes.</param>
+    /// <param name="contextFactory">Creates the context for each source file.</param>
+    /// <param name="configureJob">Optional runner settings: the job name (default: the component
+    /// name) and the sidecar timeouts.</param>
+    /// <returns>The service collection, for chaining.</returns>
+    /// <exception cref="InvalidOperationException">No source or route is declared; a route for every
+    /// file is combined with other routes; a route names an undeclared port, a port is routed twice
+    /// or not at all; a source port or an extractor is already registered.</exception>
+    public static IServiceCollection AddExtractor<TCtx>(this IServiceCollection services,
+        Action<FileSources> configureSources, Action<ExtractorRoutes<TCtx>> configureRoutes,
+        ContextFactory<TCtx> contextFactory, Action<JobOptions>? configureJob = null) where TCtx : Context
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configureSources);
+        ArgumentNullException.ThrowIfNull(configureRoutes);
+        ArgumentNullException.ThrowIfNull(contextFactory);
+        // Everything that can fail runs before any registration: a rejected declaration leaves nothing behind.
+        var sources = new FileSources();
+        configureSources(sources);
+        var routes = new ExtractorRoutes<TCtx>();
+        configureRoutes(routes);
+        sources.EnsureRoutedBy([.. routes.Routes.Select(r => r.Match)], "Extractor");
+        ComponentRegistration.EnsureSingleKind(services, "extractor");
+        SourcePortServiceCollectionExtensions.AddSourcePorts(services, sources.Ports);
+        ComponentRegistration.MarkRegistered(services, "extractor");
+
+        // Startup guarantees exactly one route per port.
+        var declared = routes.Routes.ToList();
+        return AddJob(services, port => declared.Single(r => r.Match is null || r.Match.Matches(port.Name)),
+            contextFactory, configureJob);
+    }
+
+    /// <summary>
+    /// Registers one extractor component with routes, whose pipelines use the base
+    /// <see cref="Context"/>. See
+    /// <see cref="AddExtractor{TCtx}(IServiceCollection, Action{FileSources}, Action{ExtractorRoutes{TCtx}}, ContextFactory{TCtx}, Action{JobOptions}?)"/>;
+    /// the context factory — plain <see cref="Context"/> records for each source file — is provided
+    /// for you.
+    /// </summary>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="configureSources">Declares the source ports and their completions.</param>
+    /// <param name="configureRoutes">Declares the routes.</param>
+    /// <param name="configureJob">Optional runner settings: the job name (default: the component
+    /// name) and the sidecar timeouts.</param>
+    /// <returns>The service collection, for chaining.</returns>
+    public static IServiceCollection AddExtractor(this IServiceCollection services,
+        Action<FileSources> configureSources, Action<ExtractorRoutes<Context>> configureRoutes,
+        Action<JobOptions>? configureJob = null) =>
+        services.AddExtractor(configureSources, configureRoutes,
+            static (metadata, isRetry) => new Context(metadata, isRetry), configureJob);
+
+    // Without routes: the one registered pipeline handles every file.
     private static IServiceCollection AddExtractorCore<TInput, TOutput, TCtx>(
         IServiceCollection services,
         Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
@@ -135,10 +207,18 @@ public static class ExtractorServiceCollectionExtensions
         Action<JobOptions>? configureJob) where TCtx : Context
     {
         services.AddScoped(provider => BuildPipeline(provider, configurePipeline));
-        services.AddSingleton(provider => new ExtractorJob<TInput, TOutput, TCtx>(provider,
-            provider.GetRequiredService<FrameworkOptions>(), contextFactory,
+        var route = new RegisteredExtractorRoute<TInput, TOutput, TCtx>();
+        return AddJob(services, _ => route, contextFactory, configureJob);
+    }
+
+    private static IServiceCollection AddJob<TCtx>(IServiceCollection services,
+        Func<SourcePort, ExtractorRoute<TCtx>> routeFor, ContextFactory<TCtx> contextFactory,
+        Action<JobOptions>? configureJob) where TCtx : Context
+    {
+        services.AddSingleton(provider => new ExtractorJob<TCtx>(provider,
+            provider.GetRequiredService<FrameworkOptions>(), routeFor, contextFactory,
             provider.GetRequiredService<ILoggerFactory>()));
-        services.AddJob<ExtractorJob<TInput, TOutput, TCtx>>(configureJob);
+        services.AddJob<ExtractorJob<TCtx>>(configureJob);
         return services;
     }
 

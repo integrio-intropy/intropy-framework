@@ -9,7 +9,7 @@ namespace Intropy.Framework.Hosting.Test.Messaging;
 /// <summary>
 /// <see cref="LoaderRoutes.OnAny{TInput,TOutput,TCtx}"/>, the public catch-all route: through the
 /// routed overload, a loader declares its one pipeline for every event type in the same block as
-/// typed routes. One shape or the other — <see cref="LoaderRouteTable"/> rejects the mix, and
+/// typed routes. One shape or the other — <see cref="MessageRouteTable"/> rejects the mix, and
 /// <c>OnAny</c> does already, at declaration.
 /// </summary>
 public class LoaderRoutesTests
@@ -20,19 +20,19 @@ public class LoaderRoutesTests
         var routes = new LoaderRoutes().OnAny<int, int, Context>(Pipeline, ContextFactory);
 
         var route = Assert.Single(routes.Routes);
-        Assert.Null(route.EventType); // the catch-all has no event type
+        Assert.True(route.IsCatchAll); // the catch-all has no event type
         Assert.Equal("*", route.Name);
     }
 
     [Fact]
     public void OnAny_BuildsARouteTableThatHandlesEveryEventType()
     {
-        var table = new LoaderRouteTable(new LoaderRoutes().OnAny<int, int, Context>(Pipeline, ContextFactory).Routes);
+        var table = new MessageRouteTable(new LoaderRoutes().OnAny<int, int, Context>(Pipeline, ContextFactory).Routes);
 
         Assert.False(table.IsRouting); // not routed by event type
         // Any event type is served by the same pipeline.
-        Assert.Same(table.Find("order.created"), table.Find("order.cancelled"));
-        Assert.Same(table.Routes[0], table.Find(null));
+        Assert.Same(table.Find(Message("order.created")), table.Find(Message("order.cancelled")));
+        Assert.Same(table.Routes[0], table.Find(Message("order.created")));
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class LoaderRoutesTests
     public void OnAny_IsThePublicFormOfTheCatchAllTheRoutedOverloadBuilt() =>
         // The internal Any(...) helper the single-pipeline overload uses keeps working, and declares
         // the same shape as OnAny.
-        Assert.Null(Assert.Single(LoaderRoutes.Any<int, int, Context>(Pipeline, ContextFactory).Routes).EventType);
+        Assert.True(Assert.Single(LoaderRoutes.Any<int, int, Context>(Pipeline, ContextFactory).Routes).IsCatchAll);
 
     [Fact]
     public void RoutedOverload_AcceptsAnOnAnyRouteDeclaration()
@@ -98,6 +98,9 @@ public class LoaderRoutesTests
 
     private static LoaderBuilder<int, int, Context> Pipeline(LoaderBuilder<int, int, Context> builder,
         IServiceProvider _) => builder;
+
+    private static IncomingMessage Message(string type) =>
+        IncomingMessage.From(MessageConsumerTests.Request(type: type));
 
     private static ContextFactory<Context> ContextFactory => (metadata, isRetry) => new Context(metadata, isRetry);
 }

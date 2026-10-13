@@ -16,8 +16,8 @@ namespace Intropy.Framework.Hosting.Loader;
 /// </summary>
 internal sealed class LoaderService(
     MessageConsumerSettings settings,
-    LoaderMessageHandler handler,
-    LoaderRouteTable routes,
+    RoutingMessageHandler handler,
+    MessageRouteTable routes,
     LoaderOptions options,
     string componentName,
     IServiceScopeFactory scopes,

@@ -8,7 +8,7 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <summary>
 /// The Transactional Integration's run-to-completion job: in one run it sweeps the source,
 /// publishing each file to the integration's queue through the receive pipeline, while the
-/// send side (<see cref="SendSideRun{TCtx}"/>) consumes the queue through the send pipeline. Hosted
+/// send side (<see cref="SendSideRun"/>) consumes the queue through the send pipeline. Hosted
 /// by the <see cref="JobRunner"/>,
 /// which owns the process around it: the sidecar lifecycle, job tracing, and exit-code mapping.
 /// </summary>
@@ -16,7 +16,7 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
 {
     private readonly TransactionalIntegrationReceiver<TCtx> _receiver;
-    private readonly SendSideRun<TCtx> _sendSideRun;
+    private readonly SendSideRun _sendSideRun;
     private readonly ILogger<TransactionalIntegrationJob<TCtx>> _logger;
 
     /// <summary>
@@ -29,7 +29,7 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     /// <param name="loggerFactory">An instance of <see cref="ILoggerFactory"/>.</param>
     internal TransactionalIntegrationJob(
         TransactionalIntegrationReceiver<TCtx> receiver,
-        SendSideRun<TCtx> sendSideRun,
+        SendSideRun sendSideRun,
         ILoggerFactory loggerFactory)
     {
         _receiver = receiver;
@@ -40,6 +40,8 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     /// <summary>
     /// Runs the job once: sweeps the source while subscribing, and
     /// returns once publishing is done and the subscription has gone idle (or the host cancelled).
+    /// A failed sweep fails the run, but only after the queue has gone idle: the messages it did
+    /// publish (with several ports, the other ports' files) are consumed in the same run.
     /// </summary>
     /// <returns>Files published (and completed) as <c>Processed</c> and duplicates as
     /// <c>Skipped</c>. <c>Failed</c> counts both sides: files left in place, and messages the run

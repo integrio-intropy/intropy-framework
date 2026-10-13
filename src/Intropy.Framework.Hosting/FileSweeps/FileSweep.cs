@@ -254,7 +254,7 @@ public sealed class FileSweep(
             try
             {
                 scope = provider.CreateAsyncScope();
-                file = new SweptFile(fileName, source, scope.Value.ServiceProvider);
+                file = new SweptFile(fileName, sourcePort, source, scope.Value.ServiceProvider);
                 outcome = await handleFile(file, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

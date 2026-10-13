@@ -76,9 +76,9 @@ internal static class HostingMetrics
     /// <param name="pubSubName">The pub/sub component the message was delivered from.</param>
     /// <param name="topic">The topic the message was delivered from.</param>
     /// <param name="outcome"><c>processed</c>, <c>skipped</c>, <c>failed</c>, <c>interrupted</c>
-    /// (by the host stopping: left for redelivery, but not a failure), <c>unrouted</c> (no loader
-    /// route handles its event type) or <c>rejected</c> (delivered after stopping began: left for
-    /// redelivery without processing).</param>
+    /// (by the host stopping: left for redelivery, but not a failure), <c>unrouted</c> (no route
+    /// handles it: a loader's event type, or a Transactional Integration's file) or <c>rejected</c>
+    /// (delivered after stopping began: left for redelivery without processing).</param>
     /// <param name="errorType">Set when the message failed, or was unrouted and left for
     /// redelivery.</param>
     /// <param name="duration">How long processing took; <see langword="null"/> when the message

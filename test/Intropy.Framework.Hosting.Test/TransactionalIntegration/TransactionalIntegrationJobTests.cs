@@ -69,15 +69,16 @@ public class TransactionalIntegrationJobTests
         Assert.Empty(source.Files);
         Assert.Equal(2, summary.Processed);
         await _receivePipeline.Received(1).Execute(
-            Arg.Is<SourceItem>(item => item.Id == "file1.txt" && item.Data.SequenceEqual(firstContent)),
+            Arg.Is<SourceItem>(item => item.Id == "file1.txt" && item.Data.SequenceEqual(firstContent)
+                && item.Port == SourceKey),
             Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task ExecuteAsync_GivesEachFileAFreshContextNamingTheSourceFile()
+    public async Task ExecuteAsync_GivesEachFileAFreshContextNamingTheSourceFileAndPort()
     {
-        // Verifies that the receive pipeline sees the framework's source file key, the same
-        // key extractors get, and that contexts are not shared between files
+        // Verifies that the receive pipeline sees the framework's source file and port keys, the
+        // same keys extractors get, and that contexts are not shared between files
         var source = new InMemoryFileAdapter().AddFile("file1.txt", "one").AddFile("file2.txt", "two");
         var contexts = new List<Context>();
         _receivePipeline.Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -90,6 +91,7 @@ public class TransactionalIntegrationJobTests
         await Lifecycle(source).ExecuteAsync(CancellationToken.None);
 
         Assert.Equal(["file1.txt", "file2.txt"], contexts.Select(c => c.Metadata[SourceContextKeys.FileName]));
+        Assert.All(contexts, c => Assert.Equal(SourceKey, c.Metadata[SourceContextKeys.SourcePort]));
         Assert.NotSame(contexts[0], contexts[1]);
     }
 
@@ -141,8 +143,7 @@ public class TransactionalIntegrationJobTests
         services.AddSingleton(receivePipeline);
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
         ContextFactory<OrderContext> factory = (metadata, isRetry) => new OrderContext(metadata, isRetry);
-        var sendProcessor = new MessageProcessor<OrderContext>(Substitute.For<ISendPipeline<OrderContext>>(), factory,
-            "test-integration");
+        var sendHandler = SendRouting.Handler(Substitute.For<ISendPipeline<OrderContext>>(), factory);
         var options = new TransactionalIntegrationOptions
         {
             DaprPubSubName = _options.DaprPubSubName,
@@ -153,7 +154,7 @@ public class TransactionalIntegrationJobTests
         };
         var lifecycle = new TransactionalIntegrationJob<OrderContext>(
             new TransactionalIntegrationReceiver<OrderContext>(provider, Identity, factory, _loggerFactory),
-            new SendSideRun<OrderContext>(sendProcessor, options, "test-integration", _loggerFactory),
+            new SendSideRun(sendHandler, options, "test-integration", _loggerFactory),
             _loggerFactory);
 
         await lifecycle.ExecuteAsync(CancellationToken.None);
@@ -196,6 +197,37 @@ public class TransactionalIntegrationJobTests
 
         Assert.True(source.Files.ContainsKey("file1.txt"));
         Assert.Equal(1, summary.Failed);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTheSweepFails_ConsumesTheQueueBeforeFailingTheRun()
+    {
+        // One broken source port must not hold the other ports' messages on the queue: the run
+        // consumes what reached the queue, then fails naming the sweep's error.
+        _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo => ((StepResult<string>)new StepResult<string>.Success(""), callInfo.Arg<Context>()));
+        var listingMayFail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = Substitute.For<IFileAdapter>();
+        source.ListAsync().Returns<Task<List<Adapters.Common.FileEntry>>>(async _ =>
+        {
+            await listingMayFail.Task;
+            throw new InvalidOperationException("couldn't find output binding");
+        });
+        var run = Lifecycle(source).ExecuteAsync(CancellationToken.None);
+        using var delivery = await ConnectAsync();
+
+        listingMayFail.SetResult();
+        await Task.Delay(100);
+        var ack = await delivery.DeliverAsync(Event("m1", "ok"));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        // The port's failure is isolated, so the run fails with the aggregated error naming the port.
+        Assert.Equal("Component 'test-integration': sweeping source port(s) 'source' failed", error.Message);
+        var inner = Assert.IsType<AggregateException>(error.InnerException);
+        Assert.Equal("couldn't find output binding", Assert.Single(inner.InnerExceptions).Message);
+        Assert.Equal(DeliveryAck.Success, ack);
+        await _sendPipeline.Received(1).Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -392,9 +424,8 @@ public class TransactionalIntegrationJobTests
 
     /// <summary>Builds the send side around the shared substitutes, composing the processor the
     /// way the DI registration does.</summary>
-    private SendSideRun<Context> Subscriber(TransactionalIntegrationOptions options) =>
-        new(new MessageProcessor<Context>(_sendPipeline, NewContext, "test-integration"),
-            options, "test-integration", _loggerFactory);
+    private SendSideRun Subscriber(TransactionalIntegrationOptions options) =>
+        new(SendRouting.Handler(_sendPipeline, NewContext), options, "test-integration", _loggerFactory);
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);
 }

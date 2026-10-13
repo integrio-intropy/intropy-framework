@@ -426,7 +426,7 @@ public class ExtractorJobTests
         Assert.Contains("order-1.json", handled.Text);
     }
 
-    private static ExtractorJob<ExtractorTestProcess.Input, ExtractorTestProcess.Output, ExtractorTestProcess.TestContext>
+    private static ExtractorJob<ExtractorTestProcess.TestContext>
         CreateSweep(ServiceCollection services)
     {
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });

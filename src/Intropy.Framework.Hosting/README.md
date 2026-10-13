@@ -130,9 +130,16 @@ once, not once per file. The component's identity comes from `AddIntropyFramewor
 defaults to the component name; it and the sidecar timeouts are set through the optional
 `Action<JobOptions>`. One extractor is supported per service provider.
 
+To sweep several source ports, each through the pipeline for its data, register the extractor with
+sources and routes instead: `AddExtractor(sources => sources.Port("orders-in").Port("invoices-in"),
+routes => routes.On<OrderFile, Order>(["orders-in"], ...).On<InvoiceFile, Invoice>(["invoices-in"], ...))`.
+See "Several source ports and routes" in the Extractor block docs (`docs/blocks/extractor.md`).
+
 The framework writes the source file name into each context's metadata under
 `SourceContextKeys.FileName` (`"file_name"`) before any step runs, so incident selectors can
-name a file that failed to deserialize.
+name a file that failed to deserialize. The port the file was swept from is written next to it,
+under `SourceContextKeys.SourcePort` (`"source_port"`). Both keys are the framework's: a value
+the context factory sets is overwritten.
 
 ### Replacing dependencies
 

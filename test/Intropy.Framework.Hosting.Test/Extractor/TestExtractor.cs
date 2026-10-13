@@ -51,8 +51,9 @@ internal sealed record TestExtractor<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>A job over this extractor, for tests that drive the job without the runner.</summary>
-    public ExtractorJob<TInput, TOutput, TCtx> CreateJob(IServiceProvider provider, ILoggerFactory loggerFactory) =>
-        new(provider, provider.GetRequiredService<FrameworkOptions>(), ContextFactory, loggerFactory);
+    public ExtractorJob<TCtx> CreateJob(IServiceProvider provider, ILoggerFactory loggerFactory) =>
+        new(provider, provider.GetRequiredService<FrameworkOptions>(),
+            _ => new RegisteredExtractorRoute<TInput, TOutput, TCtx>(), ContextFactory, loggerFactory);
 
     private ExtractorBuilder<TInput, TOutput, TCtx> Configure(ExtractorBuilder<TInput, TOutput, TCtx> builder,
         IServiceProvider provider)
