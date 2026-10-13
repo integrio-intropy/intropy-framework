@@ -89,21 +89,25 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
-    /// Creates a new instance of <see cref="ExtractorBuilder{TInput,TOutput,TCtx}"/> for the files of
-    /// one source port of an extractor that sweeps several, each through its route's pipeline.
+    /// Creates a builder for the files of one source port of an extractor that sweeps several, each
+    /// through its route's pipeline. The hosting layer creates port builders when it composes a
+    /// route; components configure them.
     /// </summary>
     /// <remarks>
     /// The port is stamped on every CloudEvent the pipeline sends, as the
     /// <see cref="CloudEventExtensionKeys.SourcePort"/> extension, and scopes the pipeline's
     /// idempotency records (see
     /// <see cref="WithIdempotency(Func{TInput, TCtx, string}, Func{TInput, TCtx, DateTimeOffset}, Func{TInput, string}?, IdempotencyScope)"/>).
-    /// The hosting layer creates port builders; components configure them.
+    /// Internal: the port is the hosting layer's decision, not the component's — a component
+    /// declares its source ports and routes to the hosting layer, which builds each route's builder
+    /// with the port it swept. Use <see cref="Create(string, IServiceProvider)"/> for a pipeline
+    /// without a port.
     /// </remarks>
     /// <param name="pipelineName">The name of the pipeline.</param>
     /// <param name="serviceProvider">An instance of <see cref="IServiceProvider"/> used to get required services from DI.</param>
     /// <param name="sourcePort">The source port the pipeline's files are swept from.</param>
     /// <returns>The builder.</returns>
-    public static ExtractorBuilder<TInput, TOutput, TCtx> Create(string pipelineName,
+    internal static ExtractorBuilder<TInput, TOutput, TCtx> Create(string pipelineName,
         IServiceProvider serviceProvider, string sourcePort)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourcePort);
