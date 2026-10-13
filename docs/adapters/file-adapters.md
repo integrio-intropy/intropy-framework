@@ -30,7 +30,7 @@ Task WriteAsync(this IFileAdapter adapter, string fileName, string content, Enco
 
 | Method | Description |
 |--------|-------------|
-| `ListAsync(ct)` | Lists files matching the configured filter. Returns `List<FileEntry>`. |
+| `ListAsync(ct)` | Lists files matching the configured filter. Returns `List<FileEntry>` whose names are relative to `BasePath`. |
 | `GetContentAsync(fileName, ct)` | Reads file content as `byte[]`. Throws on a missing file. |
 | `GetContentAsync(fileName, encoding, ct)` | Extension: reads file content as `string` with the specified encoding. |
 | `WriteAsync(fileName, content, basePathOverride, ct)` | Writes `byte[]` content. Optional `basePathOverride` to write to a different directory. |
@@ -68,7 +68,7 @@ public class FileAdapterOptions
 public record FileEntry(string Name);
 ```
 
-Returned by `IFileAdapter.ListAsync()`. Contains the file name.
+Returned by `IFileAdapter.ListAsync()`. Contains the file name relative to the configured `BasePath`.
 
 ---
 
@@ -107,7 +107,15 @@ var adapter = new AzureBlobStorageAdapter(daprClient, new FileAdapterOptions(
     basePath: "orders/incoming"));
 ```
 
-Uses the `blobName` metadata key for blob operations and handles path prefix normalization.
+Uses the `blobName` metadata key for blob operations, and sends the base path as the listing
+`prefix` in the request body rather than in metadata.
+
+Azure has no directories, so a blob's prefix is part of its name and the binding's `list` returns
+full blob names. The adapter strips the configured prefix, keeping listings relative like the other
+adapters'. A nested blob keeps its relative path: with `basePath: "orders/incoming"`, the blob
+`orders/incoming/2026/order.json` lists as `2026/order.json`, and `GetContentAsync` on that name
+resolves back to the full blob. A blob returned outside the configured prefix is listed unchanged
+rather than dropped.
 
 ---
 
