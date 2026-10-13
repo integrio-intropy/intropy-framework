@@ -9,8 +9,8 @@ namespace Intropy.Framework.Hosting.Test.FileSweeps;
 /// <summary>
 /// The run's sweep over a component's source ports: no port fails the run before anything is
 /// swept, every port is validated before any port is swept, the ports' summaries are added
-/// together in registration order, and one failing port of several does not stop the others but
-/// still fails the run.
+/// together in registration order, and a failing port does not stop the others but still fails
+/// the run, whose error names every failed port.
 /// </summary>
 public class SourceSweepTests
 {
@@ -60,16 +60,19 @@ public class SourceSweepTests
     }
 
     [Fact]
-    public async Task SweepAsync_WithOnePort_PropagatesItsFailureUnchanged()
+    public async Task SweepAsync_WithOnePort_IsolatesItsFailure_ThenFailsTheRunNamingIt()
     {
-        // A listing failure is never reported as an empty successful sweep.
+        // A listing failure is never reported as an empty successful sweep, whatever the port count.
         var calls = new List<string>();
+        var listingFailure = new IOException("SFTP unreachable");
         var sweep = Sweep(["orders-in"], port => new RecordingPortSweep(port.Name, calls,
-            sweepFailure: new IOException("SFTP unreachable")));
+            sweepFailure: listingFailure));
 
-        var error = await Assert.ThrowsAsync<IOException>(() => sweep.SweepAsync(CancellationToken.None));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => sweep.SweepAsync(CancellationToken.None));
 
-        Assert.Equal("SFTP unreachable", error.Message);
+        Assert.Equal("Component 'test-component': sweeping source port(s) 'orders-in' failed", error.Message);
+        var inner = Assert.IsType<AggregateException>(error.InnerException);
+        Assert.Same(listingFailure, Assert.Single(inner.InnerExceptions));
     }
 
     [Fact]

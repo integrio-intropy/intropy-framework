@@ -306,8 +306,13 @@ public class ExtractorJobCancellationTests
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
             () => sweep.ExecuteAsync(CancellationToken.None));
 
-        Assert.Contains("unexpected cancellation", error.Message);
-        Assert.Contains("1 processed", error.Message); // recorded outcomes are part of the error
+        // The port sweep's failure is isolated, so the run fails with the aggregated error naming
+        // the port; the recorded outcomes are intact inside it.
+        Assert.Contains("Component 'orders-extractor': sweeping source port(s)", error.Message);
+        var inner = Assert.IsType<AggregateException>(error.InnerException);
+        var failure = Assert.Single(inner.InnerExceptions);
+        Assert.Contains("unexpected cancellation", failure.Message);
+        Assert.Contains("1 processed", failure.Message); // recorded outcomes are part of the error
         Assert.Single(fakes.Topic.Events);              // the publication still happened
         Assert.Empty(fakes.Files.Files);                // the file was still consumed
     }

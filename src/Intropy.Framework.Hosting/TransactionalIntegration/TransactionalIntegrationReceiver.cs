@@ -29,6 +29,8 @@ internal sealed class TransactionalIntegrationReceiver<TCtx>(
     /// <returns>Files published (and completed) as <c>Processed</c>, duplicates as
     /// <c>Skipped</c>, and files left in place as <c>Failed</c>.</returns>
     /// <exception cref="InvalidOperationException">Thrown before any file is listed when the
-    /// integration cannot sweep its source; listing failures propagate too.</exception>
+    /// integration cannot sweep its source, and after the last port when a port failed: the error
+    /// names every failed port, and its inner <see cref="AggregateException"/> carries the ports'
+    /// failures.</exception>
     public Task<RunSummary> SweepAsync(CancellationToken ct) => _sweep.SweepAsync(ct);
 }

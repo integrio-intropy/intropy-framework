@@ -78,8 +78,8 @@ internal class SendSideRun(
                 await publishingCompleteSignal.WaitAsync(ct);
                 _logger.LogInformation("Publisher completed. Starting idle timeout monitoring.");
             }
-            // A failed sweep still published what it could (with several ports, every port but the
-            // failed ones): consume it before the run fails, so one broken port does not hold the
+            // A failed sweep still published what it could (every port but the failed ones):
+            // consume it before the run fails, so one broken port does not hold the
             // others' messages on the queue. The job reports the sweep's failure.
             catch (Exception) when (!ct.IsCancellationRequested)
             {

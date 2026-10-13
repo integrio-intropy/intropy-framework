@@ -18,10 +18,9 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// start.
 /// </para>
 /// <para>
-/// With several ports, a port whose sweep throws does not stop the others: the failure is logged
-/// with the port, the remaining ports are swept, and the run then fails naming every failed port.
-/// With one port its exception propagates unchanged, and an exception thrown while the host is
-/// cancelling always does.
+/// A port whose sweep throws does not stop the others, whatever the port count: the failure is
+/// logged with the port, the remaining ports are swept, and the run then fails naming every failed
+/// port. An exception thrown while the host is cancelling always propagates immediately.
 /// </para>
 /// </remarks>
 /// <param name="provider">The root provider the source ports are resolved from.</param>
@@ -40,8 +39,9 @@ internal sealed class SourceSweep(
     /// <returns>The ports' summaries added together.</returns>
     /// <exception cref="InvalidOperationException">Thrown before any file is listed when no
     /// source port is registered (<c>AddSourcePort</c>) or a port cannot be swept, and after the
-    /// last port when one of several ports failed. A single port's failure propagates unchanged; a
-    /// listing failure is never reported as an empty successful sweep.</exception>
+    /// last port when a port failed: the error names every failed port, and its inner
+    /// <see cref="AggregateException"/> carries the ports' failures. A listing failure is never
+    /// reported as an empty successful sweep.</exception>
     public async Task<RunSummary> SweepAsync(CancellationToken ct)
     {
         var ports = provider.GetServices<SourcePort>().ToList();
@@ -64,9 +64,9 @@ internal sealed class SourceSweep(
             }
             // Isolating any failure is safe: the run still ends in an exception, so it exits as a
             // failure; only the failed port's counts are lost, and a failed run doesn't report them.
-            catch (Exception e) when (sweeps.Count > 1 && !ct.IsCancellationRequested)
+            catch (Exception e) when (!ct.IsCancellationRequested)
             {
-                _logger.LogError(e, "Sweeping source port {Port} of {Component} failed; continuing with the other ports",
+                _logger.LogError(e, "Sweeping source port {Port} of {Component} failed; continuing with the remaining ports",
                     sweep.Port, frameworkOptions.ComponentName);
                 failures.Add((sweep.Port, e));
                 continue;

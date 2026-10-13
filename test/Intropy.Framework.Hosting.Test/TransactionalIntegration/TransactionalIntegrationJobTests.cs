@@ -221,7 +221,10 @@ public class TransactionalIntegrationJobTests
         var ack = await delivery.DeliverAsync(Event("m1", "ok"));
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => run.WaitAsync(TimeSpan.FromSeconds(10)));
 
-        Assert.Equal("couldn't find output binding", error.Message);
+        // The port's failure is isolated, so the run fails with the aggregated error naming the port.
+        Assert.Equal("Component 'test-integration': sweeping source port(s) 'source' failed", error.Message);
+        var inner = Assert.IsType<AggregateException>(error.InnerException);
+        Assert.Equal("couldn't find output binding", Assert.Single(inner.InnerExceptions).Message);
         Assert.Equal(DeliveryAck.Success, ack);
         await _sendPipeline.Received(1).Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(),
             Arg.Any<CancellationToken>());
