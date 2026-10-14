@@ -24,16 +24,19 @@ public class AzureBlobStorageAdapter(DaprClient daprClient, FileAdapterOptions o
     /// <c>inbound/order.json</c>.</summary>
     internal override string CombinePath(string basePath, string fileName) => BuildBlobName(basePath, fileName);
 
+    /// <summary>The prefix sent to the binding when listing, and therefore the prefix the full blob
+    /// names it returns carry back. Empty when no base path is configured.</summary>
+    private string ListPrefix =>
+        string.IsNullOrWhiteSpace(Options.BasePath) ? "" : NormalizePrefix(Options.BasePath) + "/";
+
     /// <summary>The blob binding takes the listing prefix in the request body, not metadata.</summary>
     internal override BindingRequest BuildListRequest()
     {
-        var prefix = string.IsNullOrWhiteSpace(Options.BasePath)
-            ? null
-            : NormalizePrefix(Options.BasePath) + "/";
+        var prefix = ListPrefix;
 
         return new BindingRequest(Options.DaprBindingName, ListOperation)
         {
-            Data = prefix is null
+            Data = prefix.Length == 0
                 ? null
                 : JsonSerializer.SerializeToUtf8Bytes(new { prefix })
         };
@@ -46,12 +49,19 @@ public class AzureBlobStorageAdapter(DaprClient daprClient, FileAdapterOptions o
         if (root.ValueKind != JsonValueKind.Array)
             return [];
 
+        var prefix = ListPrefix;
         var fileNames = new List<string>();
 
         foreach (var item in root.EnumerateArray())
         {
             var name = ExtractBlobName(item);
-            if (!string.IsNullOrWhiteSpace(name))
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            if (prefix.Length > 0 && name.StartsWith(prefix, StringComparison.Ordinal))
+                name = name[prefix.Length..];
+
+            if (name.Length > 0)
                 fileNames.Add(name);
         }
 

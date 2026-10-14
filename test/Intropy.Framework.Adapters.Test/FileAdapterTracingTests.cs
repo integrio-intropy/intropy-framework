@@ -105,7 +105,7 @@ public class FileAdapterTracingTests
     {
         "Local" => "[\"/inbound/order.json\",\"/inbound/skip.txt\"]",
         "Sftp" => "[{\"fileName\":\"order.json\",\"isDirectory\":false},{\"fileName\":\"skip.txt\",\"isDirectory\":false}]",
-        _ => "[\"order.json\",{\"Name\":\"skip.txt\"}]"
+        _ => "[\"inbound/order.json\",{\"Name\":\"inbound/skip.txt\"}]"
     };
 
     [Fact]
