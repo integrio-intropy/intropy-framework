@@ -38,6 +38,7 @@ public class DaprTopicEnqueuerTests
         {
             [SourceContextKeys.FileName] = "order-1.json",
             [SourceContextKeys.SourcePort] = "orders-in",
+            [SourceContextKeys.ReceivedAt] = "2026-10-14T06:30:00.0000000+00:00",
         });
 
         var (result, _) = await enqueuer.ExecuteAsync(item, context, CancellationToken.None);
@@ -53,6 +54,9 @@ public class DaprTopicEnqueuerTests
         var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>((string)envelope[metadataAttribute]!);
         Assert.Equal("order-1.json", metadata![SourceContextKeys.FileName]);
         Assert.Equal("orders-in", metadata[SourceContextKeys.SourcePort]); // reaches the send side
+        // The pickup time travels with the item, so the send side keys on when it arrived rather
+        // than on the current time.
+        Assert.Equal("2026-10-14T06:30:00.0000000+00:00", metadata[SourceContextKeys.ReceivedAt]);
     }
 
     [Theory]

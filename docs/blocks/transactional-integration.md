@@ -96,7 +96,7 @@ builder.Services.AddTransactionalIntegration<OrderContext>(
     opts => { /* as above */ });
 ```
 
-The factory is called once per source file (metadata holds `file_name` and `source_port`) and once per message
+The factory is called once per source file (metadata holds `file_name`, `source_port` and `received_at`) and once per message
 (metadata holds what the receive side propagated, plus the message id; `isRetry` is set on
 redelivery). Register `ISendPipeline<OrderContext>`; the receive side is registered for you.
 
@@ -107,9 +107,13 @@ The receive side needs no component code. The lifecycle sweeps the source with `
 `SourceItem` (`Id` plus raw `byte[]` data), runs the receive pipeline in the file's own scope, and
 completes the file only after the pipeline succeeded. A file that cannot be read or published stays
 for the next run and fails the run (exit 1). Each file gets a fresh `Context` with the file name in
-its metadata under `SourceContextKeys.FileName` (`"file_name"`) and the port it was swept from under
-`SourceContextKeys.SourcePort` (`"source_port"`). Both travel with the message, so send-side steps
-can read them. The framework also records the port as a CloudEvent extension of its own
+its metadata under `SourceContextKeys.FileName` (`"file_name"`), the port it was swept from under
+`SourceContextKeys.SourcePort` (`"source_port"`), and when the sweep picked it up under
+`SourceContextKeys.ReceivedAt` (`"received_at"`, a UTC ISO 8601 round-trip timestamp, stamped
+before the file is read). All three travel with the message, so send-side steps can read them.
+Because a redelivery restores the metadata the file was published with, `received_at` is the same
+on every delivery of a message — unlike the time at send. It is not carried across a re-sweep: a
+file that failed before reaching the queue stays in the source and is stamped afresh next run. The framework also records the port as a CloudEvent extension of its own
 (`intropysourceport`), set from the sweep rather than from the metadata.
 [Send routes](#several-source-ports-and-send-routes) match on it, so a step that changes the
 metadata cannot misroute a file.
@@ -241,6 +245,16 @@ the port or the kind of data in the id. `WithIdempotency` passes the context, wh
 
 Leave the port out when several ports deliver copies of the same feed and a record should be
 processed once, whichever port it arrived on.
+
+The date is the third argument. Take it from the payload when the document carries a meaningful
+one, as above. When it does not — or when the field's meaning in the source system is unclear —
+use the receive side's `received_at` instead of the current time, which would differ on every
+retry and redelivery of the same file:
+
+```csharp
+    (_, ctx) => DateTimeOffset.Parse(ctx.Metadata[SourceContextKeys.ReceivedAt],
+        CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
+```
 
 ### One integration or several?
 

@@ -45,13 +45,16 @@ public class SendRouteTests
 
         await Processor().HandleAsync(Message("msg-1", new Dictionary<string, string>
         {
-            ["metadata"] = "{\"file_name\":\"orders.csv\",\"source_port\":\"orders-in\"}",
+            ["metadata"] =
+                "{\"file_name\":\"orders.csv\",\"source_port\":\"orders-in\",\"received_at\":\"2026-10-14T06:30:00.0000000+00:00\"}",
             ["retrycount"] = "1"
         }), null, CancellationToken.None, CancellationToken.None);
 
         Assert.NotNull(received);
         Assert.Equal("orders.csv", received.Metadata[SourceContextKeys.FileName]);
         Assert.Equal("orders-in", received.Metadata[SourceContextKeys.SourcePort]);
+        // Restored from the message, so every redelivery of it sees the same pickup time.
+        Assert.Equal("2026-10-14T06:30:00.0000000+00:00", received.Metadata[SourceContextKeys.ReceivedAt]);
         Assert.Equal("msg-1", received.Metadata[ContextKeys.MessageId]);
         Assert.True(received.IsRetry);
     }
