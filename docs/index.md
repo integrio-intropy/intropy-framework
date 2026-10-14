@@ -38,8 +38,8 @@ builder.Services.AddIntropyFramework(opts => opts.ComponentName = "order-process
 
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    // The internal queue defaults to <system>-pubsub / internal-<component>; the system name
-    // comes from INTROPY_SYSTEM_NAME, which the deployment sets.
+    // The internal queue defaults to the pub/sub the deployment names in
+    // INTROPY_INTERNAL_QUEUE_PUBSUB_NAME and the topic internal-<component>.
     opts.IdleTimeout = TimeSpan.FromSeconds(5);
 });
 

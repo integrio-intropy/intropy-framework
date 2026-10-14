@@ -38,10 +38,10 @@ public class ServiceCollectionExtensionsTests
         services.AddTransactionalIntegration(_ => { });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("order-flow-pubsub", options.DaprPubSubName);
+        Assert.Equal("order-flow-queue", options.DaprPubSubName);
         Assert.Equal("internal-orders-integration", options.DaprTopicName);
         // Both shapes read the defaults.
-        Assert.Equal("order-flow-pubsub", options.Subscription.PubSubName);
+        Assert.Equal("order-flow-queue", options.Subscription.PubSubName);
         Assert.Equal("internal-orders-integration", options.Subscription.TopicName);
     }
 
@@ -53,7 +53,7 @@ public class ServiceCollectionExtensionsTests
         services.AddTransactionalIntegration(options => options.DaprTopicName = "test-topic");
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("order-flow-pubsub", options.DaprPubSubName);
+        Assert.Equal("order-flow-queue", options.DaprPubSubName);
         Assert.Equal("test-topic", options.DaprTopicName);
     }
 
@@ -67,7 +67,7 @@ public class ServiceCollectionExtensionsTests
         {
             options.ComponentName = "int1055.order-sync";
             options.ServiceNamespace = "example";
-            options.SystemName = "order-flow";
+            options.InternalQueuePubSubName = "order-flow-queue";
         });
 
         services.AddTransactionalIntegration(_ => { });
@@ -77,10 +77,10 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_Throws_WhenThePubSubAndTheSystemNameAreBothUnset()
+    public void AddTransactionalIntegration_Throws_WhenThePubSubAndTheInternalQueuePubSubAreBothUnset()
     {
-        // The default pub/sub is the system's: without a system name there is nothing to default to,
-        // and guessing would publish through a component the deployment does not render.
+        // The default pub/sub is the one the deployment names for internal queues: without it there is
+        // nothing to default to, and guessing would publish through a component the deployment does not render.
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
         services.AddIntropyFramework(options =>
@@ -94,11 +94,11 @@ public class ServiceCollectionExtensionsTests
         var provider = services.BuildServiceProvider();
         var exception = Assert.Throws<InvalidOperationException>(
             () => provider.GetRequiredService<TransactionalIntegrationOptions>());
-        Assert.Contains("INTROPY_SYSTEM_NAME", exception.Message);
+        Assert.Contains("INTROPY_INTERNAL_QUEUE_PUBSUB_NAME", exception.Message);
     }
 
     [Fact]
-    public void AddTransactionalIntegration_NeedsNoSystemName_WhenThePubSubIsSet()
+    public void AddTransactionalIntegration_NeedsNoInternalQueuePubSub_WhenThePubSubIsSet()
     {
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
@@ -342,7 +342,7 @@ public class ServiceCollectionExtensionsTests
         {
             options.ComponentName = "orders-integration";
             options.ServiceNamespace = "example";
-            options.SystemName = "order-flow";
+            options.InternalQueuePubSubName = "order-flow-queue";
         });
         return services;
     }

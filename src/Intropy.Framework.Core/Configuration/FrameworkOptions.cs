@@ -18,19 +18,21 @@ public class FrameworkOptions
     [Required] public required string ServiceNamespace { get; set; }
 
     /// <summary>
-    /// The name of the system the component is deployed in, e.g. order-flow. The deployment sets it
-    /// through the <c>INTROPY_SYSTEM_NAME</c> environment variable, which wins over a value set in
-    /// code: setting it in code is an escape hatch for tests and runs without a system topology, and
-    /// component code should otherwise leave it unset. Components that name their pub/sub
-    /// explicitly never need it.
+    /// The Dapr pub/sub component of the system's bus, which extractors and loaders share. The
+    /// deployment sets it through the <c>INTROPY_SYSTEM_PUBSUB_NAME</c> environment variable, which
+    /// wins over a value set in code: the system host names its components, so the framework takes
+    /// the name as given and derives nothing. Setting it in code is an escape hatch for tests and
+    /// runs without a system host.
     /// </summary>
-    public string? SystemName { get; set; }
+    public string? SystemPubSubName { get; set; }
 
     /// <summary>
-    /// The system's pub/sub component, <c>&lt;system&gt;-pubsub</c>, or null when
-    /// <see cref="SystemName"/> is unset. Several systems share an environment's namespace and
-    /// broker, so each system owns its own Dapr component: its scopes and broker credentials are the
-    /// system's alone.
+    /// The Dapr pub/sub component that carries the transactional integrations' internal queues. It
+    /// is apart from <see cref="SystemPubSubName"/> because an internal queue has a single consumer:
+    /// on brokers that tell queues from topics (Azure Service Bus) the system host renders it as a
+    /// queue component and the bus as a topic component. The deployment sets it through the
+    /// <c>INTROPY_INTERNAL_QUEUE_PUBSUB_NAME</c> environment variable, which wins over a value set in
+    /// code, as for <see cref="SystemPubSubName"/>.
     /// </summary>
-    public string? SystemPubSubName => string.IsNullOrEmpty(SystemName) ? null : $"{SystemName}-pubsub";
+    public string? InternalQueuePubSubName { get; set; }
 }

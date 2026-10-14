@@ -41,13 +41,16 @@ public static class ServiceCollectionExtensions
             });
         }
 
-        // The system name is a fact of the deployment, not of the code: a component's code sets its
-        // own name, but which system it runs in is the deployment's to say. The environment wins;
-        // a value set in code only applies when the deployment sets none (tests, runs without a
-        // topology).
-        var systemName = Environment.GetEnvironmentVariable(Constants.SystemNameEnvironmentVariable);
-        if (!string.IsNullOrEmpty(systemName))
-            services.PostConfigure<FrameworkOptions>(opts => opts.SystemName = systemName);
+        // The pub/sub names are facts of the deployment, not of the code: the system host names its
+        // components and hands each workload the names by role. The environment wins; a value set in
+        // code only applies when the deployment sets none (tests, runs without a system host).
+        var systemPubSubName = Environment.GetEnvironmentVariable(Constants.SystemPubSubNameEnvironmentVariable);
+        if (!string.IsNullOrEmpty(systemPubSubName))
+            services.PostConfigure<FrameworkOptions>(opts => opts.SystemPubSubName = systemPubSubName);
+        var internalQueuePubSubName =
+            Environment.GetEnvironmentVariable(Constants.InternalQueuePubSubNameEnvironmentVariable);
+        if (!string.IsNullOrEmpty(internalQueuePubSubName))
+            services.PostConfigure<FrameworkOptions>(opts => opts.InternalQueuePubSubName = internalQueuePubSubName);
 
         // Validate configuration
         services.AddOptions<FrameworkOptions>()

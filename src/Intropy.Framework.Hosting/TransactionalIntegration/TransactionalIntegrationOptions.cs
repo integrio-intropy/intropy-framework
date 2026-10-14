@@ -23,9 +23,8 @@ public class TransactionalIntegrationOptions
     public SubscriptionOptions Subscription => _subscription;
 
     /// <summary>
-    /// The name of the Dapr PubSub component to use. Optional: unset, it is the system's pub/sub,
-    /// <c>&lt;system&gt;-pubsub</c> (see <see cref="FrameworkOptions.SystemPubSubName"/>), which carries
-    /// the internal queue the system topology generates for the component.
+    /// The name of the Dapr PubSub component to use. Optional: unset, it is the pub/sub the
+    /// deployment names for internal queues, <see cref="FrameworkOptions.InternalQueuePubSubName"/>.
     /// </summary>
     public string DaprPubSubName { get; set; } = "";
 
@@ -118,15 +117,18 @@ public class TransactionalIntegrationOptions
 
     /// <summary>Fills the pub/sub and topic left unset with the internal queue the system topology
     /// generates for the component <paramref name="framework"/> names, in both shapes.</summary>
-    /// <exception cref="InvalidOperationException">The pub/sub is unset and so is the system name it
-    /// defaults from.</exception>
+    /// <exception cref="InvalidOperationException">The pub/sub is unset and so is the internal queue
+    /// pub/sub it defaults from.</exception>
     internal void UseInternalQueueDefaults(FrameworkOptions framework)
     {
         if (string.IsNullOrEmpty(DaprPubSubName))
-            DaprPubSubName = framework.SystemPubSubName ?? throw new InvalidOperationException(
-                $"{nameof(TransactionalIntegrationOptions)}.{nameof(DaprPubSubName)} is unset and so is the system " +
-                $"name it defaults from (<system>-pubsub): set {nameof(FrameworkOptions)}.{nameof(FrameworkOptions.SystemName)}, " +
-                $"the INTROPY_SYSTEM_NAME environment variable, or {nameof(DaprPubSubName)}.");
+            DaprPubSubName = !string.IsNullOrEmpty(framework.InternalQueuePubSubName)
+                ? framework.InternalQueuePubSubName
+                : throw new InvalidOperationException(
+                    $"{nameof(TransactionalIntegrationOptions)}.{nameof(DaprPubSubName)} is unset and so is the " +
+                    $"internal queue pub/sub it defaults from: set the INTROPY_INTERNAL_QUEUE_PUBSUB_NAME environment " +
+                    $"variable, {nameof(FrameworkOptions)}.{nameof(FrameworkOptions.InternalQueuePubSubName)}, or " +
+                    $"{nameof(DaprPubSubName)}.");
         if (string.IsNullOrEmpty(DaprTopicName))
             DaprTopicName = InternalQueueTopicName(framework.ComponentName);
         _subscription.PubSubName = DaprPubSubName;
