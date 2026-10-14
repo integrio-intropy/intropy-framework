@@ -41,5 +41,5 @@ internal static class CloudEventHelper
         Source = SourceUrn(options)
     };
 
-    private static Uri SourceUrn(FrameworkOptions options) => new($"urn:${options.ComponentName}");
+    private static Uri SourceUrn(FrameworkOptions options) => new($"urn:{options.ComponentName}");
 }

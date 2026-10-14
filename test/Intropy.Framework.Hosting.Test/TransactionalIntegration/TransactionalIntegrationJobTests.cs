@@ -491,7 +491,7 @@ public class TransactionalIntegrationJobTests
             var ack = await delivery.DeliverAsync(new CloudEvent
             {
                 Id = deliverStaleFirst && Published == 1 ? "probe-from-an-earlier-run" : probeId,
-                Source = new Uri("urn:$test-integration"), Type = InternalQueueMessageTypes.Probe
+                Source = new Uri("urn:test-integration"), Type = InternalQueueMessageTypes.Probe
             }, ct: ct);
             if (ack == DeliveryAck.Success)
                 Interlocked.Increment(ref _delivered);

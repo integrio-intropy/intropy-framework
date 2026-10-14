@@ -107,7 +107,7 @@ public class DaprTopicEnqueuerTests
         var envelope = new JsonEventFormatter().DecodeStructuredModeMessage(published.Value.Data, null, null);
         Assert.Equal("probe-1", envelope.Id);
         Assert.Equal(InternalQueueMessageTypes.Probe, envelope.Type);
-        Assert.Equal(new Uri("urn:$orders"), envelope.Source);
+        Assert.Equal(new Uri("urn:orders"), envelope.Source);
         Assert.Null(envelope.Data);
     }
 

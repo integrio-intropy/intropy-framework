@@ -218,7 +218,7 @@ public class SendSideRunTests
 
         var ack = await delivery.DeliverAsync(new CloudEvent
         {
-            Id = "probe-1", Source = new Uri("urn:$test-integration"), Type = InternalQueueMessageTypes.Probe
+            Id = "probe-1", Source = new Uri("urn:test-integration"), Type = InternalQueueMessageTypes.Probe
         });
         publishing.SetResult();
         var summary = await run.WaitAsync(TimeSpan.FromSeconds(10));
