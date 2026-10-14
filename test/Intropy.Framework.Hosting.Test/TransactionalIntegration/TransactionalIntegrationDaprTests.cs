@@ -106,7 +106,7 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
         {
             options.ComponentName = AppId;
             options.ServiceNamespace = "test";
-            options.InternalQueuePubSubName = PubSubName;
+            options.PubSubName = PubSubName;
         });
         services.AddKeyedSingleton(Source, source);
         services.AddSingleton(sink);

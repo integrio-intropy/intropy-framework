@@ -62,11 +62,10 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddIntropyFramework_ReadsThePubSubNamesFromEnv_AlongsideTheFunc()
+    public void AddIntropyFramework_ReadsThePubSubNameFromEnv_AlongsideTheFunc()
     {
-        // Code sets the component's own name; the pub/subs it uses are the deployment's to name.
-        Environment.SetEnvironmentVariable(Constants.SystemPubSubNameEnvironmentVariable, "order-flow-pubsub");
-        Environment.SetEnvironmentVariable(Constants.InternalQueuePubSubNameEnvironmentVariable, "order-flow-queue");
+        // Code sets the component's own name; the pub/sub it runs on is the deployment's to name.
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, "order-flow-queue");
         try
         {
             var serviceCollection = new ServiceCollection();
@@ -78,22 +77,19 @@ public class ServiceCollectionExtensionsTests
 
             var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
 
-            Assert.Equal("order-flow-pubsub", frameworkOptions.SystemPubSubName);
-            Assert.Equal("order-flow-queue", frameworkOptions.InternalQueuePubSubName);
+            Assert.Equal("order-flow-queue", frameworkOptions.PubSubName);
         }
         finally
         {
-            Environment.SetEnvironmentVariable(Constants.SystemPubSubNameEnvironmentVariable, null);
-            Environment.SetEnvironmentVariable(Constants.InternalQueuePubSubNameEnvironmentVariable, null);
+            Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
         }
     }
 
     [Fact]
-    public void AddIntropyFramework_PrefersThePubSubNamesFromEnv_OverTheFunc()
+    public void AddIntropyFramework_PrefersThePubSubNameFromEnv_OverTheFunc()
     {
-        // The deployment names the components it renders; a name in code must not pin them.
-        Environment.SetEnvironmentVariable(Constants.SystemPubSubNameEnvironmentVariable, "bus-from-env");
-        Environment.SetEnvironmentVariable(Constants.InternalQueuePubSubNameEnvironmentVariable, "queue-from-env");
+        // The deployment names the components it renders; a name in code must not pin it.
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, "from-env");
         try
         {
             var serviceCollection = new ServiceCollection();
@@ -101,47 +97,40 @@ public class ServiceCollectionExtensionsTests
             {
                 opts.ComponentName = "orders";
                 opts.ServiceNamespace = "example";
-                opts.SystemPubSubName = "bus-from-func";
-                opts.InternalQueuePubSubName = "queue-from-func";
+                opts.PubSubName = "from-func";
             });
 
             var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
 
-            Assert.Equal("bus-from-env", frameworkOptions.SystemPubSubName);
-            Assert.Equal("queue-from-env", frameworkOptions.InternalQueuePubSubName);
+            Assert.Equal("from-env", frameworkOptions.PubSubName);
         }
         finally
         {
-            Environment.SetEnvironmentVariable(Constants.SystemPubSubNameEnvironmentVariable, null);
-            Environment.SetEnvironmentVariable(Constants.InternalQueuePubSubNameEnvironmentVariable, null);
+            Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
         }
     }
 
     [Fact]
-    public void AddIntropyFramework_FallsBackToThePubSubNamesTheFuncSets_WhenEnvIsUnset()
+    public void AddIntropyFramework_FallsBackToThePubSubNameTheFuncSets_WhenEnvIsUnset()
     {
-        Environment.SetEnvironmentVariable(Constants.SystemPubSubNameEnvironmentVariable, null);
-        Environment.SetEnvironmentVariable(Constants.InternalQueuePubSubNameEnvironmentVariable, null);
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddIntropyFramework(opts =>
         {
             opts.ComponentName = "orders";
             opts.ServiceNamespace = "example";
-            opts.SystemPubSubName = "bus-from-func";
-            opts.InternalQueuePubSubName = "queue-from-func";
+            opts.PubSubName = "from-func";
         });
 
         var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
 
-        Assert.Equal("bus-from-func", frameworkOptions.SystemPubSubName);
-        Assert.Equal("queue-from-func", frameworkOptions.InternalQueuePubSubName);
+        Assert.Equal("from-func", frameworkOptions.PubSubName);
     }
 
     [Fact]
-    public void AddIntropyFramework_LeavesThePubSubNamesUnset_WhenNeitherSetsThem()
+    public void AddIntropyFramework_LeavesThePubSubNameUnset_WhenNeitherSetsIt()
     {
-        Environment.SetEnvironmentVariable(Constants.SystemPubSubNameEnvironmentVariable, null);
-        Environment.SetEnvironmentVariable(Constants.InternalQueuePubSubNameEnvironmentVariable, null);
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddIntropyFramework(opts =>
         {
@@ -151,8 +140,7 @@ public class ServiceCollectionExtensionsTests
 
         var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
 
-        Assert.Null(frameworkOptions.SystemPubSubName);
-        Assert.Null(frameworkOptions.InternalQueuePubSubName);
+        Assert.Null(frameworkOptions.PubSubName);
     }
 
     [Theory]

@@ -273,7 +273,7 @@ public class TransactionalIntegrationRoutesTests
         {
             options.ComponentName = "orders-integration";
             options.ServiceNamespace = "example";
-            options.InternalQueuePubSubName = "order-flow-queue";
+            options.PubSubName = "order-flow-queue";
         });
         return services;
     }

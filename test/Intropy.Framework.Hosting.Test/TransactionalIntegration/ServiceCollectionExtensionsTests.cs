@@ -67,7 +67,7 @@ public class ServiceCollectionExtensionsTests
         {
             options.ComponentName = "int1055.order-sync";
             options.ServiceNamespace = "example";
-            options.InternalQueuePubSubName = "order-flow-queue";
+            options.PubSubName = "order-flow-queue";
         });
 
         services.AddTransactionalIntegration(_ => { });
@@ -77,9 +77,9 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_Throws_WhenThePubSubAndTheInternalQueuePubSubAreBothUnset()
+    public void AddTransactionalIntegration_Throws_WhenThePubSubAndTheFrameworkPubSubAreBothUnset()
     {
-        // The default pub/sub is the one the deployment names for internal queues: without it there is
+        // The default pub/sub is the one the deployment names for the component: without it there is
         // nothing to default to, and guessing would publish through a component the deployment does not render.
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
@@ -94,11 +94,11 @@ public class ServiceCollectionExtensionsTests
         var provider = services.BuildServiceProvider();
         var exception = Assert.Throws<InvalidOperationException>(
             () => provider.GetRequiredService<TransactionalIntegrationOptions>());
-        Assert.Contains("INTROPY_INTERNAL_QUEUE_PUBSUB_NAME", exception.Message);
+        Assert.Contains("INTROPY_PUBSUB_NAME", exception.Message);
     }
 
     [Fact]
-    public void AddTransactionalIntegration_NeedsNoInternalQueuePubSub_WhenThePubSubIsSet()
+    public void AddTransactionalIntegration_NeedsNoFrameworkPubSub_WhenThePubSubIsSet()
     {
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
@@ -342,7 +342,7 @@ public class ServiceCollectionExtensionsTests
         {
             options.ComponentName = "orders-integration";
             options.ServiceNamespace = "example";
-            options.InternalQueuePubSubName = "order-flow-queue";
+            options.PubSubName = "order-flow-queue";
         });
         return services;
     }

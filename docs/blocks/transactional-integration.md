@@ -65,7 +65,7 @@ builder.Services.AddSourcePort("order-source", builder.Configuration); // option
 ```csharp
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    opts.DaprPubSubName = "orders-bus";      // default: INTROPY_INTERNAL_QUEUE_PUBSUB_NAME
+    opts.DaprPubSubName = "orders-bus";      // default: INTROPY_PUBSUB_NAME
     opts.DaprTopicName = "orders";           // default: internal-<component>
     opts.IdleTimeout = TimeSpan.FromSeconds(5);      // default: 5 seconds
     opts.PostIdleGracePeriod = TimeSpan.FromSeconds(45); // default: 45 seconds

@@ -236,7 +236,7 @@ return await runner.RunAsync();
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `DaprPubSubName` | `FrameworkOptions.InternalQueuePubSubName` | Name of the Dapr PubSub component. The default is the pub/sub the deployment names for internal queues (`INTROPY_INTERNAL_QUEUE_PUBSUB_NAME`), separate from the system's bus that extractors and loaders share. Without it, set this |
+| `DaprPubSubName` | `FrameworkOptions.PubSubName` | Name of the Dapr PubSub component. The default is the pub/sub the deployment names for the component (`INTROPY_PUBSUB_NAME`): for a transactional integration, the system's internal-queue pub/sub, separate from the bus that extractors and loaders share. Without it, set this |
 | `DaprTopicName` | `internal-<component>` | Name of the topic to publish/subscribe. The default is the internal queue's topic that the system topology generates (the component name with dots replaced by dashes). Keep it unique per integration: the broker separates queues by topic, not by Dapr component |
 | `IdleTimeout` | 5 seconds | Time to wait after no new messages before shutdown |
 | `PostIdleGracePeriod` | 45 seconds | Grace period for in-flight messages to complete |

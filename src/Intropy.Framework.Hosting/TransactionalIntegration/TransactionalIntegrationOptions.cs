@@ -24,7 +24,8 @@ public class TransactionalIntegrationOptions
 
     /// <summary>
     /// The name of the Dapr PubSub component to use. Optional: unset, it is the pub/sub the
-    /// deployment names for internal queues, <see cref="FrameworkOptions.InternalQueuePubSubName"/>.
+    /// deployment names for the component, <see cref="FrameworkOptions.PubSubName"/>: for a
+    /// transactional integration, the system's internal-queue pub/sub.
     /// </summary>
     public string DaprPubSubName { get; set; } = "";
 
@@ -117,18 +118,17 @@ public class TransactionalIntegrationOptions
 
     /// <summary>Fills the pub/sub and topic left unset with the internal queue the system topology
     /// generates for the component <paramref name="framework"/> names, in both shapes.</summary>
-    /// <exception cref="InvalidOperationException">The pub/sub is unset and so is the internal queue
-    /// pub/sub it defaults from.</exception>
+    /// <exception cref="InvalidOperationException">The pub/sub is unset and so is
+    /// <see cref="FrameworkOptions.PubSubName"/>, which it defaults from.</exception>
     internal void UseInternalQueueDefaults(FrameworkOptions framework)
     {
         if (string.IsNullOrEmpty(DaprPubSubName))
-            DaprPubSubName = !string.IsNullOrEmpty(framework.InternalQueuePubSubName)
-                ? framework.InternalQueuePubSubName
+            DaprPubSubName = !string.IsNullOrEmpty(framework.PubSubName)
+                ? framework.PubSubName
                 : throw new InvalidOperationException(
                     $"{nameof(TransactionalIntegrationOptions)}.{nameof(DaprPubSubName)} is unset and so is the " +
-                    $"internal queue pub/sub it defaults from: set the INTROPY_INTERNAL_QUEUE_PUBSUB_NAME environment " +
-                    $"variable, {nameof(FrameworkOptions)}.{nameof(FrameworkOptions.InternalQueuePubSubName)}, or " +
-                    $"{nameof(DaprPubSubName)}.");
+                    $"pub/sub it defaults from: set the INTROPY_PUBSUB_NAME environment variable, " +
+                    $"{nameof(FrameworkOptions)}.{nameof(FrameworkOptions.PubSubName)}, or {nameof(DaprPubSubName)}.");
         if (string.IsNullOrEmpty(DaprTopicName))
             DaprTopicName = InternalQueueTopicName(framework.ComponentName);
         _subscription.PubSubName = DaprPubSubName;
