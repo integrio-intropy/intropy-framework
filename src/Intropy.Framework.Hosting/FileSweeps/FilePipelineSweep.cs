@@ -21,9 +21,10 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// <para>
 /// The sweep owns what every file-driven component shares: resolving the pipeline once before any
 /// file is listed (a misconfigured component fails the run once, not once per file), a fresh
-/// context per file with <see cref="SourceContextKeys.FileName"/> and
-/// <see cref="SourceContextKeys.SourcePort"/> set, the pipeline resolved in
-/// the file's own scope, and the mapping of pipeline results to sweep outcomes —
+/// context per file with <see cref="SourceContextKeys.FileName"/>,
+/// <see cref="SourceContextKeys.SourcePort"/> and <see cref="SourceContextKeys.ReceivedAt"/> set,
+/// the pipeline resolved in the file's own scope, and the mapping of pipeline results to sweep
+/// outcomes —
 /// <see cref="StepResult{T}.Cancelled"/> is a duplicate, <see cref="StepResult{T}.Aborted"/> an
 /// interruption that never completes the file. A component supplies how one file is read and
 /// executed.
@@ -119,13 +120,19 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
     }
 
     // Source identity is available before any step runs so incident routing can name a poisoned
-    // file and its port. The framework owns these keys; a caller-provided value is overwritten.
-    private TCtx CreateContext(SweptFile file) =>
-        ContextCreation.Create(contextFactory,
+    // file and its port, and the pickup time before the file is read, so everything downstream —
+    // through the queue, on every redelivery — keys on one timestamp instead of the current time.
+    // The framework owns these keys; a caller-provided value is overwritten.
+    private TCtx CreateContext(SweptFile file)
+    {
+        var time = provider.GetService<TimeProvider>() ?? TimeProvider.System;
+        return ContextCreation.Create(contextFactory,
             new Dictionary<string, string>
             {
                 [SourceContextKeys.FileName] = file.Name,
                 [SourceContextKeys.SourcePort] = file.Port,
+                [SourceContextKeys.ReceivedAt] = time.GetUtcNow().ToString("O"),
             },
             isRetry: false, ComponentName, file.Name);
+    }
 }

@@ -14,6 +14,7 @@ using Intropy.Framework.Testing.Adapters;
 using Intropy.Framework.Testing.Delivery;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using NSubstitute;
 
 namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
@@ -37,6 +38,9 @@ public class TransactionalIntegrationJobTests
     };
 
     private readonly ILoggerFactory _loggerFactory = Substitute.For<ILoggerFactory>();
+
+    /// <summary>The clock the sweep stamps the pickup time from, pinned so the test can assert it.</summary>
+    private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 14, 6, 30, 0, TimeSpan.Zero));
 
     public TransactionalIntegrationJobTests()
     {
@@ -75,10 +79,10 @@ public class TransactionalIntegrationJobTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_GivesEachFileAFreshContextNamingTheSourceFileAndPort()
+    public async Task ExecuteAsync_GivesEachFileAFreshContextNamingTheSourceFileAndPort_AndWhenItWasReceived()
     {
-        // Verifies that the receive pipeline sees the framework's source file and port keys, the
-        // same keys extractors get, and that contexts are not shared between files
+        // Verifies that the receive pipeline sees the framework's source file, port and pickup-time
+        // keys, the same keys extractors get, and that contexts are not shared between files
         var source = new InMemoryFileAdapter().AddFile("file1.txt", "one").AddFile("file2.txt", "two");
         var contexts = new List<Context>();
         _receivePipeline.Execute(Arg.Any<SourceItem>(), Arg.Any<Context>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
@@ -92,6 +96,10 @@ public class TransactionalIntegrationJobTests
 
         Assert.Equal(["file1.txt", "file2.txt"], contexts.Select(c => c.Metadata[SourceContextKeys.FileName]));
         Assert.All(contexts, c => Assert.Equal(SourceKey, c.Metadata[SourceContextKeys.SourcePort]));
+        // Stamped from the sweep's clock, before the file is read, so the send side has one stable
+        // timestamp instead of the time at send.
+        Assert.All(contexts, c => Assert.Equal(_time.GetUtcNow().ToString("O"),
+            c.Metadata[SourceContextKeys.ReceivedAt]));
         Assert.NotSame(contexts[0], contexts[1]);
     }
 
@@ -407,6 +415,7 @@ public class TransactionalIntegrationJobTests
         services.AddSourcePort(SourceKey, completion);
         services.AddSingleton(Identity);
         services.AddSingleton(_receivePipeline);
+        services.AddSingleton<TimeProvider>(_time);
         var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
 
         var options = new TransactionalIntegrationOptions
