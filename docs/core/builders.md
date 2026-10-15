@@ -358,7 +358,7 @@ public class TransactionalIntegrationOptions
 services.AddTransactionalIntegration(opts =>
 {
     opts.DaprPubSubName = "orders-bus";   // default: INTROPY_PUBSUB_NAME
-    opts.DaprTopicName = "orders";        // default: internal-<component>
+    opts.DaprTopicName = "orders";        // default: INTROPY_TOPIC_NAME
 });
 ```
 

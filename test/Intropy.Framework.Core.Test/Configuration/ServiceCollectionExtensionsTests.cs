@@ -65,7 +65,7 @@ public class ServiceCollectionExtensionsTests
     public void AddIntropyFramework_ReadsThePubSubNameFromEnv_AlongsideTheFunc()
     {
         // Code sets the component's own name; the pub/sub it runs on is the deployment's to name.
-        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, "order-flow-queue");
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, "order-flow-queue-pubsub");
         try
         {
             var serviceCollection = new ServiceCollection();
@@ -77,7 +77,7 @@ public class ServiceCollectionExtensionsTests
 
             var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
 
-            Assert.Equal("order-flow-queue", frameworkOptions.PubSubName);
+            Assert.Equal("order-flow-queue-pubsub", frameworkOptions.PubSubName);
         }
         finally
         {
@@ -128,9 +128,35 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddIntropyFramework_LeavesThePubSubNameUnset_WhenNeitherSetsIt()
+    public void AddIntropyFramework_PrefersTheTopicNameFromEnv_OverTheFunc()
+    {
+        // The topic is the topology's to name, like the pub/sub.
+        Environment.SetEnvironmentVariable(Constants.TopicNameEnvironmentVariable, "internal-from-env");
+        try
+        {
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddIntropyFramework(opts =>
+            {
+                opts.ComponentName = "orders";
+                opts.ServiceNamespace = "example";
+                opts.TopicName = "internal-from-func";
+            });
+
+            var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
+
+            Assert.Equal("internal-from-env", frameworkOptions.TopicName);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(Constants.TopicNameEnvironmentVariable, null);
+        }
+    }
+
+    [Fact]
+    public void AddIntropyFramework_LeavesTheNamesUnset_WhenNeitherSetsThem()
     {
         Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
+        Environment.SetEnvironmentVariable(Constants.TopicNameEnvironmentVariable, null);
         var serviceCollection = new ServiceCollection();
         serviceCollection.AddIntropyFramework(opts =>
         {
@@ -141,6 +167,7 @@ public class ServiceCollectionExtensionsTests
         var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
 
         Assert.Null(frameworkOptions.PubSubName);
+        Assert.Null(frameworkOptions.TopicName);
     }
 
     [Theory]

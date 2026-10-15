@@ -30,19 +30,13 @@ public class TransactionalIntegrationOptions
     public string DaprPubSubName { get; set; } = "";
 
     /// <summary>
-    /// The name of the topic to use. Optional: unset, it is the internal queue's topic the system
-    /// topology generates for the component, <c>internal-&lt;component&gt;</c> (the component name
-    /// with dots as dashes).
+    /// The name of the topic to use. Optional: unset, it is the topic the deployment names for the
+    /// component, <see cref="FrameworkOptions.TopicName"/>: for a transactional integration, its
+    /// internal queue's topic, which the system topology names <c>internal-&lt;component&gt;</c>. Keep it unique per
+    /// integration: brokers name their exchanges, topics and queues after it, so integrations sharing
+    /// a topic name would receive each other's files whatever Dapr component they publish through.
     /// </summary>
     public string DaprTopicName { get; set; } = "";
-
-    /// <summary>The internal queue's topic the system topology generates for
-    /// <paramref name="componentName"/>, named after its app id (the component name with dots as
-    /// dashes). The topic, not the pub/sub, is what keeps the queues apart: brokers name their
-    /// exchanges and topics after it, so integrations sharing a topic name would receive each
-    /// other's files whatever Dapr component they publish through.</summary>
-    internal static string InternalQueueTopicName(string componentName) =>
-        $"internal-{componentName.Replace('.', '-')}";
 
 
     /// <summary>
@@ -118,8 +112,8 @@ public class TransactionalIntegrationOptions
 
     /// <summary>Fills the pub/sub and topic left unset with the internal queue the system topology
     /// generates for the component <paramref name="framework"/> names, in both shapes.</summary>
-    /// <exception cref="InvalidOperationException">The pub/sub is unset and so is
-    /// <see cref="FrameworkOptions.PubSubName"/>, which it defaults from.</exception>
+    /// <exception cref="InvalidOperationException">The pub/sub or the topic is unset and so is the
+    /// <see cref="FrameworkOptions"/> value it defaults from.</exception>
     internal void UseInternalQueueDefaults(FrameworkOptions framework)
     {
         if (string.IsNullOrEmpty(DaprPubSubName))
@@ -130,7 +124,12 @@ public class TransactionalIntegrationOptions
                     $"pub/sub it defaults from: set the INTROPY_PUBSUB_NAME environment variable, " +
                     $"{nameof(FrameworkOptions)}.{nameof(FrameworkOptions.PubSubName)}, or {nameof(DaprPubSubName)}.");
         if (string.IsNullOrEmpty(DaprTopicName))
-            DaprTopicName = InternalQueueTopicName(framework.ComponentName);
+            DaprTopicName = !string.IsNullOrEmpty(framework.TopicName)
+                ? framework.TopicName
+                : throw new InvalidOperationException(
+                    $"{nameof(TransactionalIntegrationOptions)}.{nameof(DaprTopicName)} is unset and so is the " +
+                    $"topic it defaults from: set the INTROPY_TOPIC_NAME environment variable, " +
+                    $"{nameof(FrameworkOptions)}.{nameof(FrameworkOptions.TopicName)}, or {nameof(DaprTopicName)}.");
         _subscription.PubSubName = DaprPubSubName;
         _subscription.TopicName = DaprTopicName;
     }

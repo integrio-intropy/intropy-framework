@@ -36,7 +36,7 @@ public class TransactionalIntegrationDefinitionTests
         });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("order-flow-queue", options.DaprPubSubName);
+        Assert.Equal("order-flow-queue-pubsub", options.DaprPubSubName);
         Assert.Equal("internal-orders-integration", options.DaprTopicName);
     }
 
@@ -197,7 +197,8 @@ public class TransactionalIntegrationDefinitionTests
         {
             options.ComponentName = "orders-integration";
             options.ServiceNamespace = "example";
-            options.PubSubName = "order-flow-queue";
+            options.PubSubName = "order-flow-queue-pubsub";
+            options.TopicName = "internal-orders-integration";
         });
         return services;
     }

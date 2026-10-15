@@ -38,10 +38,10 @@ public class ServiceCollectionExtensionsTests
         services.AddTransactionalIntegration(_ => { });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("order-flow-queue", options.DaprPubSubName);
+        Assert.Equal("order-flow-queue-pubsub", options.DaprPubSubName);
         Assert.Equal("internal-orders-integration", options.DaprTopicName);
         // Both shapes read the defaults.
-        Assert.Equal("order-flow-queue", options.Subscription.PubSubName);
+        Assert.Equal("order-flow-queue-pubsub", options.Subscription.PubSubName);
         Assert.Equal("internal-orders-integration", options.Subscription.TopicName);
     }
 
@@ -53,27 +53,50 @@ public class ServiceCollectionExtensionsTests
         services.AddTransactionalIntegration(options => options.DaprTopicName = "test-topic");
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("order-flow-queue", options.DaprPubSubName);
+        Assert.Equal("order-flow-queue-pubsub", options.DaprPubSubName);
         Assert.Equal("test-topic", options.DaprTopicName);
     }
 
     [Fact]
-    public void AddTransactionalIntegration_NamesTheDefaultTopicAfterTheAppId_ForADottedComponentName()
+    public void AddTransactionalIntegration_TakesTheTopicTheDeploymentNames_NotOneDerivedFromTheComponentName()
     {
-        // The topology names the internal queue after the app id: the component name with dots as dashes.
+        // The topology names the internal queue's topic; the framework takes it as given.
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
         services.AddIntropyFramework(options =>
         {
             options.ComponentName = "int1055.order-sync";
             options.ServiceNamespace = "example";
-            options.PubSubName = "order-flow-queue";
+            options.PubSubName = "order-flow-queue-pubsub";
+            options.TopicName = "internal-int1055-order-sync";
         });
 
         services.AddTransactionalIntegration(_ => { });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
         Assert.Equal("internal-int1055-order-sync", options.DaprTopicName);
+    }
+
+    [Fact]
+    public void AddTransactionalIntegration_Throws_WhenTheTopicAndTheFrameworkTopicAreBothUnset()
+    {
+        // Without the topic the deployment names there is nothing to default to: a derived name
+        // could miss the Subscription the topology renders.
+        var services = new ServiceCollection();
+        services.AddSingleton(_ => new DaprClientBuilder().Build());
+        services.AddIntropyFramework(options =>
+        {
+            options.ComponentName = "orders-integration";
+            options.ServiceNamespace = "example";
+            options.PubSubName = "order-flow-queue-pubsub";
+        });
+
+        services.AddTransactionalIntegration(_ => { });
+
+        var provider = services.BuildServiceProvider();
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => provider.GetRequiredService<TransactionalIntegrationOptions>());
+        Assert.Contains("INTROPY_TOPIC_NAME", exception.Message);
     }
 
     [Fact]
@@ -98,7 +121,7 @@ public class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_NeedsNoFrameworkPubSub_WhenThePubSubIsSet()
+    public void AddTransactionalIntegration_NeedsNoFrameworkNames_WhenThePubSubAndTopicAreSet()
     {
         var services = new ServiceCollection();
         services.AddSingleton(_ => new DaprClientBuilder().Build());
@@ -108,11 +131,15 @@ public class ServiceCollectionExtensionsTests
             options.ServiceNamespace = "example";
         });
 
-        services.AddTransactionalIntegration(options => options.DaprPubSubName = "orders-bus");
+        services.AddTransactionalIntegration(options =>
+        {
+            options.DaprPubSubName = "orders-bus";
+            options.DaprTopicName = "orders";
+        });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
         Assert.Equal("orders-bus", options.DaprPubSubName);
-        Assert.Equal("internal-orders-integration", options.DaprTopicName);
+        Assert.Equal("orders", options.DaprTopicName);
     }
 
     [Fact]
@@ -342,7 +369,8 @@ public class ServiceCollectionExtensionsTests
         {
             options.ComponentName = "orders-integration";
             options.ServiceNamespace = "example";
-            options.PubSubName = "order-flow-queue";
+            options.PubSubName = "order-flow-queue-pubsub";
+            options.TopicName = "internal-orders-integration";
         });
         return services;
     }

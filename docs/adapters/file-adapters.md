@@ -157,8 +157,8 @@ builder.Services.AddKeyedSingleton<IFileAdapter>("order-source", (sp, _) =>
 builder.Services.AddSourcePort("order-source"); // the adapter above is registered under the port name
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    // The internal queue defaults to the pub/sub the deployment names in
-    // INTROPY_PUBSUB_NAME and the topic internal-<component>.
+    // The internal queue defaults to the pub/sub and topic the deployment names in
+    // INTROPY_PUBSUB_NAME and INTROPY_TOPIC_NAME.
     opts.IdleTimeout = TimeSpan.FromSeconds(5);
 });
 ```

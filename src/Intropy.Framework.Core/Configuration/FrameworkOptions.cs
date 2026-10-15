@@ -26,4 +26,12 @@ public class FrameworkOptions
     /// for tests and runs without a system host.
     /// </summary>
     public string? PubSubName { get; set; }
+
+    /// <summary>
+    /// The topic this component runs on: a transactional integration's internal-queue topic, or the
+    /// one topic an extractor or a loader uses. The deployment sets it through the
+    /// <c>INTROPY_TOPIC_NAME</c> environment variable, which wins over a value set in code, as for
+    /// <see cref="PubSubName"/>. Unset when the component uses no topic, or several.
+    /// </summary>
+    public string? TopicName { get; set; }
 }

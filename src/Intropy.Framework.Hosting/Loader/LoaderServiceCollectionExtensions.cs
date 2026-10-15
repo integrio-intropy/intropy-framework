@@ -147,8 +147,10 @@ public static class LoaderServiceCollectionExtensions
     /// definition's subscription options first — <c>PubSubName</c>, <c>TopicName</c>,
     /// <c>Unrouted</c>, <c>MaxMessageProcessingTime</c>, <c>ShutdownGracePeriod</c>,
     /// <c>CallbackPort</c> — then the caller's delegate runs, so code wins over configuration. The
-    /// pub/sub and topic are optional: if neither the delegate nor the section provides them, the
-    /// loader takes whatever its Dapr Subscription delivers.</summary>
+    /// pub/sub and topic are optional: if neither the delegate nor the section provides them, they
+    /// default to the ones the deployment names (<see cref="FrameworkOptions.PubSubName"/>,
+    /// <see cref="FrameworkOptions.TopicName"/>), and without those the loader takes whatever its
+    /// Dapr Subscription delivers.</summary>
     /// <remarks>
     /// The pipeline and context factory are code's to give — configuration carries settings, not
     /// wiring. A malformed value fails at registration with the member it would configure.
@@ -200,7 +202,15 @@ public static class LoaderServiceCollectionExtensions
     {
         var table = new MessageRouteTable(routes.Routes);
 
-        services.AddSingleton(options);
+        // A pub/sub or topic left unset is the one the deployment names for the component, once
+        // FrameworkOptions resolves; without either the loader takes whatever its Subscription
+        // delivers.
+        services.AddSingleton(provider =>
+        {
+            if (provider.GetService<FrameworkOptions>() is { } framework)
+                options.UseDeploymentDefaults(framework);
+            return options;
+        });
         services.AddSingleton(table);
 
         // The host must wait for the drain: grace period, interruption and subscription teardown.
@@ -215,14 +225,18 @@ public static class LoaderServiceCollectionExtensions
             provider.GetRequiredService<IServiceScopeFactory>(), table, ComponentName(provider),
             message => $"No route handles event type '{message.Type}'", defaultPathIsUnrouted: true));
 
-        services.AddSingleton(new MessageConsumerSettings(options.PubSubName, options.TopicName,
-            options.MaxMessageProcessingTime, options.ShutdownGracePeriod,
-            AcknowledgeUnrouted: options.Unrouted == UnroutedPolicy.Ack));
+        services.AddSingleton(provider =>
+        {
+            var resolved = provider.GetRequiredService<LoaderOptions>();
+            return new MessageConsumerSettings(resolved.PubSubName, resolved.TopicName,
+                resolved.MaxMessageProcessingTime, resolved.ShutdownGracePeriod,
+                AcknowledgeUnrouted: resolved.Unrouted == UnroutedPolicy.Ack);
+        });
         services.AddHostedService(provider => new LoaderService(
             provider.GetRequiredService<MessageConsumerSettings>(),
             provider.GetRequiredService<RoutingMessageHandler>(),
             table,
-            options,
+            provider.GetRequiredService<LoaderOptions>(),
             ComponentName(provider),
             provider.GetRequiredService<IServiceScopeFactory>(),
             provider.GetRequiredService<ILoggerFactory>(),

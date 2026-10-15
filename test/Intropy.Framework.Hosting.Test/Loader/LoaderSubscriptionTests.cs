@@ -1,4 +1,5 @@
 using Intropy.Framework.Blocks.Shared;
+using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Loader;
 using Intropy.Framework.Hosting.Messaging;
 using Microsoft.Extensions.Configuration;
@@ -10,8 +11,8 @@ namespace Intropy.Framework.Hosting.Test.Loader;
 /// <summary>
 /// The loader's <see cref="LoaderOptions.Subscription"/> composition and the configuration-based
 /// registration: the composed shape and the class's own members are one value each, the
-/// configuration section fills what the definition's delegate leaves unset, and code wins over
-/// configuration where both speak.
+/// configuration section fills what the definition's delegate leaves unset, code wins over
+/// configuration where both speak, and the names the deployment gives fill what both leave unset.
 /// </summary>
 public class LoaderSubscriptionTests
 {
@@ -139,13 +140,68 @@ public class LoaderSubscriptionTests
         services.AddLoader<int, int, Context>(configuration.GetSection("Loader"),
             () => new LoaderDefinition<int, int, Context>
             {
-                // PubSubName: not set in code, not in configuration — any pub/sub is accepted.
+                // PubSubName: not set in code, not in configuration, and no deployment names one —
+                // any pub/sub is accepted.
                 // TopicName: filled from configuration.
                 Pipeline = (_, _) => null!,
             });
 
         var options = services.BuildServiceProvider().GetRequiredService<LoaderOptions>();
         Assert.Equal("", options.PubSubName);
+        Assert.Equal("config-topic", options.TopicName);
+    }
+
+    [Fact]
+    public void ValuesUnsetInConfigurationAndCode_DefaultToTheNamesTheDeploymentGives()
+    {
+        // The deployment passes the component's pub/sub and topic (INTROPY_PUBSUB_NAME,
+        // INTROPY_TOPIC_NAME): the loader expects deliveries from exactly that subscription.
+        var services = new ServiceCollection();
+        services.AddIntropyFramework(o =>
+        {
+            o.ComponentName = "order-loader";
+            o.ServiceNamespace = "example";
+            o.PubSubName = "order-flow-pubsub";
+            o.TopicName = "orders";
+        });
+
+        services.AddLoader(new LoaderDefinition<int, int, Context> { Pipeline = (_, _) => null! });
+
+        var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<LoaderOptions>();
+        Assert.Equal("order-flow-pubsub", options.PubSubName);
+        Assert.Equal("orders", options.TopicName);
+        // The same values the subscription consumer checks deliveries against.
+        var settings = provider.GetRequiredService<MessageConsumerSettings>();
+        Assert.Equal("order-flow-pubsub", settings.PubSubName);
+        Assert.Equal("orders", settings.TopicName);
+    }
+
+    [Fact]
+    public void CodeAndConfiguration_WinOverTheNamesTheDeploymentGives()
+    {
+        var services = new ServiceCollection();
+        services.AddIntropyFramework(o =>
+        {
+            o.ComponentName = "order-loader";
+            o.ServiceNamespace = "example";
+            o.PubSubName = "order-flow-pubsub";
+            o.TopicName = "orders";
+        });
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Loader:TopicName"] = "config-topic",
+        }).Build();
+
+        services.AddLoader<int, int, Context>(configuration.GetSection("Loader"),
+            () => new LoaderDefinition<int, int, Context>
+            {
+                PubSubName = "code-pubsub",
+                Pipeline = (_, _) => null!,
+            });
+
+        var options = services.BuildServiceProvider().GetRequiredService<LoaderOptions>();
+        Assert.Equal("code-pubsub", options.PubSubName);
         Assert.Equal("config-topic", options.TopicName);
     }
 

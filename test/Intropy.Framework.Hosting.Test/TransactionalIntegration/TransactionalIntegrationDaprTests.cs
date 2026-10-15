@@ -29,7 +29,7 @@ namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
 public class TransactionalIntegrationDaprTests : IAsyncLifetime
 {
     private const string AppId = "test-hop";
-    private const string PubSubName = "test-system-queue";
+    private const string PubSubName = "test-system-queue-pubsub";
     private const string Topic = $"internal-{AppId}";
     private const string Queue = $"{AppId}-{Topic}";
     private const string Source = "inbox";
@@ -107,6 +107,7 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
             options.ComponentName = AppId;
             options.ServiceNamespace = "test";
             options.PubSubName = PubSubName;
+            options.TopicName = Topic;
         });
         services.AddKeyedSingleton(Source, source);
         services.AddSingleton(sink);
