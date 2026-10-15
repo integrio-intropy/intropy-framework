@@ -1,3 +1,4 @@
+using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
@@ -22,27 +23,20 @@ public class TransactionalIntegrationOptions
     public SubscriptionOptions Subscription => _subscription;
 
     /// <summary>
-    /// The name of the Dapr PubSub component to use. Optional: unset, it is the internal hop's
-    /// pub/sub the system topology generates for the component, <c>internal-&lt;component&gt;</c>
-    /// (the component name with dots as dashes).
+    /// The name of the Dapr PubSub component to use. Optional: unset, it is the pub/sub the
+    /// deployment names for the component, <see cref="FrameworkOptions.PubSubName"/>: for a
+    /// transactional integration, the system's internal-queue pub/sub.
     /// </summary>
     public string DaprPubSubName { get; set; } = "";
 
     /// <summary>
-    /// The name of the topic to use. Optional: unset, it is the internal hop's topic the system
-    /// topology generates for the component, <c>hop</c>.
+    /// The name of the topic to use. Optional: unset, it is the topic the deployment names for the
+    /// component, <see cref="FrameworkOptions.TopicName"/>: for a transactional integration, its
+    /// internal queue's topic, which the system topology names <c>internal-&lt;component&gt;</c>. Keep it unique per
+    /// integration: brokers name their exchanges, topics and queues after it, so integrations sharing
+    /// a topic name would receive each other's files whatever Dapr component they publish through.
     /// </summary>
     public string DaprTopicName { get; set; } = "";
-
-    /// <summary>The internal hop's topic the system topology generates for every transactional
-    /// integration.</summary>
-    internal const string InternalHopTopicName = "hop";
-
-    /// <summary>The internal hop's pub/sub the system topology generates for
-    /// <paramref name="componentName"/>: scoped to the component alone, named after its app id
-    /// (the component name with dots as dashes).</summary>
-    internal static string InternalHopPubSubName(string componentName) =>
-        $"internal-{componentName.Replace('.', '-')}";
 
 
     /// <summary>
@@ -58,6 +52,22 @@ public class TransactionalIntegrationOptions
     /// </summary>
     /// <value>Default: 45 seconds</value>
     public TimeSpan PostIdleGracePeriod { get; set; } = TimeSpan.FromSeconds(45);
+
+    /// <summary>
+    /// The longest a run waits, before it sweeps, for the internal queue to deliver a probe. A
+    /// broker can discard a message published before the subscription has created its queue, so
+    /// no file is published (and completed) until a probe from this run has come back. When none
+    /// comes back in time, the run touches no source file and exits with
+    /// <c>JobExitCodes.InfrastructureFailure</c>. Must be positive and within the .NET timer range.
+    /// Applies only when the receive side's enqueuer can be probed (the built-in Dapr enqueuer).
+    /// Run only one job instance per internal queue; competing consumers can receive each other's
+    /// probes. This startup check does not protect against queue deletion after readiness.
+    /// </summary>
+    /// <value>Default: 60 seconds</value>
+    public TimeSpan InternalQueueReadyTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>How long a run waits for a probe before publishing another.</summary>
+    internal TimeSpan InternalQueueProbeInterval { get; set; } = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// The max amount of time a message is allowed to be processed for.
@@ -100,16 +110,37 @@ public class TransactionalIntegrationOptions
         _subscription.TopicName = DaprTopicName;
     }
 
-    /// <summary>Fills the pub/sub and topic left unset with the internal hop the system topology
-    /// generates for <paramref name="componentName"/>, in both shapes.</summary>
-    internal void UseInternalHopDefaults(string componentName)
+    /// <summary>Fills the pub/sub and topic left unset with the internal queue the system topology
+    /// generates for the component <paramref name="framework"/> names, in both shapes.</summary>
+    /// <exception cref="InvalidOperationException">The pub/sub or the topic is unset and so is the
+    /// <see cref="FrameworkOptions"/> value it defaults from.</exception>
+    internal void UseInternalQueueDefaults(FrameworkOptions framework)
     {
         if (string.IsNullOrEmpty(DaprPubSubName))
-            DaprPubSubName = InternalHopPubSubName(componentName);
+            DaprPubSubName = !string.IsNullOrEmpty(framework.PubSubName)
+                ? framework.PubSubName
+                : throw new InvalidOperationException(
+                    $"{nameof(TransactionalIntegrationOptions)}.{nameof(DaprPubSubName)} is unset and so is the " +
+                    $"pub/sub it defaults from: set the INTROPY_PUBSUB_NAME environment variable, " +
+                    $"{nameof(FrameworkOptions)}.{nameof(FrameworkOptions.PubSubName)}, or {nameof(DaprPubSubName)}.");
         if (string.IsNullOrEmpty(DaprTopicName))
-            DaprTopicName = InternalHopTopicName;
+            DaprTopicName = !string.IsNullOrEmpty(framework.TopicName)
+                ? framework.TopicName
+                : throw new InvalidOperationException(
+                    $"{nameof(TransactionalIntegrationOptions)}.{nameof(DaprTopicName)} is unset and so is the " +
+                    $"topic it defaults from: set the INTROPY_TOPIC_NAME environment variable, " +
+                    $"{nameof(FrameworkOptions)}.{nameof(FrameworkOptions.TopicName)}, or {nameof(DaprTopicName)}.");
         _subscription.PubSubName = DaprPubSubName;
         _subscription.TopicName = DaprTopicName;
+    }
+
+    /// <summary>Checks that readiness always has a bounded, usable .NET timer.</summary>
+    internal void EnsureValidInternalQueueReadyTimeout(string paramName)
+    {
+        if (InternalQueueReadyTimeout <= TimeSpan.Zero || InternalQueueReadyTimeout.TotalMilliseconds > uint.MaxValue - 1)
+            throw new ArgumentOutOfRangeException(paramName, InternalQueueReadyTimeout,
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(InternalQueueReadyTimeout)} must be positive and " +
+                $"no greater than {uint.MaxValue - 1} milliseconds.");
     }
 
     private static string Consolidate(string legacyMember, string legacy, string composedMember, string composed)

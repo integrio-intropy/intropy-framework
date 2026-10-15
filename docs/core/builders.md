@@ -357,8 +357,8 @@ public class TransactionalIntegrationOptions
 ```csharp
 services.AddTransactionalIntegration(opts =>
 {
-    opts.DaprPubSubName = "pubsub";   // default: internal-<component>
-    opts.DaprTopicName = "orders";    // default: hop
+    opts.DaprPubSubName = "orders-bus";   // default: INTROPY_PUBSUB_NAME
+    opts.DaprTopicName = "orders";        // default: INTROPY_TOPIC_NAME
 });
 ```
 

@@ -61,6 +61,115 @@ public class ServiceCollectionExtensionsTests
         Assert.Throws<InvalidOperationException>(() => serviceCollection.AddIntropyFramework());
     }
 
+    [Fact]
+    public void AddIntropyFramework_ReadsThePubSubNameFromEnv_AlongsideTheFunc()
+    {
+        // Code sets the component's own name; the pub/sub it runs on is the deployment's to name.
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, "order-flow-queue-pubsub");
+        try
+        {
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddIntropyFramework(opts =>
+            {
+                opts.ComponentName = "orders";
+                opts.ServiceNamespace = "example";
+            });
+
+            var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
+
+            Assert.Equal("order-flow-queue-pubsub", frameworkOptions.PubSubName);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
+        }
+    }
+
+    [Fact]
+    public void AddIntropyFramework_PrefersThePubSubNameFromEnv_OverTheFunc()
+    {
+        // The deployment names the components it renders; a name in code must not pin it.
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, "from-env");
+        try
+        {
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddIntropyFramework(opts =>
+            {
+                opts.ComponentName = "orders";
+                opts.ServiceNamespace = "example";
+                opts.PubSubName = "from-func";
+            });
+
+            var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
+
+            Assert.Equal("from-env", frameworkOptions.PubSubName);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
+        }
+    }
+
+    [Fact]
+    public void AddIntropyFramework_FallsBackToThePubSubNameTheFuncSets_WhenEnvIsUnset()
+    {
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddIntropyFramework(opts =>
+        {
+            opts.ComponentName = "orders";
+            opts.ServiceNamespace = "example";
+            opts.PubSubName = "from-func";
+        });
+
+        var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
+
+        Assert.Equal("from-func", frameworkOptions.PubSubName);
+    }
+
+    [Fact]
+    public void AddIntropyFramework_PrefersTheTopicNameFromEnv_OverTheFunc()
+    {
+        // The topic is the topology's to name, like the pub/sub.
+        Environment.SetEnvironmentVariable(Constants.TopicNameEnvironmentVariable, "internal-from-env");
+        try
+        {
+            var serviceCollection = new ServiceCollection();
+            serviceCollection.AddIntropyFramework(opts =>
+            {
+                opts.ComponentName = "orders";
+                opts.ServiceNamespace = "example";
+                opts.TopicName = "internal-from-func";
+            });
+
+            var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
+
+            Assert.Equal("internal-from-env", frameworkOptions.TopicName);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(Constants.TopicNameEnvironmentVariable, null);
+        }
+    }
+
+    [Fact]
+    public void AddIntropyFramework_LeavesTheNamesUnset_WhenNeitherSetsThem()
+    {
+        Environment.SetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable, null);
+        Environment.SetEnvironmentVariable(Constants.TopicNameEnvironmentVariable, null);
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddIntropyFramework(opts =>
+        {
+            opts.ComponentName = "orders";
+            opts.ServiceNamespace = "example";
+        });
+
+        var frameworkOptions = serviceCollection.BuildServiceProvider().GetRequiredService<FrameworkOptions>();
+
+        Assert.Null(frameworkOptions.PubSubName);
+        Assert.Null(frameworkOptions.TopicName);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

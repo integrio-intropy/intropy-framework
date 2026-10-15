@@ -41,6 +41,17 @@ public static class ServiceCollectionExtensions
             });
         }
 
+        // The pub/sub and topic names are facts of the deployment, not of the code: the system
+        // topology names them and picks the ones each component runs on. The environment wins;
+        // a value set in code only applies when the deployment sets none (tests, runs without a system
+        // host).
+        var pubSubName = Environment.GetEnvironmentVariable(Constants.PubSubNameEnvironmentVariable);
+        if (!string.IsNullOrEmpty(pubSubName))
+            services.PostConfigure<FrameworkOptions>(opts => opts.PubSubName = pubSubName);
+        var topicName = Environment.GetEnvironmentVariable(Constants.TopicNameEnvironmentVariable);
+        if (!string.IsNullOrEmpty(topicName))
+            services.PostConfigure<FrameworkOptions>(opts => opts.TopicName = topicName);
+
         // Validate configuration
         services.AddOptions<FrameworkOptions>()
             .ValidateDataAnnotations()

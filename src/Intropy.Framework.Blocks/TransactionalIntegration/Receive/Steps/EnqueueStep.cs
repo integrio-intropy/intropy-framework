@@ -54,6 +54,13 @@ public abstract class EnqueueStep<TCtx>(FrameworkOptions options) : TechnicalSte
         }
     }
 
+    /// <summary>A <see cref="InternalQueueMessageTypes.Probe"/> envelope with id <paramref name="probeId"/>,
+    /// structured like the items' envelopes, for an enqueuer that implements
+    /// <see cref="IInternalQueueProbe"/>.</summary>
+    /// <param name="probeId">The probe's CloudEvent id.</param>
+    protected ReadOnlyMemory<byte> EncodeProbe(string probeId) =>
+        CloudEventFormat.Formatter.EncodeStructuredModeMessage(CloudEventHelper.CreateProbe(probeId, options), out _);
+
     /// <summary>
     /// The method that will be executed once the step is run
     /// </summary>

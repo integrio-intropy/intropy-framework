@@ -1,3 +1,4 @@
+using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.Messaging;
 
@@ -17,7 +18,8 @@ public sealed class LoaderOptions
 
     /// <summary>The Dapr pub/sub component the loader expects deliveries from. Optional: the
     /// component's Dapr Subscription resource decides what is delivered; when set, a delivery from
-    /// another pub/sub is refused as a mismatch. Delegates to
+    /// another pub/sub is refused as a mismatch. Unset, it is the pub/sub the deployment names for
+    /// the component, <see cref="FrameworkOptions.PubSubName"/>, if any. Delegates to
     /// <see cref="SubscriptionOptions.PubSubName"/> on <see cref="Subscription"/>.</summary>
     public string PubSubName
     {
@@ -27,12 +29,24 @@ public sealed class LoaderOptions
 
     /// <summary>The topic the loader expects deliveries from. Optional: the component's Dapr
     /// Subscription resource decides what is delivered; when set, a delivery from another topic is
-    /// refused as a mismatch. Delegates to
+    /// refused as a mismatch. Unset, it is the topic the deployment names for the component,
+    /// <see cref="FrameworkOptions.TopicName"/>, if any. Delegates to
     /// <see cref="SubscriptionOptions.TopicName"/> on <see cref="Subscription"/>.</summary>
     public string TopicName
     {
         get => Subscription.TopicName;
         set => Subscription.TopicName = value;
+    }
+
+    /// <summary>Fills the pub/sub and topic left unset with the ones the deployment names for the
+    /// component, so the loader refuses deliveries from any other subscription. Values set in code
+    /// or configuration win; a name the deployment does not give stays unset.</summary>
+    internal void UseDeploymentDefaults(FrameworkOptions framework)
+    {
+        if (string.IsNullOrEmpty(PubSubName) && !string.IsNullOrEmpty(framework.PubSubName))
+            PubSubName = framework.PubSubName;
+        if (string.IsNullOrEmpty(TopicName) && !string.IsNullOrEmpty(framework.TopicName))
+            TopicName = framework.TopicName;
     }
 
     /// <summary>What a routing loader does with a message no route handles. Defaults to

@@ -303,7 +303,7 @@ public class TransactionalIntegrationSubscriptionTests
     }
 
     [Fact]
-    public void ValueUnsetInConfigurationAndCode_DefaultsToTheInternalHop()
+    public void ValueUnsetInConfigurationAndCode_DefaultsToTheInternalQueue()
     {
         var services = GetServices();
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -314,12 +314,12 @@ public class TransactionalIntegrationSubscriptionTests
         services.AddTransactionalIntegration<Context>(configuration.GetSection("TransactionalIntegration"),
             () => new TransactionalIntegrationDefinition<Context>
             {
-                // DaprPubSubName: not set in code, not in configuration — the internal hop's.
+                // DaprPubSubName: not set in code, not in configuration — the internal queue's.
                 // DaprTopicName: filled from configuration.
             });
 
         var options = services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationOptions>();
-        Assert.Equal("internal-orders-integration", options.DaprPubSubName);
+        Assert.Equal("order-flow-queue-pubsub", options.DaprPubSubName);
         Assert.Equal("config-topic", options.DaprTopicName);
     }
 
@@ -331,6 +331,8 @@ public class TransactionalIntegrationSubscriptionTests
         {
             options.ComponentName = "orders-integration";
             options.ServiceNamespace = "example";
+            options.PubSubName = "order-flow-queue-pubsub";
+            options.TopicName = "internal-orders-integration";
         });
         return services;
     }

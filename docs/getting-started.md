@@ -25,16 +25,17 @@ builder.Services.AddIntropyFramework(opts => opts.ComponentName = "order-process
 
 builder.Services.AddTransactionalIntegration(opts =>
 {
-    opts.DaprPubSubName = "pubsub";
-    opts.DaprTopicName = "orders";
+    // The internal queue defaults to the pub/sub and topic the deployment names in
+    // INTROPY_PUBSUB_NAME and INTROPY_TOPIC_NAME.
+    opts.IdleTimeout = TimeSpan.FromSeconds(5);
 });
 ```
 
-`AddIntropyFramework` registers `FrameworkOptions` and validates the component name. You can also set the `INTROPY_COMPONENT_NAME` environment variable and call `AddIntropyFramework()` without a delegate.
+`AddIntropyFramework` registers `FrameworkOptions` and validates the component name. You can also set the `INTROPY_COMPONENT_NAME` environment variable and call `AddIntropyFramework()` without a delegate. The pub/sub the component runs on, `PubSubName`, comes from the deployment through the `INTROPY_PUBSUB_NAME` environment variable: the system topology names its pub/sub components and picks the one each component uses, the system's bus for an extractor or a loader and the internal-queue pub/sub for a transactional integration. The topic it runs on, `TopicName`, comes the same way through `INTROPY_TOPIC_NAME`: a transactional integration's internal-queue topic, or the one topic an extractor or a loader uses. The environment wins over a value set in the delegate; set them in code only for tests or runs without a system host. The framework derives no names of its own.
 
 To export traces and metrics, configure OpenTelemetry with [Intropy.Telemetry](https://github.com/integrio-intropy/intropy-telemetry). Use the component name as its `ServiceName`, and add the framework's meters. See [Observability](concepts/observability.md#collecting-the-telemetry).
 
-`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `JobRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are optional. If you don't set them, they default to the internal hop that the system topology generates for the component: `internal-<component>` (the component name with dots replaced by dashes) and `hop`.
+`AddTransactionalIntegration` registers the lifecycle as a run-to-completion job, together with the `JobRunner` that hosts it. `DaprPubSubName` and `DaprTopicName` are optional. If you don't set them, they default to the internal queue that the system topology generates for the component: the pub/sub and topic the deployment names, `PubSubName` and `TopicName` (the topology names the topic `internal-<component>`). For a transactional integration that is the system's internal-queue pub/sub, separate from the bus because an internal queue has a single consumer: on Azure Service Bus it deploys as a queue component and the bus as a topic component. Without `PubSubName` and `DaprPubSubName`, or without `TopicName` and `DaprTopicName`, registration fails. Each integration gets its own topic because the broker separates queues by topic, not by Dapr component.
 
 ## Define your data models
 
