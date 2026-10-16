@@ -1,3 +1,4 @@
+using System.Text;
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.FileSweeps;
@@ -38,13 +39,17 @@ public sealed class ExtractorRoutes<TCtx> where TCtx : Context
     /// what the framework records from the sweep.</param>
     /// <param name="configurePipeline">Configures the route's pipeline builder, given the file's
     /// scope — the same shape as <c>AddExtractor</c>'s.</param>
+    /// <param name="encoding">The encoding the route's files are decoded with before they reach
+    /// the pipeline. Default: UTF-8. Decoding follows the encoding's own fallback, so bytes it
+    /// cannot represent become U+FFFD unless the encoding is created with exception fallback.</param>
     /// <typeparam name="TInput">The route's deserialized input.</typeparam>
     /// <typeparam name="TOutput">The route's published payload.</typeparam>
     /// <returns>The routes, for chaining.</returns>
     /// <exception cref="ArgumentException">No port is given, or a port is null or whitespace.</exception>
     public ExtractorRoutes<TCtx> On<TInput, TOutput>(
         string[] ports,
-        Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline)
+        Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
+        Encoding? encoding = null)
     {
         ArgumentNullException.ThrowIfNull(ports);
         if (ports.Length == 0)
@@ -52,7 +57,7 @@ public sealed class ExtractorRoutes<TCtx> where TCtx : Context
                 nameof(ports));
         ArgumentNullException.ThrowIfNull(configurePipeline);
 
-        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new FileMatch(ports), configurePipeline));
+        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new FileMatch(ports), configurePipeline, encoding));
         return this;
     }
 
@@ -60,14 +65,17 @@ public sealed class ExtractorRoutes<TCtx> where TCtx : Context
     /// received in several places.</summary>
     /// <param name="configurePipeline">Configures the pipeline builder, given the file's scope — the
     /// same shape as <c>AddExtractor</c>'s.</param>
+    /// <param name="encoding">The encoding the files are decoded with before they reach the
+    /// pipeline. Default: UTF-8. See <see cref="On{TInput,TOutput}"/>.</param>
     /// <typeparam name="TInput">The deserialized input.</typeparam>
     /// <typeparam name="TOutput">The published payload.</typeparam>
     /// <returns>The routes, for chaining.</returns>
     public ExtractorRoutes<TCtx> OnAny<TInput, TOutput>(
-        Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline)
+        Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
+        Encoding? encoding = null)
     {
         ArgumentNullException.ThrowIfNull(configurePipeline);
-        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(null, configurePipeline));
+        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(null, configurePipeline, encoding));
         return this;
     }
 

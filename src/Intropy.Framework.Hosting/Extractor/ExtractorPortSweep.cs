@@ -1,4 +1,3 @@
-using System.Text;
 using CloudNative.CloudEvents;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
@@ -10,8 +9,8 @@ using Microsoft.Extensions.Logging;
 namespace Intropy.Framework.Hosting.Extractor;
 
 /// <summary>
-/// The extractor's sweep of one source port: each source file is read as UTF-8 text and run
-/// through the pipeline of the port's route.
+/// The extractor's sweep of one source port: each source file is decoded with the encoding of
+/// the port's route (UTF-8 unless the route sets one) and run through the route's pipeline.
 /// </summary>
 internal sealed class ExtractorPortSweep<TCtx>(
     SourcePort source,
@@ -32,7 +31,7 @@ internal sealed class ExtractorPortSweep<TCtx>(
     {
         // A listed file with no content is stuck: fail it and keep it so the run exits 1 instead
         // of silently skipping it. An empty file reads as string.Empty on every adapter.
-        var content = await file.ReadTextAsync(Encoding.UTF8, ct);
+        var content = await file.ReadTextAsync(route.Encoding, ct);
         if (content.Length == 0)
             return new StepResult<CloudEvent>.TechnicalFailure(new TechnicalFailure("The file has no content"));
 

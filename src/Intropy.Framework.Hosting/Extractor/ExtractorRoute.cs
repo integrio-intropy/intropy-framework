@@ -1,3 +1,4 @@
+using System.Text;
 using CloudNative.CloudEvents;
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
@@ -23,6 +24,10 @@ internal abstract class ExtractorRoute<TCtx> where TCtx : Context
 {
     /// <summary>The files the route handles, by their source port; null for every file.</summary>
     public abstract FileMatch? Match { get; }
+
+    /// <summary>The encoding the route's files are decoded with before they enter the pipeline.
+    /// Default: UTF-8.</summary>
+    public virtual Encoding Encoding => Encoding.UTF8;
 
     /// <summary>The route's pipeline for the files of <paramref name="port"/>, in
     /// <paramref name="scope"/>.</summary>
@@ -51,10 +56,13 @@ internal sealed class RegisteredExtractorRoute<TInput, TOutput, TCtx> : Extracto
 /// (<see cref="ExtractorBuilder{TInput,TOutput,TCtx}.Create(string, IServiceProvider, string)"/>).</summary>
 internal sealed class DeclaredExtractorRoute<TInput, TOutput, TCtx>(
     FileMatch? match,
-    Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline)
+    Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
+    Encoding? encoding = null)
     : ExtractorRoute<TCtx> where TCtx : Context
 {
     public override FileMatch? Match => match;
+
+    public override Encoding Encoding { get; } = encoding ?? Encoding.UTF8;
 
     public override ExtractorRun<TCtx> Resolve(IServiceProvider scope, string componentName, string port)
     {

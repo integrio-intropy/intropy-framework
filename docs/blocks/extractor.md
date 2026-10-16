@@ -327,6 +327,22 @@ each port's pipeline is built once, so a route that cannot be composed fails the
 route. The ports are swept one after another, in declaration order; a port that fails does not stop
 the others, but the run still fails, naming every port that failed.
 
+Files are decoded as UTF-8 before they reach the pipeline. A route whose files use another
+encoding sets it with the optional last argument of `On` and `OnAny`:
+
+```csharp
+routes => routes
+    .On<OrderFile, Order>(["orders-in"], ConfigureOrders, Encoding.Latin1)
+    .On<InvoiceFile, Invoice>(["invoices-in"], ConfigureInvoices)   // UTF-8
+```
+
+The encoding applies to every file of the route's ports. Decoding follows the encoding's own
+fallback, so bytes it cannot represent become `U+FFFD`, not an error; pass an encoding created with
+`Encoding.GetEncoding(name, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)`
+to fail the file instead. A file's own BOM is not interpreted: it decodes to a leading `U+FEFF`
+unless the encoding strips it. The single-pipeline `AddExtractor` overloads have no encoding
+setting and decode as UTF-8.
+
 ### What the routes add to each pipeline
 
 Each route's pipeline is built for one port at a time, and that port changes two things:
