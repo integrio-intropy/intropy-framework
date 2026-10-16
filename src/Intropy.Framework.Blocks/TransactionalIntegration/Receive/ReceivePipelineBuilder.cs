@@ -1,3 +1,4 @@
+using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.Shared.Steps;
 using Intropy.Framework.Blocks.Shared.Steps.External;
@@ -19,6 +20,7 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     private readonly ILogger _logger;
 
     private EnqueueStep<TCtx>? _enqueuer;
+    private ClaimCheckStep<TCtx>? _claimCheck;
     private BusinessIncidentRouteStep<SourceItem, TCtx>? _businessIncidentRouter;
 
     private ReceivePipelineBuilder(string pipelineName, FrameworkOptions frameworkOptions,
@@ -57,6 +59,37 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(enqueuer);
         _enqueuer = enqueuer;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the claim check: a payload too large for the broker is written to
+    /// <paramref name="store"/> before the enqueuer runs, and the message carries a pointer to it
+    /// instead of the payload. Optional; without it every payload rides inside its envelope, as before.
+    /// </summary>
+    /// <remarks>The send side resolves the pointer on its own, from the claim store registered on the
+    /// component — there is nothing to configure there.</remarks>
+    /// <param name="store">The claim store to write payloads to.</param>
+    /// <param name="policy">When a payload is claim-checked: above a threshold, or always.</param>
+    /// <returns>The builder for method chaining.</returns>
+    public ReceivePipelineBuilder<TCtx> WithClaimCheck(IFileAdapter store, ClaimCheckPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(policy);
+        _claimCheck = new ClaimCheckStep<TCtx>(store, policy, _frameworkOptions);
+        return this;
+    }
+
+    /// <summary>
+    /// Use this instead of <see cref="WithClaimCheck"/> to supply a custom
+    /// <see cref="ClaimCheckStep{TCtx}"/>.
+    /// </summary>
+    /// <param name="claimCheck">The claim check step to run before the enqueuer.</param>
+    /// <returns>The builder for method chaining.</returns>
+    public ReceivePipelineBuilder<TCtx> WithCustomClaimCheck(ClaimCheckStep<TCtx> claimCheck)
+    {
+        ArgumentNullException.ThrowIfNull(claimCheck);
+        _claimCheck = claimCheck;
         return this;
     }
 
@@ -108,8 +141,8 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     /// <exception cref="InvalidOperationException">Thrown when any of the required steps are not configured.</exception>
     public ReceivePipeline<TCtx> Build()
     {
-        // Business incident routing is optional and is skipped at runtime when not configured
-        // (see ReceivePipeline using AddOptionalFinalizer).
+        // The claim check and business incident routing are optional and are skipped at runtime when
+        // not configured (see ReceivePipeline using AddOptionalStep/AddOptionalFinalizer).
         if (_enqueuer == null)
             throw new InvalidOperationException($"{nameof(EnqueueStep<TCtx>)} must be configured");
 
@@ -117,6 +150,7 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
             _pipelineName,
             _logger,
             _enqueuer,
+            _claimCheck,
             _businessIncidentRouter
         );
     }

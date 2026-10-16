@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
@@ -42,7 +43,8 @@ internal abstract class SendRoute<TCtx>(ContextFactory<TCtx> contextFactory) : I
             var pipeline = Resolve(scope.ServiceProvider, componentName);
             var context = ContextCreation.Create(contextFactory, RestoreMetadata(message), message.IsRetry,
                 componentName, message.MessageId);
-            var (result, _) = await pipeline.Execute(message.Data, context, cancellationToken);
+            var data = await ResolveDataAsync(message, scope.ServiceProvider, cancellationToken);
+            var (result, _) = await pipeline.Execute(data, context, cancellationToken);
             return PipelineOutcome.From(result, interrupt);
         }
         catch (Exception e)
@@ -53,6 +55,42 @@ internal abstract class SendRoute<TCtx>(ContextFactory<TCtx> contextFactory) : I
 
     /// <summary>The route's send pipeline, in the message's scope.</summary>
     protected abstract ISendPipeline<TCtx> Resolve(IServiceProvider scope, string componentName);
+
+    /// <summary>
+    /// The message's payload: fetched from the claim store when the message carries a pointer instead
+    /// of its payload, and the message's own data otherwise.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Resolving here, rather than in a pipeline step, keeps the claim check invisible to the send
+    /// pipeline: its input is the payload either way, so no component's code knows the mechanism
+    /// exists. A failed fetch throws and becomes a technical failure, so the message is redelivered
+    /// and eventually dead-lettered — never reported as a business failure.
+    /// </para>
+    /// <para>
+    /// This consults no claim-check policy, deliberately: the mode governs whether the component
+    /// <em>writes</em> claims, while the registered store governs whether it can resolve them. That is
+    /// what lets a rollback stop new claims and still drain the ones already on the queue.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The message carries a pointer but the component has
+    /// no claim store registered. That is the shape of a mis-ordered rollout — a publisher claim-checking
+    /// before its consumers can resolve — so it says exactly that rather than surfacing later as an
+    /// empty payload.</exception>
+    private static async Task<ReadOnlyMemory<byte>> ResolveDataAsync(IncomingMessage message,
+        IServiceProvider scope, CancellationToken cancellationToken)
+    {
+        if (message.GetExtension(CloudEventExtensionKeys.DataRef) is not { Length: > 0 } dataRef)
+            return message.Data;
+
+        var store = scope.GetKeyedService<IFileAdapter>(ClaimStoreServiceCollectionExtensions.ClaimStoreKey)
+            ?? throw new InvalidOperationException(
+                $"Message '{message.MessageId}' carries a claim pointer ('{dataRef}') but no claim store is " +
+                "registered: its payload is in a store this component cannot read. Register one with " +
+                "AddClaimStore(configuration), configured against the same store the publisher writes to.");
+
+        return await store.GetContentAsync(dataRef, cancellationToken);
+    }
 
     /// <summary>The context metadata propagated with <paramref name="message"/>, plus its message id.</summary>
     private static Dictionary<string, string> RestoreMetadata(IncomingMessage message)
