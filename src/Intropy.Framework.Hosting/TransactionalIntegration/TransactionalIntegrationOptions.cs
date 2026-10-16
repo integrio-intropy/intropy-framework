@@ -1,3 +1,4 @@
+using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 
@@ -70,6 +71,50 @@ public class TransactionalIntegrationOptions
     internal TimeSpan InternalQueueProbeInterval { get; set; } = TimeSpan.FromSeconds(1);
 
     /// <summary>
+    /// When a payload is moved to the claim store instead of riding inside its message. Applies only
+    /// when a claim store is registered (<c>AddClaimStore</c>); without one every payload stays inline,
+    /// whatever this says.
+    /// </summary>
+    /// <remarks>
+    /// This governs <em>writing</em> claims only. The send side resolves a pointer whenever a message
+    /// carries one, whatever the mode, so <see cref="Blocks.Shared.ClaimCheckMode.Never"/> stops new
+    /// claims while leaving existing ones to drain — see that mode for the rollback order.
+    /// </remarks>
+    /// <value>Default: <see cref="Blocks.Shared.ClaimCheckMode.Auto"/>, which requires
+    /// <see cref="ClaimCheckThresholdBytes"/>.</value>
+    public ClaimCheckMode ClaimCheckMode { get; set; } = ClaimCheckMode.Auto;
+
+    /// <summary>
+    /// The largest encoded message that may be published inline, in bytes. Required when a claim store
+    /// is registered in <see cref="Blocks.Shared.ClaimCheckMode.Auto"/>, and ignored in
+    /// <see cref="Blocks.Shared.ClaimCheckMode.Always"/> and
+    /// <see cref="Blocks.Shared.ClaimCheckMode.Never"/>.
+    /// </summary>
+    /// <remarks>
+    /// Set it 1–2 KB below the broker's maximum message size rather than at it. The measurement is
+    /// taken before the trace context is attached to the envelope, and Dapr adds attributes of its own
+    /// (<c>topic</c>, <c>pubsubname</c>, <c>traceid</c>) when it forwards the event, so the message the
+    /// broker is handed is always somewhat larger than what the threshold was compared against.
+    /// </remarks>
+    public int? ClaimCheckThresholdBytes { get; set; }
+
+    /// <summary>The claim-check policy these options describe, or <see langword="null"/> in
+    /// <see cref="Blocks.Shared.ClaimCheckMode.Never"/>: nothing is claim-checked, so the step is left
+    /// out of the pipeline rather than carried as a no-op.</summary>
+    /// <exception cref="InvalidOperationException">The mode needs a threshold and none is set.</exception>
+    internal ClaimCheckPolicy? ClaimCheckPolicy() => ClaimCheckMode switch
+    {
+        ClaimCheckMode.Never => null,
+        ClaimCheckMode.Always => Blocks.Shared.ClaimCheckPolicy.Always,
+        _ => Blocks.Shared.ClaimCheckPolicy.Above(ClaimCheckThresholdBytes ?? throw new InvalidOperationException(
+            $"{nameof(TransactionalIntegrationOptions)}.{nameof(ClaimCheckThresholdBytes)} must be set when a claim " +
+            $"store is registered and {nameof(ClaimCheckMode)} is {ClaimCheckMode.Auto}: it is the " +
+            "broker's maximum message size, which the framework cannot know. Set it below that limit with room to " +
+            $"spare, or use {nameof(ClaimCheckMode)} {ClaimCheckMode.Always} or " +
+            $"{ClaimCheckMode.Never}."))
+    };
+
+    /// <summary>
     /// The max amount of time a message is allowed to be processed for.
     /// It is recommended to set this lower than <see cref="PostIdleGracePeriod"/>.
     /// Delegates to <see cref="SubscriptionOptions.MaxMessageProcessingTime"/> on
@@ -132,6 +177,20 @@ public class TransactionalIntegrationOptions
                     $"{nameof(FrameworkOptions)}.{nameof(FrameworkOptions.TopicName)}, or {nameof(DaprTopicName)}.");
         _subscription.PubSubName = DaprPubSubName;
         _subscription.TopicName = DaprTopicName;
+    }
+
+    /// <summary>Checks that a threshold, when set, is a usable size.</summary>
+    /// <remarks>Only the range is checked here. Whether a threshold is <em>required</em> depends on
+    /// the mode and on a claim store being registered, and the store may be registered either side of
+    /// the integration, so that check stays in <see cref="ClaimCheckPolicy"/> where both are
+    /// known.</remarks>
+    internal void EnsureValidClaimCheckThreshold(string paramName)
+    {
+        if (ClaimCheckThresholdBytes is { } bytes && bytes <= 0)
+            throw new ArgumentOutOfRangeException(paramName, bytes,
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(ClaimCheckThresholdBytes)} must be positive when " +
+                "set: it is the largest message that may be published inline, so a zero or negative limit would " +
+                "claim-check everything or nothing. Leave it unset to let the mode decide whether one is needed.");
     }
 
     /// <summary>Checks that readiness always has a bounded, usable .NET timer.</summary>

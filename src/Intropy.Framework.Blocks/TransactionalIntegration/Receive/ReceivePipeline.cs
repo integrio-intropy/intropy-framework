@@ -10,6 +10,8 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 /// <summary>
 /// The receive side of a message-based integration flow. It follows these steps:
 /// <list type="number">
+///   <item>Claim check (optional): moves a payload too large for the broker into the claim store,
+///     leaving the item carrying a pointer to it</item>
 ///   <item>Enqueue: publishes the item's content to the integration's queue</item>
 ///   <item>Route business incidents (optional): routes any business incidents that occurred during the execution</item>
 /// </list>
@@ -20,11 +22,14 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 /// <param name="pipelineName">The name of the pipeline. Used for tracing purposes.</param>
 /// <param name="logger">An instance of <see cref="ILogger"/>.</param>
 /// <param name="enqueuer">The step that publishes content to the queue.</param>
+/// <param name="claimCheck">Optional step that moves an oversized payload to the claim store before
+/// it is enqueued. Skipped when null, leaving every payload inside its envelope.</param>
 /// <param name="businessIncidentRouter">Optional finalizer that routes business incidents. Skipped when null.</param>
 public class ReceivePipeline<TCtx>(
     string pipelineName,
     ILogger logger,
     EnqueueStep<TCtx> enqueuer,
+    ClaimCheckStep<TCtx>? claimCheck,
     BusinessIncidentRouteStep<SourceItem, TCtx>? businessIncidentRouter) : IReceivePipeline<TCtx> where TCtx : Context
 {
     /// <inheritdoc />
@@ -34,6 +39,7 @@ public class ReceivePipeline<TCtx>(
         ArgumentNullException.ThrowIfNull(item);
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline
                 .Start(item, context, ct)
+                .AddOptionalStep(claimCheck)
                 .AddStep(enqueuer)
                 .AddOptionalFinalizer(businessIncidentRouter),
             pipelineName: pipelineName,
