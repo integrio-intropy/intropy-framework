@@ -1,3 +1,4 @@
+using System.Text;
 using CloudNative.CloudEvents;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
@@ -62,6 +63,51 @@ public class ExtractorRoutesTests
             });
         Assert.Empty(_orders.Files);
         Assert.Empty(_invoices.Files);
+    }
+
+    [Fact]
+    public async Task Run_DecodesEachRoutesFilesWithItsEncoding()
+    {
+        // The same text in two encodings: the Latin-1 route decodes its bytes as Latin-1, the route
+        // that sets no encoding as UTF-8.
+        _orders.AddFile("order.csv", Encoding.Latin1.GetBytes("Zoë"));
+        _invoices.AddFile("invoice.xml", Encoding.UTF8.GetBytes("Zoë"));
+        await using var provider = Register(routes => routes
+            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted"), Encoding.Latin1)
+            .On<Invoice, Invoice>(["invoices-no"], Pipeline<Invoice>(id => new Invoice(id), "invoices.accepted")));
+
+        var summary = await RunAsync(provider);
+
+        Assert.Equal(2, summary.Processed);
+        Assert.Equal(new Order("Zoë"), _sender.Sent[0].Data);
+        Assert.Equal(new Invoice("Zoë"), _sender.Sent[1].Data);
+    }
+
+    [Fact]
+    public async Task Run_DecodesFilesOfARouteForEveryFileWithItsEncoding()
+    {
+        _orders.AddFile("a.csv", Encoding.Latin1.GetBytes("Zoë"));
+        _invoices.AddFile("b.csv", Encoding.Latin1.GetBytes("Åsa"));
+        await using var provider = Register(routes => routes
+            .OnAny<Order, Order>(Pipeline<Order>(id => new Order(id), "orders.accepted"), Encoding.Latin1));
+
+        await RunAsync(provider);
+
+        Assert.Equal([new Order("Zoë"), new Order("Åsa")], _sender.Sent.Select(e => e.Data));
+    }
+
+    [Fact]
+    public async Task Run_WithoutAnEncoding_DecodesAsUtf8()
+    {
+        // Latin-1 bytes are not valid UTF-8: the default does not guess another encoding.
+        _orders.AddFile("order.csv", Encoding.Latin1.GetBytes("Zoë"));
+        await using var provider = Register(routes => routes
+            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted"))
+            .On<Invoice, Invoice>(["invoices-no"], Pipeline<Invoice>(id => new Invoice(id), "invoices.accepted")));
+
+        await RunAsync(provider);
+
+        Assert.Equal(new Order("Zo\uFFFD"), _sender.Sent.Single().Data);
     }
 
     [Fact]
