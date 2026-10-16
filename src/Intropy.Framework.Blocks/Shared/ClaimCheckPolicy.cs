@@ -16,6 +16,14 @@ public enum ClaimCheckMode
     /// <summary>
     /// No payload is claim-checked, whatever its size: every one rides inside its message.
     /// </summary>
+    /// <remarks>
+    /// This is the rollback, and it is deliberately not the same as removing the claim store. A
+    /// pointer already on the queue still has to be resolved, and only a registered store can resolve
+    /// it, so roll back in this order: switch the mode to <c>Never</c>, which stops new claims
+    /// immediately; leave the store registered until the queue has drained every pointer already on
+    /// it; then remove the store. Removing the store first fails those messages, which redeliver and
+    /// dead-letter with their payloads stranded.
+    /// </remarks>
     Never
 }
 
@@ -63,8 +71,10 @@ public sealed record ClaimCheckPolicy
     public static ClaimCheckPolicy Always { get; } = new(ClaimCheckMode.Always, 0);
 
     /// <summary>A policy that claim-checks an envelope larger than <paramref name="thresholdBytes"/>.</summary>
-    /// <param name="thresholdBytes">The largest envelope that may be published inline. Set it from the
-    /// broker's maximum message size, with room to spare.</param>
+    /// <param name="thresholdBytes">The largest envelope that may be published inline. Set it 1–2 KB
+    /// below the broker's maximum message size: <see cref="EncodedSize"/> measures the envelope before
+    /// the trace context is attached, and Dapr adds attributes of its own (<c>topic</c>,
+    /// <c>pubsubname</c>, <c>traceid</c>) when it forwards the event.</param>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="thresholdBytes"/> is not positive.</exception>
     public static ClaimCheckPolicy Above(int thresholdBytes)
     {

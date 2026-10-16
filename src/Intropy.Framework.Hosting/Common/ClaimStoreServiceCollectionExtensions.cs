@@ -47,6 +47,14 @@ public static class ClaimStoreServiceCollectionExtensions
     /// payload written elsewhere could not be read back. The store is never listed (the adapters'
     /// listing semantics diverge, and a claim key is a path rather than a file name) and never deleted:
     /// expiring payloads is a storage lifecycle policy, owned by the platform.
+    /// <para>
+    /// This call stays separate from <c>AddTransactionalIntegration</c> on purpose, even where that
+    /// one binds its own options from configuration. Which store a component writes to is a
+    /// deployment decision, the same as a port's, and registering it is what gives the component the
+    /// ability to claim-check at all; the component's mode only decides whether it uses it. Keeping
+    /// the two calls apart is also what makes the rollback in <see cref="Blocks.Shared.ClaimCheckMode.Never"/>
+    /// expressible: drop the mode, keep the store.
+    /// </para>
     /// </remarks>
     /// <param name="services">The service collection to add services to.</param>
     /// <param name="configuration">The component's configuration.</param>

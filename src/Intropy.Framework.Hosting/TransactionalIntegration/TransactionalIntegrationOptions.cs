@@ -90,6 +90,12 @@ public class TransactionalIntegrationOptions
     /// <see cref="Blocks.Shared.ClaimCheckMode.Always"/> and
     /// <see cref="Blocks.Shared.ClaimCheckMode.Never"/>.
     /// </summary>
+    /// <remarks>
+    /// Set it 1–2 KB below the broker's maximum message size rather than at it. The measurement is
+    /// taken before the trace context is attached to the envelope, and Dapr adds attributes of its own
+    /// (<c>topic</c>, <c>pubsubname</c>, <c>traceid</c>) when it forwards the event, so the message the
+    /// broker is handed is always somewhat larger than what the threshold was compared against.
+    /// </remarks>
     public int? ClaimCheckThresholdBytes { get; set; }
 
     /// <summary>The claim-check policy these options describe, or <see langword="null"/> in
