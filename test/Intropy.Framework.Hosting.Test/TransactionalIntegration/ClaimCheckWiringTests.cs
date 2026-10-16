@@ -3,6 +3,7 @@ using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
+using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.TransactionalIntegration;
@@ -10,6 +11,7 @@ using Intropy.Framework.Testing.Adapters;
 using Intropy.Framework.Testing.Topics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using NSubstitute;
 
 namespace Intropy.Framework.Hosting.Test.TransactionalIntegration;
 
@@ -27,6 +29,14 @@ public class ClaimCheckWiringTests
 
     private static (IReceivePipeline<Context> Pipeline, InMemoryFileAdapter Claims, FakeEnqueueStep<Context> Topic)
         Build(ClaimCheckMode mode, List<string> log, bool withClaimStore = true)
+    {
+        var (services, claims, topic) = Services(mode, 1024, log, withClaimStore);
+        var provider = services.BuildServiceProvider();
+        return (provider.GetRequiredService<IReceivePipeline<Context>>(), claims, topic);
+    }
+
+    private static (ServiceCollection Services, InMemoryFileAdapter Claims, FakeEnqueueStep<Context> Topic)
+        Services(ClaimCheckMode mode, int? thresholdBytes, List<string> log, bool withClaimStore = true)
     {
         var options = new FrameworkOptions
         {
@@ -55,11 +65,10 @@ public class ClaimCheckWiringTests
         services.AddTransactionalIntegration(o =>
         {
             o.ClaimCheckMode = mode;
-            o.ClaimCheckThresholdBytes = 1024;
+            o.ClaimCheckThresholdBytes = thresholdBytes;
         });
 
-        var provider = services.BuildServiceProvider();
-        return (provider.GetRequiredService<IReceivePipeline<Context>>(), claims, topic);
+        return (services, claims, topic);
     }
 
     private sealed class CapturingLoggerFactory(List<string> entries) : ILoggerFactory
@@ -141,5 +150,32 @@ public class ClaimCheckWiringTests
 
         Assert.Empty(claims.Files);
         Assert.Null(Assert.Single(topic.Captured).DecodeCloudEvent()[CloudEventExtensionKeys.DataRef]);
+    }
+
+    [Fact]
+    public void AStoreInAutoModeWithNoThreshold_FailsWhenTheJobIsBuilt()
+    {
+        // A threshold the component forgot is a configuration error, and it is reported when the
+        // provider builds the job: before the sidecar is waited for and the internal queue is probed,
+        // which is up to InternalQueueReadyTimeout of a run spent on a component that cannot sweep.
+        var (services, _, _) = Services(ClaimCheckMode.Auto, thresholdBytes: null, []);
+        services.AddSingleton(Substitute.For<ISendPipeline<Context>>());
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationJob<Context>>());
+
+        Assert.Contains(nameof(TransactionalIntegrationOptions.ClaimCheckThresholdBytes), error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AStoreInNeverMode_NeedsNoThreshold_SoTheJobStillBuilds()
+    {
+        // The control for the test above: Never claim-checks nothing, so the setting it would need is
+        // not required, and a rollback to Never must not take the component down with it.
+        var (services, _, _) = Services(ClaimCheckMode.Never, thresholdBytes: null, []);
+        services.AddSingleton(Substitute.For<ISendPipeline<Context>>());
+
+        Assert.NotNull(services.BuildServiceProvider().GetRequiredService<TransactionalIntegrationJob<Context>>());
     }
 }

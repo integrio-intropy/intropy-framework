@@ -349,12 +349,21 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             sp.GetRequiredService<FrameworkOptions>(), contextFactory, sp.GetRequiredService<ILoggerFactory>()));
         // The internal queue is probed through the enqueuer that publishes the files, so a replaced enqueuer
         // (a test fake, another transport) that cannot be probed sweeps without the gate.
-        services.AddSingleton(sp => new TransactionalIntegrationJob<TCtx>(
-            sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
-            sp.GetRequiredService<SendSideRun>(),
-            sp.GetRequiredService<ILoggerFactory>(),
-            InternalQueueReadinessGateFor(sp.GetRequiredService<EnqueueStep<TCtx>>(),
-                sp.GetRequiredService<TransactionalIntegrationOptions>(), sp.GetRequiredService<ILoggerFactory>())));
+        services.AddSingleton(sp =>
+        {
+            // The receive pipeline is built once here for the same reason the send routes are: so a
+            // configuration it cannot be built from — a claim store with no threshold, say — fails
+            // alongside them, rather than once the sidecar is up and the queue has been probed. The
+            // sweep validates it again per port before listing a file, which is what keeps a bad
+            // configuration from touching one; this only moves the report earlier.
+            _ = sp.GetRequiredService<IReceivePipeline<TCtx>>();
+            return new TransactionalIntegrationJob<TCtx>(
+                sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
+                sp.GetRequiredService<SendSideRun>(),
+                sp.GetRequiredService<ILoggerFactory>(),
+                InternalQueueReadinessGateFor(sp.GetRequiredService<EnqueueStep<TCtx>>(),
+                    sp.GetRequiredService<TransactionalIntegrationOptions>(), sp.GetRequiredService<ILoggerFactory>()));
+        });
 
         services.AddJob<TransactionalIntegrationJob<TCtx>>(configureJob);
 
