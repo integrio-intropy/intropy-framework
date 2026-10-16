@@ -1,4 +1,3 @@
-using System.Globalization;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Helpers;
@@ -85,11 +84,8 @@ public sealed class ClaimCheckStep<TCtx>(
     }
 
     /// <summary>The claim key for <paramref name="messageId"/>: unique per message, partitioned by the
-    /// component and the date so a lifecycle policy can expire it.</summary>
-    private string KeyFor(string messageId)
-    {
-        var now = _time.GetUtcNow();
-        return string.Create(CultureInfo.InvariantCulture,
-            $"{options.ComponentName}/{now:yyyy}/{now:MM}/{now:dd}/{messageId}");
-    }
+    /// component and the date so a lifecycle policy can expire it. The format itself lives in
+    /// <see cref="ClaimKey"/>, which the send side validates a pointer against before fetching it.</summary>
+    private string KeyFor(string messageId) =>
+        ClaimKey.For(options.ComponentName, _time.GetUtcNow(), messageId);
 }

@@ -73,15 +73,25 @@ internal abstract class SendRoute<TCtx>(ContextFactory<TCtx> contextFactory) : I
     /// what lets a rollback stop new claims and still drain the ones already on the queue.
     /// </para>
     /// </remarks>
-    /// <exception cref="InvalidOperationException">The message carries a pointer but the component has
-    /// no claim store registered. That is the shape of a mis-ordered rollout — a publisher claim-checking
-    /// before its consumers can resolve — so it says exactly that rather than surfacing later as an
-    /// empty payload.</exception>
+    /// <exception cref="InvalidOperationException">The pointer is not a claim key, or the message
+    /// carries one but the component has no claim store registered. The latter is the shape of a
+    /// mis-ordered rollout — a publisher claim-checking before its consumers can resolve — so it says
+    /// exactly that rather than surfacing later as an empty payload.</exception>
     private static async Task<ReadOnlyMemory<byte>> ResolveDataAsync(IncomingMessage message,
         IServiceProvider scope, CancellationToken cancellationToken)
     {
         if (message.GetExtension(CloudEventExtensionKeys.DataRef) is not { Length: > 0 } dataRef)
             return message.Data;
+
+        // Checked before the store is even resolved: a pointer the receive side cannot have minted is
+        // rejected as malformed whether or not a store is registered. The adapters join a key onto the
+        // store's base path without normalising it, so an unchecked pointer would name any file the
+        // binding can reach — see ClaimKey.
+        if (!ClaimKey.IsValid(dataRef))
+            throw new InvalidOperationException(
+                $"Message '{message.MessageId}' carries a claim pointer ('{dataRef}') that is not a claim key: " +
+                "a key is '{component}/{yyyy}/{MM}/{dd}/{messageId}'. The payload is not fetched; the message " +
+                "was not published by this framework's claim check, or it was tampered with in transit.");
 
         var store = scope.GetKeyedService<IFileAdapter>(ClaimStoreServiceCollectionExtensions.ClaimStoreKey)
             ?? throw new InvalidOperationException(

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Hosting.Common;
@@ -97,6 +98,42 @@ public class SendRouteClaimCheckTests
         Assert.Equal(MessageOutcome.Failed, handled.Outcome.Outcome);
         Assert.Equal(typeof(InvalidOperationException).FullName, handled.Outcome.ErrorType);
         Assert.Contains("no claim store is registered", handled.Outcome.Description, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    // Absolute: Path.Combine drops the store's base path entirely for these (SftpAdapter).
+    [InlineData("/etc/passwd")]
+    // Traversal: climbs out of the base path whichever adapter joins it.
+    [InlineData("orders/2026/03/07/../../../../../../etc/passwd")]
+    [InlineData("../../etc/passwd")]
+    [InlineData("orders\\2026\\03\\07\\msg-1")]
+    // Not a key at all.
+    [InlineData("orders/2026/03/msg-1")]
+    public async Task HandleAsync_NeverFetches_WhenThePointerIsNotAClaimKey(string dataRef)
+    {
+        // Anything able to publish to the internal topic could otherwise name any file the binding can
+        // reach, and the send pipeline would forward it to the target system. The adapter is rigged to
+        // throw on any read, so the assertion on the error type is also what proves it was not read.
+        var adapter = new InMemoryFileAdapter { ReadException = new UnreachableException("the store was read") };
+
+        var handled = await Processor(adapter)
+            .HandleAsync(Message(dataRef), null, CancellationToken.None, CancellationToken.None);
+
+        Assert.Equal(MessageOutcome.Failed, handled.Outcome.Outcome);
+        Assert.Equal(typeof(InvalidOperationException).FullName, handled.Outcome.ErrorType);
+        Assert.Contains("is not a claim key", handled.Outcome.Description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HandleAsync_RejectsAMalformedPointer_EvenWithNoClaimStoreConfigured()
+    {
+        // Checked before the store is resolved, so a malformed pointer is reported as malformed
+        // rather than as a missing store — two different operational problems.
+        var handled = await Processor(store: null)
+            .HandleAsync(Message("/etc/passwd"), null, CancellationToken.None, CancellationToken.None);
+
+        Assert.Equal(MessageOutcome.Failed, handled.Outcome.Outcome);
+        Assert.Contains("is not a claim key", handled.Outcome.Description, StringComparison.Ordinal);
     }
 
     public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry) : Context(Metadata, IsRetry);
