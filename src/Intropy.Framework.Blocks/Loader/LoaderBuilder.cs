@@ -115,9 +115,11 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
     /// <summary>
     /// Configures deserialization using a custom deserializer.
-    /// This step deserializes the CloudEvent.Data into TInput and extracts CloudEvent metadata to context.
+    /// This step converts the message's payload bytes into TInput. The message's own attributes are
+    /// already on the context by then (see <see cref="CloudEventContextKeys"/>).
     /// </summary>
-    /// <param name="deserializer">The <see cref="DeserializeStep{T,TCtx}"/> that converts CloudEvent to TInput.</param>
+    /// <param name="deserializer">The <see cref="DeserializeStep{T,TCtx}"/> that converts the payload
+    /// to TInput.</param>
     /// <returns>The builder for method chaining.</returns>
     public LoaderBuilder<TInput, TOutput, TCtx> WithDeserializer(
         DeserializeStep<TInput, TCtx> deserializer)
@@ -129,7 +131,8 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <summary>
     /// Configures deserialization by resolving the registered <typeparamref name="TStep"/> from the
     /// service provider.
-    /// This step deserializes the CloudEvent.Data into TInput and extracts CloudEvent metadata to context.
+    /// This step converts the message's payload bytes into TInput. The message's own attributes are
+    /// already on the context by then (see <see cref="CloudEventContextKeys"/>).
     /// </summary>
     /// <remarks>
     /// Register the step against its concrete type, e.g. <c>services.AddScoped&lt;MyDeserializer&gt;()</c>.
@@ -364,7 +367,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
         DateTimeOffset DateExtractor(TInput _, TCtx context)
         {
-            if (!context.Metadata.TryGetValue(CloudEventContextKeys.Time, out var timeStr) || string.IsNullOrEmpty(timeStr)) throw new InvalidOperationException($"Missing required CloudEvent.Time in context (key: '{CloudEventContextKeys.Time}'). " + "Ensure the CloudEvent has a Time set.");
+            if (!context.Metadata.TryGetValue(CloudEventContextKeys.Time, out var timeStr) || string.IsNullOrEmpty(timeStr)) throw new InvalidOperationException($"Missing required CloudEvent.Time in context (key: '{CloudEventContextKeys.Time}'). " + "The host stamps it from the message before any step runs, so the message it delivered carried no time; a standalone caller gets it from the CloudEvent overload of Loader.Execute.");
 
             if (!DateTimeOffset.TryParse(timeStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var eventDate)) throw new InvalidOperationException($"Invalid RFC 3339 date format in CloudEvent.Time: '{timeStr}'");
 
@@ -374,7 +377,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         // Define extractors that read CloudEvent metadata from context
         string IdExtractor(TInput _, TCtx context)
         {
-            if (!context.Metadata.TryGetValue(CloudEventContextKeys.Subject, out var id) || string.IsNullOrEmpty(id)) throw new InvalidOperationException($"Missing required CloudEvent.Subject in context (key: '{CloudEventContextKeys.Subject}'). " + "Ensure the CloudEvent has a Subject set.");
+            if (!context.Metadata.TryGetValue(CloudEventContextKeys.Subject, out var id) || string.IsNullOrEmpty(id)) throw new InvalidOperationException($"Missing required CloudEvent.Subject in context (key: '{CloudEventContextKeys.Subject}'). " + "The host stamps it from the message before any step runs, so the message it delivered carried no subject; a standalone caller gets it from the CloudEvent overload of Loader.Execute.");
             return idPrefix + id;
         }
     }

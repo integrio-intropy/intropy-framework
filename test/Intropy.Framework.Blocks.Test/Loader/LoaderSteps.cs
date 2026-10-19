@@ -1,5 +1,5 @@
+using System.Text;
 using System.Text.Json;
-using CloudNative.CloudEvents;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Framework.Blocks.Loader.Steps;
 using Intropy.Framework.Blocks.Shared;
@@ -21,25 +21,28 @@ public sealed class LoaderCustomerOut
 
 public sealed class CustomerDeserializer : DeserializeStep<LoaderCustomerIn, Context>
 {
-    protected override Task<(BusinessStepResult<LoaderCustomerIn> Result, Context Context)> DeserializeAsync(
-        CloudEvent cloudEvent, Context context)
+    // The framework publishes camelCase payloads.
+    private static readonly JsonSerializerOptions s_options = new(JsonSerializerDefaults.Web);
+
+    public override Task<(BusinessStepResult<LoaderCustomerIn> Result, Context Context)> ExecuteAsync(
+        ReadOnlyMemory<byte> input, Context context, CancellationToken ct)
     {
-        var jsonString = cloudEvent.Data?.ToString();
-        if (string.IsNullOrEmpty(jsonString))
+        if (input.IsEmpty)
         {
             var bi = new BusinessIncidentData
             {
-                Description = "CloudEvent data is null or empty", Context = new Dictionary<string, string>()
+                Description = "The message carried no payload", Context = new Dictionary<string, string>()
             };
             return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(
                 (new BusinessStepResult<LoaderCustomerIn>.Failure(bi), context));
         }
 
-        var obj = JsonSerializer.Deserialize<LoaderCustomerIn>(jsonString);
+        var jsonString = Encoding.UTF8.GetString(input.Span);
+        var obj = JsonSerializer.Deserialize<LoaderCustomerIn>(input.Span, s_options);
         if (obj == null)
         {
             var bi = new BusinessIncidentData{
-                Description = "Failed to deserialize CloudEvent data",
+                Description = "Failed to deserialize the payload",
                 Context = new Dictionary<string, string> { { "data", jsonString } }
             };
             return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(

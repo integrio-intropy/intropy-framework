@@ -11,7 +11,15 @@ namespace Intropy.Framework.Blocks.Shared;
 /// </summary>
 public static class CloudEventFormat
 {
+    /// <summary>
+    /// The options the formatter serializes a payload with. Exposed so anything that has to produce
+    /// the <c>data</c> member on its own — rather than by encoding a whole envelope — produces the
+    /// same bytes the formatter would have, instead of keeping a second set of options that can
+    /// drift from this one.
+    /// </summary>
+    public static JsonSerializerOptions SerializerOptions { get; } = new(JsonSerializerDefaults.Web);
+
     /// <summary>The formatter that encodes the framework's CloudEvents.</summary>
     public static JsonEventFormatter Formatter { get; } =
-        new(new JsonSerializerOptions(JsonSerializerDefaults.Web), new JsonDocumentOptions());
+        new(SerializerOptions, new JsonDocumentOptions());
 }

@@ -1,7 +1,3 @@
-using System.Globalization;
-using System.Text;
-using System.Text.Json;
-using CloudNative.CloudEvents;
 using Dapr.AppCallback.Autogen.Grpc.v1;
 using Google.Protobuf.WellKnownTypes;
 
@@ -67,54 +63,5 @@ internal sealed record IncomingMessage(
             ? value.StringValue
             : null;
 
-    /// <summary>The message as a <see cref="CloudEvent"/>, with its data as text — what loader
-    /// deserializers read.</summary>
-    internal CloudEvent ToCloudEvent()
-    {
-        var cloudEvent = new CloudEvent
-        {
-            Id = MessageId,
-            Type = Type,
-            Data = DecodeData(Data)
-        };
-
-        if (!string.IsNullOrEmpty(DataContentType))
-            cloudEvent.DataContentType = DataContentType;
-
-        if (Uri.TryCreate(Source, UriKind.RelativeOrAbsolute, out var source))
-            cloudEvent.Source = source;
-
-        if (Subject is { } subject)
-            cloudEvent.Subject = subject;
-
-        if (DateTimeOffset.TryParse(GetExtension("time"), CultureInfo.InvariantCulture,
-                DateTimeStyles.RoundtripKind, out var time))
-            cloudEvent.Time = time;
-
-        return cloudEvent;
-    }
-
     private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
-
-    private static string DecodeData(ReadOnlyMemory<byte> data)
-    {
-        var text = Encoding.UTF8.GetString(data.Span);
-
-        // The framework's blocks publish an object payload as a JSON object; a payload published
-        // as a JSON string (pre-serialized text, or another publisher's) arrives quoted; unwrap it
-        // to the payload itself.
-        if (text.StartsWith('"'))
-        {
-            try
-            {
-                return JsonSerializer.Deserialize<string>(text) ?? text;
-            }
-            catch (JsonException)
-            {
-                // Not a JSON string after all: hand the text over as it is.
-            }
-        }
-
-        return text;
-    }
 }

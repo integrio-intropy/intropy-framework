@@ -92,7 +92,8 @@ public class LoaderIdempotencyScopeTests
             Time = DateTimeOffset.UtcNow,
             Source = new Uri("urn:test:source"),
             Type = EventType,
-            Data = JsonSerializer.Serialize(new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" })
+            Data = new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" },
+            DataContentType = "application/json"
         };
         await builder.Build().Execute(cloudEvent, new Context(new Dictionary<string, string>()));
     }
