@@ -1,4 +1,3 @@
-using System.Text;
 using CloudNative.CloudEvents;
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
@@ -9,9 +8,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Intropy.Framework.Hosting.Extractor;
 
-/// <summary>Runs one source file's text through a route's extractor pipeline: the pipeline with its
+/// <summary>Runs one source file's bytes through a route's extractor pipeline: the pipeline with its
 /// input and output types bound, so a port sweep needs only the context type.</summary>
-internal delegate Task<StepResult<CloudEvent>> ExtractorRun<in TCtx>(string content, TCtx context,
+internal delegate Task<StepResult<CloudEvent>> ExtractorRun<in TCtx>(ReadOnlyMemory<byte> content, TCtx context,
     CancellationToken ct) where TCtx : Context;
 
 /// <summary>
@@ -24,10 +23,6 @@ internal abstract class ExtractorRoute<TCtx> where TCtx : Context
 {
     /// <summary>The files the route handles, by their source port; null for every file.</summary>
     public abstract FileMatch? Match { get; }
-
-    /// <summary>The encoding the route's files are decoded with before they enter the pipeline.
-    /// Default: UTF-8.</summary>
-    public virtual Encoding Encoding => Encoding.UTF8;
 
     /// <summary>The route's pipeline for the files of <paramref name="port"/>, in
     /// <paramref name="scope"/>.</summary>
@@ -56,13 +51,10 @@ internal sealed class RegisteredExtractorRoute<TInput, TOutput, TCtx> : Extracto
 /// (<see cref="ExtractorBuilder{TInput,TOutput,TCtx}.Create(string, IServiceProvider, string)"/>).</summary>
 internal sealed class DeclaredExtractorRoute<TInput, TOutput, TCtx>(
     FileMatch? match,
-    Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
-    Encoding? encoding = null)
+    Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline)
     : ExtractorRoute<TCtx> where TCtx : Context
 {
     public override FileMatch? Match => match;
-
-    public override Encoding Encoding { get; } = encoding ?? Encoding.UTF8;
 
     public override ExtractorRun<TCtx> Resolve(IServiceProvider scope, string componentName, string port)
     {

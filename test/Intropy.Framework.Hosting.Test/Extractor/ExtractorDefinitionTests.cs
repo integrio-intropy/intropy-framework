@@ -173,10 +173,10 @@ public class ExtractorDefinitionTests
     /// <summary>A deserializer for the base-Context pipeline: an int in its raw form.</summary>
     public sealed class PassThroughDeserializer : DeserializeStep<int, Context>
     {
-        public override Task<(BusinessStepResult<int> Result, Context Context)> ExecuteAsync(string input,
+        public override Task<(BusinessStepResult<int> Result, Context Context)> ExecuteAsync(ReadOnlyMemory<byte> input,
             Context context, CancellationToken ct) =>
             Task.FromResult<(BusinessStepResult<int>, Context)>(
-                (new BusinessStepResult<int>.Success(int.Parse(input)), context));
+                (new BusinessStepResult<int>.Success(int.Parse(System.Text.Encoding.UTF8.GetString(input.Span))), context));
     }
 
     /// <summary>Accepts every input.</summary>

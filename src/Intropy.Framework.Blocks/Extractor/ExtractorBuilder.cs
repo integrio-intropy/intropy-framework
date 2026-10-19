@@ -15,7 +15,7 @@ namespace Intropy.Framework.Blocks.Extractor;
 /// <summary>
 /// A pipeline template used for extractor components. It follows these steps:
 /// <list type="number">
-///   <item>Deserialize: deserializes the string data into a POCO</item>
+///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
 ///   <item>Validate: validates the POCO</item>
 ///   <item>Idempotency check: checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
@@ -116,9 +116,9 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
     /// <summary>
     /// Configures deserialization using a custom deserializer.
-    /// This step processes the raw string input to deserialize it into the input POCO type.
+    /// This step processes the raw byte input to deserialize it into the input POCO type.
     /// </summary>
-    /// <param name="deserializer">The <see cref="DeserializeStep{T,TCtx}"/> that converts string to TInput.</param>
+    /// <param name="deserializer">The <see cref="DeserializeStep{T,TCtx}"/> that converts bytes to TInput.</param>
     /// <returns>The builder for method chaining.</returns>
     public ExtractorBuilder<TInput, TOutput, TCtx> WithDeserializer(
         DeserializeStep<TInput, TCtx> deserializer)
@@ -130,7 +130,7 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <summary>
     /// Configures deserialization by resolving the registered <typeparamref name="TStep"/> from the
     /// service provider.
-    /// This step processes the raw string input to deserialize it into the input POCO type.
+    /// This step processes the raw byte input to deserialize it into the input POCO type.
     /// </summary>
     /// <remarks>
     /// Register the step against its concrete type, e.g. <c>services.AddScoped&lt;MyDeserializer&gt;()</c>.

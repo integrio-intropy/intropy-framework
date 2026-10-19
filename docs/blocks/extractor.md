@@ -6,7 +6,7 @@
 
 ```mermaid
 graph LR
-    A[string input] --> B[Deserialize]
+    A[byte input] --> B[Deserialize]
     B --> C[Validate]
     C --> D["Extract(s)"]
     D --> E[Idempotency Check]
@@ -17,9 +17,9 @@ graph LR
     I --> J[Business Incident Route]
 ```
 
-The Extractor is a standalone pipeline for extracting data from a source system, transforming it into a canonical model, and publishing it as a CloudEvent. It takes a `string` input, processes it through a series of typed steps, and outputs a `StepResult<CloudEvent>`.
+The Extractor is a standalone pipeline for extracting data from a source system, transforming it into a canonical model, and publishing it as a CloudEvent. It takes the raw bytes of the source item as input (`ReadOnlyMemory<byte>`), processes it through a series of typed steps, and outputs a `StepResult<CloudEvent>`.
 
-You call the Extractor's `Execute` method directly with a string input — there is no lifecycle manager or message subscription involved. The Extractor handles its own OpenTelemetry tracing (each execution creates a detached trace), idempotency, and business incident routing.
+You call the Extractor's `Execute` method directly with the item's raw bytes — there is no lifecycle manager or message subscription involved. The Extractor handles its own OpenTelemetry tracing (each execution creates a detached trace), idempotency, and business incident routing.
 
 The output is always a `CloudEvent`, which makes the Extractor well suited for publishing canonical data to topics or downstream services. Two built-in senders are included: `DaprTopicPublisher` for pub/sub and `DaprServiceInvoker` for service-to-service calls.
 
@@ -32,7 +32,7 @@ The output is always a `CloudEvent`, which makes the Extractor well suited for p
 
 The pipeline executes in this order:
 
-1. **Deserialize** (`string → TInput`) — Parse the raw string input into a typed object
+1. **Deserialize** (`ReadOnlyMemory<byte> → TInput`) — Parse the raw bytes into a typed object. Nothing decodes them first, so this step owns the encoding
 2. **Validate** (`TInput → TInput`) — Validate the parsed object
 3. **Extract** (`TInput → TInput`) — Enrich with additional data (optional, multiple allowed)
 4. **Idempotency Check** (`TInput → TInput`) — Check if this data was already processed
@@ -48,7 +48,7 @@ Each pipeline execution creates a detached OpenTelemetry trace (a new root span 
 
 ### DeserializeStep
 
-Extends `BusinessStep<string, TInput, TCtx>`. Converts string input to your typed model:
+Extends `BusinessStep<ReadOnlyMemory<byte>, TInput, TCtx>`. Converts the raw bytes to your typed model. The framework does not decode the bytes, so a file in any encoding reaches the step exactly as stored: decode text with the encoding your source uses, or give the bytes to a parser that reads them itself (`JsonSerializer` reads UTF-8, `XmlReader` and `StreamReader` detect a BOM or an XML declaration):
 
 ```csharp
 using Intropy.Framework.Blocks.Extractor.Steps;
@@ -56,9 +56,11 @@ using Intropy.Framework.Blocks.Extractor.Steps;
 public class CustomerDeserializer : DeserializeStep<CustomerRecord, Context>
 {
     public override Task<(BusinessStepResult<CustomerRecord> Result, Context Context)> ExecuteAsync(
-        string input, Context context)
+        ReadOnlyMemory<byte> input, Context context)
     {
-        var record = JsonSerializer.Deserialize<CustomerRecord>(input)!;
+        // UTF-8 JSON; for a text source in another encoding, decode first:
+        // Encoding.GetEncoding("iso-8859-1").GetString(input.Span)
+        var record = JsonSerializer.Deserialize<CustomerRecord>(input.Span)!;
         return Task.FromResult<(BusinessStepResult<CustomerRecord>, Context)>(
             (new BusinessStepResult<CustomerRecord>.Success(record), context));
     }
@@ -261,7 +263,7 @@ Then use `.WithSender(new HttpSender(httpClient))` instead of the Dapr methods.
 
 ## Executing the Extractor
 
-Call `Execute` with a string input and a context:
+Call `Execute` with the raw bytes and a context:
 
 ```csharp
 var context = new Context(new Dictionary<string, string>
@@ -269,7 +271,7 @@ var context = new Context(new Dictionary<string, string>
     ["message_id"] = "msg-123"
 });
 
-var (result, outputContext) = await extractor.Execute(inputString, context);
+var (result, outputContext) = await extractor.Execute(inputBytes, context);
 
 switch (result)
 {
@@ -326,22 +328,6 @@ one, and `OnAny` combined with routes by port all fail the registration. Before 
 each port's pipeline is built once, so a route that cannot be composed fails the run naming the
 route. The ports are swept one after another, in declaration order; a port that fails does not stop
 the others, but the run still fails, naming every port that failed.
-
-Files are decoded as UTF-8 before they reach the pipeline. A route whose files use another
-encoding sets it with the optional last argument of `On` and `OnAny`:
-
-```csharp
-routes => routes
-    .On<OrderFile, Order>(["orders-in"], ConfigureOrders, Encoding.Latin1)
-    .On<InvoiceFile, Invoice>(["invoices-in"], ConfigureInvoices)   // UTF-8
-```
-
-The encoding applies to every file of the route's ports. Decoding follows the encoding's own
-fallback, so bytes it cannot represent become `U+FFFD`, not an error; pass an encoding created with
-`Encoding.GetEncoding(name, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)`
-to fail the file instead. A file's own BOM is not interpreted: it decodes to a leading `U+FEFF`
-unless the encoding strips it. The single-pipeline `AddExtractor` overloads have no encoding
-setting and decode as UTF-8.
 
 ### What the routes add to each pipeline
 

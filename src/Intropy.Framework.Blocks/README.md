@@ -6,7 +6,7 @@ Each block is a ready-made pipeline shape for a common integration pattern:
 
 | Block | Input → Output | Use case |
 |-------|---------------|----------|
-| **Extractor** | `string` → `CloudEvent` | System-to-queue: extract data, transform, publish as CloudEvent |
+| **Extractor** | `byte[]` → `CloudEvent` | System-to-queue: extract data, transform, publish as CloudEvent |
 | **Loader** | `CloudEvent` → `TOutput` | Queue-to-system: consume CloudEvent, transform, send |
 | **TransactionalIntegration** | File-based | Receive files → enqueue → process → send, with idempotency |
 

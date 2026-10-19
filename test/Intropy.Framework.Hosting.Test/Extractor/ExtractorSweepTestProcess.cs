@@ -147,10 +147,10 @@ internal static class ExtractorSweepTestProcess
     internal sealed class DerivedDeserializer : DeserializeStep<ExtractorTestProcess.Input, DerivedContext>
     {
         public override Task<(BusinessStepResult<ExtractorTestProcess.Input> Result, DerivedContext Context)>
-            ExecuteAsync(string input, DerivedContext context, CancellationToken ct) =>
+            ExecuteAsync(ReadOnlyMemory<byte> input, DerivedContext context, CancellationToken ct) =>
             Task.FromResult<(BusinessStepResult<ExtractorTestProcess.Input>, DerivedContext)>(
                 (new BusinessStepResult<ExtractorTestProcess.Input>.Success(
-                    System.Text.Json.JsonSerializer.Deserialize<ExtractorTestProcess.Input>(input)!), context));
+                    System.Text.Json.JsonSerializer.Deserialize<ExtractorTestProcess.Input>(input.Span)!), context));
     }
 
     internal sealed class DerivedValidator : ValidateStep<ExtractorTestProcess.Input, DerivedContext>
@@ -352,10 +352,10 @@ internal static class ExtractorSweepTestProcess
         public ScopeCleanupOceDependency Dependency { get; } = dependency;
 
         public override Task<(BusinessStepResult<ExtractorTestProcess.Input> Result, ExtractorTestProcess.TestContext Context)>
-            ExecuteAsync(string input, ExtractorTestProcess.TestContext context, CancellationToken ct) =>
+            ExecuteAsync(ReadOnlyMemory<byte> input, ExtractorTestProcess.TestContext context, CancellationToken ct) =>
             Task.FromResult<(BusinessStepResult<ExtractorTestProcess.Input>, ExtractorTestProcess.TestContext)>(
                 (new BusinessStepResult<ExtractorTestProcess.Input>.Success(
-                    System.Text.Json.JsonSerializer.Deserialize<ExtractorTestProcess.Input>(input)!), context));
+                    System.Text.Json.JsonSerializer.Deserialize<ExtractorTestProcess.Input>(input.Span)!), context));
     }
 
     /// <summary>The four externals every sweep test fakes. Adapter overrides (for behaviors

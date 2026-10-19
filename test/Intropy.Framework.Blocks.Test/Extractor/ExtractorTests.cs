@@ -67,7 +67,7 @@ public class ExtractorTests
         var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider()).Build();
 
         // Act    
-        var (result, finalContext) = await pipeline.Execute(customerId, context);
+        var (result, finalContext) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId), context);
 
         // Assert 
         await _idempotencyServiceClient.ReceivedWithAnyArgs(1).GetStatusAsync(Arg.Any<MessageInfo>());
@@ -90,7 +90,7 @@ public class ExtractorTests
         var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider()).Build();
 
         // Act    
-        var (result, _) = await pipeline.Execute(customerId, context);
+        var (result, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId), context);
 
         // Assert 
         await _idempotencyServiceClient.ReceivedWithAnyArgs(1).GetStatusAsync(Arg.Any<MessageInfo>());
@@ -115,7 +115,7 @@ public class ExtractorTests
         var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider()).Build();
 
         // Act    
-        var (result, _) = await pipeline.Execute(customerId, context);
+        var (result, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId), context);
 
         // Assert 
         await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().CommitAsync(Arg.Any<MessageInfo>());
@@ -141,7 +141,7 @@ public class ExtractorTests
         var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider()).Build();
 
         // Act    
-        var (result, _) = await pipeline.Execute(customerId, context);
+        var (result, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId), context);
 
         // Assert 
         await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().CommitAsync(Arg.Any<MessageInfo>());
@@ -166,7 +166,7 @@ public class ExtractorTests
             .Build();
 
         // Act
-        var (result, finalContext) = await pipeline.Execute(customerId, context);
+        var (result, finalContext) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId), context);
 
         // Assert                       
         Assert.IsType<StepResult<CloudEvent>.Success>(result);
@@ -187,7 +187,7 @@ public class ExtractorTests
             .Build();
 
         // Act
-        var (result, _) = await pipeline.Execute(customerId, context);
+        var (result, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId), context);
 
         // Assert - envelope equivalent to the hand-rolled CustomerSerializer: same Subject
         // and Data, a fresh parseable Id, a set Time, and the default DataContentType
@@ -212,7 +212,7 @@ public class ExtractorTests
         var pipeline = GetPipelineBuilderWithoutExtractors(_serviceCollection.BuildServiceProvider()).Build();
 
         // Act
-        var (result, _) = await pipeline.Execute(customerId, context);
+        var (result, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId), context);
 
         // Assert 
         Assert.IsType<StepResult<CloudEvent>.Success>(result);

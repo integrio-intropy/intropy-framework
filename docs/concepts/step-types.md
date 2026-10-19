@@ -172,9 +172,8 @@ The Blocks package provides pre-named step abstractions for common integration p
 
 !!! warning "Namespace differences"
     The Send pipeline and Extractor have separate step abstractions in different
-    namespaces. `DeserializeStep` in the Send pipeline takes `ReadOnlyMemory<byte>`,
-    while in the Extractor it takes `string`. Import the correct namespace for your
-    block type.
+    namespaces. `DeserializeStep` in both takes `ReadOnlyMemory<byte>`. Import the
+    correct namespace for your block type.
 
 ## Choosing a step type
 

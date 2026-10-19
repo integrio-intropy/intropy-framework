@@ -101,7 +101,7 @@ public class ExtractorSourcePortTests
 
     private static Task<(StepResult<CloudEvent> Result, Context Context)> Execute(
         ExtractorBuilder<CustomerIn, CustomerOut, Context> builder) =>
-        builder.Build().Execute("1337", new Context(new Dictionary<string, string>()));
+        builder.Build().Execute("1337"u8.ToArray(), new Context(new Dictionary<string, string>()));
 
     private async Task AssertIdAsync(string expectedId)
     {

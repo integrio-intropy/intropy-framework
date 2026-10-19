@@ -228,10 +228,10 @@ Creates a new builder. Resolves `FrameworkOptions` and `ILoggerFactory` from the
 public ExtractorBuilder<TInput, TOutput, TCtx> WithDeserializer(DeserializeStep<TInput, TCtx> deserializer)
 ```
 
-Configures deserialization from `string` to `TInput`. **Required.**
+Configures deserialization from the raw bytes (`ReadOnlyMemory<byte>`) to `TInput`. **Required.** The bytes are not decoded beforehand, so the step owns the encoding.
 
 !!! note "Different from SendPipeline"
-    The Extractor's `DeserializeStep` takes `string` input, while the Send pipeline's takes `ReadOnlyMemory<byte>`. They are different types in different namespaces.
+    The Extractor's `DeserializeStep` and the Send pipeline's both take `ReadOnlyMemory<byte>`, but they are different types in different namespaces.
 
 ### WithValidator
 
