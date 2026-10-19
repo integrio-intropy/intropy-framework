@@ -470,6 +470,14 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// </summary>
     /// <remarks>
     /// <para>
+    /// Internal because the claim check has one control surface, and it is configuration: the
+    /// hosting layer calls this from the registered claim store (<c>AddClaimStore</c>) and the
+    /// component's <c>ClaimCheckMode</c> / <c>ClaimCheckThresholdBytes</c>. A pipeline cannot
+    /// configure its own, which is what makes <see cref="ClaimCheckMode.Never"/> a rollback an
+    /// operator can actually reach for: a threshold is the broker's maximum message size, and a
+    /// rollback code could veto would not be one.
+    /// </para>
+    /// <para>
     /// Consumers resolve the pointer on their own, from the claim store registered on them — there
     /// is nothing to configure in their pipelines. They do need that store configured, reachable and
     /// pointed at the same storage <em>before</em> this extractor starts claim-checking: an event
@@ -495,31 +503,15 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <param name="store">The claim store to write payloads to.</param>
     /// <param name="policy">When a payload is claim-checked: above a threshold, or always.</param>
     /// <returns>The builder for method chaining.</returns>
-    public ExtractorBuilder<TInput, TOutput, TCtx> WithClaimCheck(IFileAdapter store, ClaimCheckPolicy policy)
+    internal ExtractorBuilder<TInput, TOutput, TCtx> WithClaimCheck(IFileAdapter store, ClaimCheckPolicy policy)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(policy);
+        // The component name is half of every claim key and is known now, so an unusable one fails
+        // when the pipeline is composed rather than on the first payload large enough to be filed.
+        ClaimWriter.RequireComponentCanName(_frameworkOptions);
         _claimStore = store;
         _claimCheckPolicy = policy;
-        return this;
-    }
-
-    /// <summary>
-    /// Removes any claim check this builder has been given, so the pipeline publishes every payload
-    /// inside its envelope.
-    /// </summary>
-    /// <remarks>
-    /// Internal because it exists for one caller: the hosting layer applying
-    /// <see cref="ClaimCheckMode.Never"/>. That mode is the documented rollback — it has to stop new
-    /// claims whatever configured the check, including a pipeline that called
-    /// <see cref="WithClaimCheck"/> itself, or the rollback would silently do nothing for exactly
-    /// the component that needed it.
-    /// </remarks>
-    /// <returns>The builder for method chaining.</returns>
-    internal ExtractorBuilder<TInput, TOutput, TCtx> WithoutClaimCheck()
-    {
-        _claimStore = null;
-        _claimCheckPolicy = null;
         return this;
     }
 

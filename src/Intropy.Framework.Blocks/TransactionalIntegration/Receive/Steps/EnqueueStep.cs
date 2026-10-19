@@ -26,8 +26,23 @@ public abstract class EnqueueStep<TCtx>(FrameworkOptions options) : TechnicalSte
     /// the send span). <see langword="null"/> when unknown.</summary>
     protected virtual string? MessagingSystem => null;
 
-    /// <inheritdoc />
-    public sealed override async Task<(TechnicalStepResult<SourceItem> Result, TCtx Context)> ExecuteAsync(
+    /// <summary>
+    /// Builds the item's envelope, encodes it, and hands both to
+    /// <see cref="ExecuteAsync(SourceItem, ReadOnlyMemory{byte}, TCtx, CancellationToken)"/> under a
+    /// <c>send {destination}</c> span.
+    /// </summary>
+    /// <remarks>
+    /// An enqueuer that publishes somewhere new overrides the <c>cloudEvent</c> overload instead:
+    /// this one is the protocol, and implementing it again would mean a second way to build the
+    /// envelope. It is overridable only so a <em>decorator</em> can run before the envelope exists —
+    /// the claim check has to settle the payload while it can still be moved out of the message —
+    /// and such a decorator must delegate here rather than reimplement, or the item's envelope and
+    /// its send span stop being this class's to guarantee.
+    /// </remarks>
+    /// <param name="input">The item to publish.</param>
+    /// <param name="context">The context passed from the previous step.</param>
+    /// <param name="ct">A cancellation token that can be used to abort the step.</param>
+    public override async Task<(TechnicalStepResult<SourceItem> Result, TCtx Context)> ExecuteAsync(
         SourceItem input, TCtx context, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(input);

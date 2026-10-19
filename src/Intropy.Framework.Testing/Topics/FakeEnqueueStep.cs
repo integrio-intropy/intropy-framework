@@ -14,10 +14,12 @@ namespace Intropy.Framework.Testing.Topics;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The base class's sealed 3-arg <c>ExecuteAsync</c> builds the envelope exactly as production does
+/// The base class's item-level <c>ExecuteAsync</c> builds the envelope exactly as production does
 /// (context metadata, W3C trace propagation, JSON structured-mode encoding) and hands it to this
 /// override, so <see cref="CapturedEnqueue.Envelope"/> is the exact payload the real broker would
-/// have received. Decode it via <see cref="CapturedEnqueue.DecodeCloudEvent"/>.
+/// have received. Decode it via <see cref="CapturedEnqueue.DecodeCloudEvent"/>. A decorator — the
+/// claim check — may run ahead of that, but it delegates rather than reimplements, so the envelope
+/// captured here is still the one the base class built.
 /// </para>
 /// <para>
 /// Because this is a technical step, setting <see cref="SendException"/> surfaces as a technical
