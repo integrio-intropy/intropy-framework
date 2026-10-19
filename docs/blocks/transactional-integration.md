@@ -197,6 +197,13 @@ the trace context is attached, and Dapr adds attributes of its own (`topic`, `pu
 when it forwards the event, so the message the broker is handed is always somewhat larger than what
 the threshold was compared against.
 
+The claim key is `{component}/{yyyy}/{MM}/{dd}/{messageId}`, so both the component name and the
+message id must be one or more letters, digits, `.`, `-` or `_` — and neither `.` nor `..`. The
+framework mints the message id itself, so only the component name is yours to get right; a claim
+check refuses either by name, on the first item rather than on the first oversized one. The same
+constraint applies to the [Extractor](extractor.md#claim-check), where the id comes from the
+serialize step and so is also yours.
+
 A payload is written before its pointer is published, so a crash can orphan a payload but never
 leave a pointer to one that was never written.
 

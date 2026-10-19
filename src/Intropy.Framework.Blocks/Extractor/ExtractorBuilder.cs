@@ -499,6 +499,9 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(policy);
+        // The component name is half of every claim key and is known now, so an unusable one fails
+        // when the pipeline is composed rather than on the first payload large enough to be filed.
+        ClaimWriter.RequireComponentCanName(_frameworkOptions);
         _claimStore = store;
         _claimCheckPolicy = policy;
         return this;

@@ -87,36 +87,23 @@ internal sealed class ClaimCheckSend<TCtx>(
         if (string.IsNullOrEmpty(input.Id))
             input.Id = Guid.NewGuid().ToString();
 
-        // An id the key format cannot hold is refused by name, here, rather than as an
-        // ArgumentException about a "segment" from inside ClaimKey. Deliberately before the size
-        // decision below, so every event carrying data is checked rather than only the ones large
-        // enough to be claim-checked: an id scheme this pipeline cannot use is a configuration
-        // mistake, and finding it on the first event beats finding it weeks later, the first time a
-        // payload happens to grow past the threshold.
-        if (!ClaimKey.CanName(input.Id))
-            throw new InvalidOperationException(
-                $"CloudEvent id '{input.Id}' cannot be claim-checked: the id names the payload's key in the " +
-                "claim store, so it must be one or more letters, digits, '.', '-' or '_', and neither '.' nor " +
-                "'..'. Give the serialize step an id of that shape — the built-in CloudEventSerializeStep's " +
-                "GUIDs already are — or turn the claim check off for this extractor.");
+        // Checked before the size decision below, so every event carrying data is checked rather
+        // than only the ones large enough to be claim-checked: an id scheme this pipeline cannot use
+        // is a configuration mistake, and finding it on the first event beats finding it weeks
+        // later, the first time a payload happens to grow past the threshold. ClaimWriter refuses it
+        // by name; this call is what brings that refusal forward to every event.
+        ClaimWriter.RequireCanName(options, input.Id);
 
         var (payload, wireLength, binary) = Encode(input.Data, input.DataContentType);
-
-        var activity = Activity.Current;
-        activity?.SetTag("intropy.claim_check.payload_size", payload.Length);
 
         if (!WouldExceed(input, wireLength, binary))
         {
             // Small enough to ride inside the envelope: the event passes through unchanged.
-            activity?.SetTag("intropy.claim_check", false);
+            ClaimWriter.Inline(payload.Length);
             return await sender.ExecuteAsync(input, context, ct);
         }
 
-        var key = ClaimKey.For(options.ComponentName, _time.GetUtcNow(), input.Id);
-        activity?.SetTag("intropy.claim_check", true);
-        activity?.SetTag("intropy.claim_check.key", key);
-
-        await store.WriteAsync(key, payload, basePathOverride: null, ct);
+        var key = await ClaimWriter.WriteAsync(store, options, _time, input.Id, payload, ct);
 
         // Pointed at and cleared: the encoder omits an absent payload either way, but clearing it
         // means a wrong branch here publishes a small message rather than the oversized one this

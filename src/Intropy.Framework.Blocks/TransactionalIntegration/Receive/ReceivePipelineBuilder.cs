@@ -20,7 +20,7 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     private readonly ILogger _logger;
 
     private EnqueueStep<TCtx>? _enqueuer;
-    private ClaimCheckStep<TCtx>? _claimCheck;
+    private (IFileAdapter Store, ClaimCheckPolicy Policy)? _claimCheck;
     private BusinessIncidentRouteStep<SourceItem, TCtx>? _businessIncidentRouter;
 
     private ReceivePipelineBuilder(string pipelineName, FrameworkOptions frameworkOptions,
@@ -76,20 +76,12 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(policy);
-        _claimCheck = new ClaimCheckStep<TCtx>(store, policy, _frameworkOptions);
-        return this;
-    }
-
-    /// <summary>
-    /// Use this instead of <see cref="WithClaimCheck"/> to supply a custom
-    /// <see cref="ClaimCheckStep{TCtx}"/>.
-    /// </summary>
-    /// <param name="claimCheck">The claim check step to run before the enqueuer.</param>
-    /// <returns>The builder for method chaining.</returns>
-    public ReceivePipelineBuilder<TCtx> WithCustomClaimCheck(ClaimCheckStep<TCtx> claimCheck)
-    {
-        ArgumentNullException.ThrowIfNull(claimCheck);
-        _claimCheck = claimCheck;
+        // The component name is half of every claim key and is known now, so an unusable one fails
+        // when the pipeline is composed rather than on the first payload large enough to be filed.
+        ClaimWriter.RequireComponentCanName(_frameworkOptions);
+        // Kept rather than composed: the enqueuer it wraps may not be configured yet, so the two
+        // With* calls stay order-independent and Build() does the wrapping.
+        _claimCheck = (store, policy);
         return this;
     }
 
@@ -141,17 +133,24 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     /// <exception cref="InvalidOperationException">Thrown when any of the required steps are not configured.</exception>
     public ReceivePipeline<TCtx> Build()
     {
-        // The claim check and business incident routing are optional and are skipped at runtime when
-        // not configured (see ReceivePipeline using AddOptionalStep/AddOptionalFinalizer).
+        // Business incident routing is optional and skipped at runtime when not configured (see
+        // ReceivePipeline using AddOptionalFinalizer). The claim check is optional in a different
+        // way: without one the enqueuer is simply not wrapped.
         if (_enqueuer == null)
             throw new InvalidOperationException($"{nameof(EnqueueStep<TCtx>)} must be configured");
 
         return new ReceivePipeline<TCtx>(
             _pipelineName,
             _logger,
-            _enqueuer,
-            _claimCheck,
+            ClaimChecked(_enqueuer),
             _businessIncidentRouter
         );
     }
+
+    /// <summary><paramref name="enqueuer"/> wrapped in the configured claim check, or unchanged when
+    /// none is configured.</summary>
+    private EnqueueStep<TCtx> ClaimChecked(EnqueueStep<TCtx> enqueuer) =>
+        _claimCheck is { } claimCheck
+            ? new ClaimCheckEnqueue<TCtx>(enqueuer, claimCheck.Store, claimCheck.Policy, _frameworkOptions)
+            : enqueuer;
 }
