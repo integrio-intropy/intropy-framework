@@ -1,5 +1,4 @@
 using System.Text.Json;
-using CloudNative.CloudEvents;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Framework.Blocks.Loader.Steps;
 using Intropy.Framework.Blocks.Shared;
@@ -16,10 +15,10 @@ public sealed class JsonDeserializer<T> : DeserializeStep<T, Context>
     // The framework publishes camelCase payloads.
     private static readonly JsonSerializerOptions s_options = new(JsonSerializerDefaults.Web);
 
-    protected override Task<(BusinessStepResult<T> Result, Context Context)> DeserializeAsync(CloudEvent cloudEvent,
-        Context context)
+    public override Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(ReadOnlyMemory<byte> input,
+        Context context, CancellationToken ct)
     {
-        var value = JsonSerializer.Deserialize<T>(cloudEvent.Data?.ToString() ?? "", s_options)!;
+        var value = JsonSerializer.Deserialize<T>(input.Span, s_options)!;
         return Task.FromResult<(BusinessStepResult<T>, Context)>((new BusinessStepResult<T>.Success(value), context));
     }
 }
@@ -74,6 +73,10 @@ public sealed class RecordingSender<T> : SendStep<T, Context>
 
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>The context of the last message that reached the sender, for asserting on what the
+    /// host put there before the pipeline ran.</summary>
+    public Context? LastContext { get; private set; }
+
     public override async Task<(TechnicalStepResult<T> Result, Context Context)> ExecuteAsync(T input,
         Context context, CancellationToken ct)
     {
@@ -85,6 +88,7 @@ public sealed class RecordingSender<T> : SendStep<T, Context>
             throw Failure;
         if (Interlocked.Decrement(ref _failNext) >= 0)
             throw new InvalidOperationException("Destination unreachable (scripted failure)");
+        LastContext = context;
         lock (_sent) _sent.Add((input, context.IsRetry));
         return (new TechnicalStepResult<T>.Success(input), context);
     }

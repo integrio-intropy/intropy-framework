@@ -151,7 +151,7 @@ public class CustomerCloudEventSerializer : SerializeStep<CanonicalCustomer, Con
         {
             Subject = input.Id,                    // required by senders
             Time = DateTimeOffset.UtcNow,          // required by senders
-            Data = JsonSerializer.Serialize(input),
+            Data = input,                          // the object itself, not pre-serialized text
             DataContentType = "application/json"
         };
 
@@ -160,6 +160,16 @@ public class CustomerCloudEventSerializer : SerializeStep<CanonicalCustomer, Con
     }
 }
 ```
+
+!!! danger "Set `Data` to the object, never to pre-serialized text"
+    `Data` is the payload, not its encoding — the formatter serializes it when the event
+    is published. Assigning `JsonSerializer.Serialize(input)` publishes a JSON **string**
+    (`"data": "{\"orderId\":\"A1\"}"`), quoted and escaped, instead of a JSON object
+    (`"data": {"orderId":"A1"}`).
+
+    Consumers receive the `data` member verbatim, so a subscriber deserializing your
+    contract fails on the opening `"` with a `JsonException`. Set `Data = input`, or use
+    the built-in `CloudEventSerializeStep`, which does.
 
 !!! warning "Required CloudEvent properties"
     The built-in `DaprTopicPublisher` and `DaprServiceInvoker` throw

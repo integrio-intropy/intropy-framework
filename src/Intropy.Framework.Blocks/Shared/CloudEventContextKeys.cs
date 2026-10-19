@@ -1,32 +1,45 @@
 namespace Intropy.Framework.Blocks.Shared;
 
 /// <summary>
-/// Dictionary keys used for storing CloudEvent metadata in context.
+/// Dictionary keys the framework guarantees on the pipeline context for message-driven components
+/// (a loader consuming a CloudEvent from its topic).
 /// </summary>
-internal static class CloudEventContextKeys
+/// <remarks>
+/// The host projects the message's CloudEvent attributes onto the context before any step runs —
+/// before deserialization — so every step, idempotency and incident routing read the message's
+/// identity from one place. The payload itself travels as the pipeline's input, not on the context.
+/// </remarks>
+public static class CloudEventContextKeys
 {
     /// <summary>
     /// Context key for the CloudEvent ID.
     /// </summary>
-    internal const string Id = "cloudevent.id";
+    public const string Id = "cloudevent.id";
 
     /// <summary>
-    /// Context key for the CloudEvent subject.
+    /// Context key for the CloudEvent subject. The loader's idempotency uses it as the record ID.
     /// </summary>
-    internal const string Subject = "cloudevent.subject";
+    public const string Subject = "cloudevent.subject";
 
     /// <summary>
-    /// Context key for the CloudEvent time in ISO 8601 format.
+    /// Context key for the CloudEvent time, formatted as a UTC ISO 8601 round-trip timestamp
+    /// (<c>"O"</c>). The loader's idempotency uses it as the record date.
     /// </summary>
-    internal const string Time = "cloudevent.time";
+    public const string Time = "cloudevent.time";
 
     /// <summary>
     /// Context key for the CloudEvent source URI.
     /// </summary>
-    internal const string Source = "cloudevent.source";
+    public const string Source = "cloudevent.source";
 
     /// <summary>
     /// Context key for the CloudEvent type.
     /// </summary>
-    internal const string Type = "cloudevent.type";
+    public const string Type = "cloudevent.type";
+
+    /// <summary>
+    /// Context key for the CloudEvent data content type, which tells a deserializer how to read the
+    /// payload bytes the pipeline is given.
+    /// </summary>
+    public const string DataContentType = "cloudevent.datacontenttype";
 }

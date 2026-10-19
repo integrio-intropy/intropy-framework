@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using CloudNative.CloudEvents;
 using Grpc.Core;
@@ -194,16 +195,45 @@ public class LoaderTests
     }
 
     [Fact]
-    public async Task PayloadPublishedAsAJsonString_IsUnwrapped()
+    public async Task EveryCloudEventAttribute_IsOnTheContextBeforeThePipelineRuns()
     {
-        // A publisher that sends pre-serialized JSON text puts a JSON string inside the CloudEvent.
+        // The host projects the delivery's attributes; the pipeline only reads them. This is the
+        // production path — the Blocks tests cover the same projection from a whole CloudEvent, and
+        // the two must not drift.
+        await using var host = await LoaderHost.StartRoutingAsync();
+        var cloudEvent = Event(LoaderHost.Created, "ORD-1", Created("ORD-1"));
+
+        await host.DeliverAsync(cloudEvent);
+
+        var metadata = Assert.IsType<Context>(host.CreatedSender.LastContext).Metadata;
+        Assert.Equal(cloudEvent.Id, metadata[CloudEventContextKeys.Id]);
+        Assert.Equal("ORD-1", metadata[CloudEventContextKeys.Subject]);
+        Assert.Equal(cloudEvent.Source!.ToString(), metadata[CloudEventContextKeys.Source]);
+        Assert.Equal(LoaderHost.Created, metadata[CloudEventContextKeys.Type]);
+        Assert.Equal("application/json", metadata[CloudEventContextKeys.DataContentType]);
+        // Normalised to a round-trip timestamp, because idempotency reads it back as one.
+        Assert.Equal(cloudEvent.Time!.Value.ToUniversalTime(),
+            DateTimeOffset.Parse(metadata[CloudEventContextKeys.Time], CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind).ToUniversalTime());
+    }
+
+    [Fact]
+    public async Task PayloadPublishedAsAJsonString_ArrivesVerbatim()
+    {
+        // A publisher that sends pre-serialized JSON text puts a JSON *string* inside the CloudEvent,
+        // and the pipeline is handed the data member's bytes exactly as published: quoted and
+        // escaped. The framework does not guess that a quoted payload was meant to be unwrapped —
+        // that is what keeps an inline payload and a claim-checked one the same bytes. A publisher
+        // that wants a JSON object on the wire sets Data to the object (see CloudEventSerializeStep).
         await using var host = await LoaderHost.StartRoutingAsync();
 
-        var ack = await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1",
+        await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1",
             JsonSerializer.Serialize(Created("ORD-1"))));
 
-        Assert.Equal(DeliveryAck.Success, ack);
-        Assert.Equal("ORD-1", Assert.Single(host.CreatedSender.Sent).Value.OrderId);
+        // The quoted string does not deserialize into the contract, so nothing reaches the target.
+        // The delivery is still acked: that is a business failure, which a loader routes as an
+        // incident rather than leaving for redelivery.
+        Assert.Empty(host.CreatedSender.Sent);
     }
 
     [Fact]

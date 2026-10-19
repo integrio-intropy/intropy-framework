@@ -1,12 +1,12 @@
 # Loader
 
-> A standalone pipeline that receives a CloudEvent, transforms its data, and loads it into an external system.
+> A standalone pipeline that receives a message's payload, transforms it, and loads it into an external system.
 
 ## How it works
 
 ```mermaid
 graph LR
-    A[CloudEvent] --> B[Deserialize]
+    A[Payload bytes] --> B[Deserialize]
     B --> C["Extract(s)"]
     C --> D[Validate]
     D --> E[Idempotency Check]
@@ -18,9 +18,11 @@ graph LR
 ```
 
 
-The Loader is a standalone pipeline for loading canonical data into a target system. It takes a `CloudEvent` as input, deserializes the payload, optionally enriches it via extract steps, validates it, transforms it to the target model, and sends it to the external system. The output is a `StepResult<TOutput>`.
+The Loader is a standalone pipeline for loading canonical data into a target system. It takes the message's **payload bytes** as input, deserializes them, optionally enriches the result via extract steps, validates it, transforms it to the target model, and sends it to the external system. The output is a `StepResult<TOutput>`.
 
-You call the Loader's `Execute` method directly with a CloudEvent — there is no lifecycle manager or message subscription involved. The Loader handles its own OpenTelemetry tracing (each execution creates a detached trace), idempotency, and business incident routing.
+The message's own attributes — id, subject, time, source, type, data content type — travel on the context, not through the pipeline. Whoever runs the pipeline puts them there first: the hosting layer projects them from each delivery, and the `CloudEvent` overload of `Execute` does it for a standalone caller.
+
+You can call the Loader's `Execute` method directly — there is no lifecycle manager or message subscription involved. The Loader handles its own OpenTelemetry tracing, idempotency, and business incident routing. By default an execution continues the ambient trace, which is what a host sets up per message; pass `detachTrace: true` to start its own instead.
 
 The Loader is the natural counterpart to the Extractor: where the Extractor reads from a source and publishes CloudEvents, the Loader subscribes to CloudEvents and writes to a target. Together they form the two halves of a Golden Record pipeline.
 
@@ -33,21 +35,21 @@ The Loader is the natural counterpart to the Extractor: where the Extractor read
 
 The pipeline executes in this order:
 
-1. **Deserialize** (`CloudEvent → TInput`) — Extract CloudEvent metadata to context, then deserialize the payload into a typed object
+1. **Deserialize** (`ReadOnlyMemory<byte> → TInput`) — Deserialize the payload bytes into a typed object
 2. **Extract** (`TInput → TInput`) — Enrich with additional data (optional, multiple allowed)
 3. **Validate** (`TInput → TInput`) — Validate the enriched object
-4. **Idempotency Check** (`TInput → TInput`) — Check if this CloudEvent was already processed (uses `Subject` and `Time` from the CloudEvent)
+4. **Idempotency Check** (`TInput → TInput`) — Check if this message was already processed (uses `Subject` and `Time` from the context)
 5. **Transform** (`TInput → TOutput`) — Convert to the target system's model
 6. **Send** (`TOutput → TOutput`) — Send the data to the external system
 7. **Idempotency Record** — Record that this CloudEvent was processed (finalizer)
 8. **Send Receipt** (`TOutput → TOutput`) — Send a receipt after a successful load (optional step)
 9. **Business Incident Route** — Route any business incidents (finalizer)
 
-Each pipeline execution creates a detached OpenTelemetry trace (a new root span linked to the parent) via `PipelineTracing.ExecuteWithTracing`.
+Each pipeline execution is traced via `PipelineTracing.ExecuteWithTracing`, continuing the caller's trace unless `detachTrace: true` asks for a new root span linked to it.
 
-## CloudEvent metadata extraction
+## CloudEvent metadata on the context
 
-The `DeserializeStep` automatically extracts CloudEvent metadata into the context before your deserialization logic runs. These values are available in all subsequent steps via `context.Metadata`:
+The message's attributes are stamped onto the context **before any step runs** — by the hosting layer for a consumed message, or by the `CloudEvent` overload of `Execute` for a standalone caller. They are available to every step, deserialization included, via `context.Metadata`. Use the `CloudEventContextKeys` constants rather than the literal strings:
 
 | Context key | CloudEvent property | Example value |
 |-------------|-------------------|---------------|
@@ -56,34 +58,55 @@ The `DeserializeStep` automatically extracts CloudEvent metadata into the contex
 | `cloudevent.time` | `Time` | `"2025-01-15T10:30:00.0000000Z"` |
 | `cloudevent.source` | `Source` | `"urn:company:system:crm"` |
 | `cloudevent.type` | `Type` | `"com.company.customer.extracted"` |
+| `cloudevent.datacontenttype` | `DataContentType` | `"application/json"` |
 
-The idempotency checker uses `cloudevent.subject` as the ID and `cloudevent.time` as the date, so both `Subject` and `Time` must be set on the incoming CloudEvent.
+The idempotency checker uses `cloudevent.subject` as the ID and `cloudevent.time` as the date, so both must be on the context — which means both must be set on the incoming message. An attribute the message does not carry is left off the context rather than written empty, so a missing one fails where it is required instead of silently keying a record on nothing.
 
 ## Implementing steps
 
 ### DeserializeStep
 
-Extends `BusinessStep<CloudEvent, TInput, TCtx>`. The base class `ExecuteAsync` is **sealed** — it extracts CloudEvent metadata to context automatically, then calls your `DeserializeAsync` override:
+Extends `BusinessStep<ReadOnlyMemory<byte>, TInput, TCtx>`. It receives the bytes of the message's `data` member exactly as the publisher encoded them:
 
 ```csharp
 using Intropy.Framework.Blocks.Loader.Steps;
 
 public class CustomerDeserializer : DeserializeStep<CustomerRecord, Context>
 {
-    protected override Task<(BusinessStepResult<CustomerRecord> Result, Context Context)> DeserializeAsync(
-        CloudEvent cloudEvent, Context context)
+    // The framework publishes camelCase payloads.
+    private static readonly JsonSerializerOptions s_options = new(JsonSerializerDefaults.Web);
+
+    public override Task<(BusinessStepResult<CustomerRecord> Result, Context Context)> ExecuteAsync(
+        ReadOnlyMemory<byte> input, Context context, CancellationToken ct)
     {
-        var json = cloudEvent.Data?.ToString();
-        var record = JsonSerializer.Deserialize<CustomerRecord>(json!)!;
+        var record = JsonSerializer.Deserialize<CustomerRecord>(input.Span, s_options)!;
         return Task.FromResult<(BusinessStepResult<CustomerRecord>, Context)>(
             (new BusinessStepResult<CustomerRecord>.Success(record), context));
     }
 }
 ```
 
-!!! warning "Override DeserializeAsync, not ExecuteAsync"
-    `ExecuteAsync` is sealed on the Loader's `DeserializeStep`. Override `DeserializeAsync`
-    instead — this ensures CloudEvent metadata is always extracted before your code runs.
+Need the message's id, subject or content type? Read them from `context.Metadata` with the
+[`CloudEventContextKeys`](#cloudevent-metadata-on-the-context) constants — they are there before this
+step runs.
+
+!!! danger "Migrating from the CloudEvent-based DeserializeStep"
+    The pipeline's input changed from `CloudEvent` to the payload bytes. Three things to check:
+
+    1. **Override `ExecuteAsync`, not `DeserializeAsync`.** The sealed template is gone and you
+       get the `CancellationToken` back. The compiler catches this.
+    2. **Read attributes from the context.** Anything you took off the `CloudEvent` — `Id`,
+       `Subject`, `Type`, `Source`, `DataContentType` — is now `context.Metadata[CloudEventContextKeys.*]`.
+       The compiler catches this too.
+    3. **Check what your publisher sets as `Data`.** This one has *no* compile-time signal. The
+       payload now arrives verbatim, with nothing unwrapped. If the publisher assigns
+       pre-serialized text (`Data = JsonSerializer.Serialize(order)`) it is publishing a JSON
+       **string**, and your deserializer will throw a `JsonException` on the opening `"`. Fix the
+       publisher to assign the object (`Data = order`), as the
+       [Extractor](extractor.md#serializestep) docs now show.
+
+    Verbatim bytes are what let a payload carried inline and one fetched from a claim store be the
+    same bytes.
 
 ### ExtractStep (optional)
 
@@ -183,15 +206,15 @@ public class CrmApiSender : SendStep<CrmContact, Context>
 
 ## Idempotency
 
-The Loader's idempotency strategy is based on CloudEvent metadata, which means you don't need to provide ID or date extractors like you do with the Extractor or Send Pipeline.
+The Loader's idempotency strategy is based on the message's metadata on the context, which means you don't need to provide ID or date extractors like you do with the Extractor or Send Pipeline.
 
 The idempotency checker extracts:
 
-- **ID** from `CloudEvent.Subject` (stored in context by `DeserializeStep`)
-- **Date** from `CloudEvent.Time` (stored in context by `DeserializeStep`)
+- **ID** from `cloudevent.subject` (stamped on the context before any step runs)
+- **Date** from `cloudevent.time` (stamped on the context before any step runs)
 - **Hash** from the deserialized `TInput` payload
 
-If either `Subject` or `Time` is missing from the CloudEvent, the pipeline fails with a `TechnicalFailure`.
+If either is missing from the context, the pipeline fails with a `TechnicalFailure`.
 
 ### Hash generation
 
@@ -245,7 +268,7 @@ public class LoadReceiptPublisher : SendStep<CrmContact, Context>
             Time = DateTimeOffset.UtcNow,
             Source = new Uri("urn:company:system:loader"),
             Type = "com.company.contact.loaded",
-            Data = JsonSerializer.Serialize(input),
+            Data = input,                 // the object itself, not pre-serialized text
             DataContentType = "application/json"
         };
 
@@ -269,7 +292,7 @@ var loader = LoaderBuilder<CustomerRecord, CrmContact, Context>
     .WithIdempotency()
     .WithTransformer(new CustomerTransformer())
     .WithSender(new CrmApiSender(httpClient))
-    .WithBusinessIncidents(ctx => ctx.Metadata["cloudevent.id"])
+    .WithBusinessIncidents(ctx => ctx.Metadata[CloudEventContextKeys.Id])
     // Optional receipt sending:
     .WithReceiptSender(new LoadReceiptPublisher(daprClient))
     .Build();
@@ -290,7 +313,22 @@ The builder resolves these services from the `IServiceProvider`:
 
 ## Executing the Loader
 
-Call `Execute` with a CloudEvent and a context:
+`Execute` has two overloads. The primary one takes the payload bytes and a context that **already
+carries** the message's attributes — this is what the hosting layer calls, because a consumed
+message's payload does not always travel inside the message that names it:
+
+```csharp
+var context = new Context(new Dictionary<string, string>
+{
+    [CloudEventContextKeys.Subject] = "CUST-001",
+    [CloudEventContextKeys.Time] = DateTimeOffset.UtcNow.ToString("O")
+});
+
+var (result, outputContext) = await loader.Execute(payloadBytes, context);
+```
+
+The second takes a whole `CloudEvent`, projects its attributes onto the context and runs its
+payload through the pipeline — a convenience for standalone callers and tests:
 
 ```csharp
 var context = new Context(new Dictionary<string, string>());
@@ -303,7 +341,7 @@ switch (result)
         // success.Value is the sent object
         break;
     case StepResult<CrmContact>.Cancelled:
-        // Idempotency check found this CloudEvent was already processed
+        // Idempotency check found this message was already processed
         break;
     case StepResult<CrmContact>.BusinessFailure bf:
         // bf.Value is a BusinessIncident (routed automatically by the finalizer)

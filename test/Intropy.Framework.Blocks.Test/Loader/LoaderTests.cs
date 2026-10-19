@@ -186,7 +186,8 @@ public class LoaderTests
             Time = DateTimeOffset.UtcNow,
             Source = new Uri("urn:test:source"),
             Type = "com.test.customer.loaded",
-            Data = JsonSerializer.Serialize(new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" })
+            Data = new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" },
+            DataContentType = "application/json"
         };
         var context = GetInitialContext();
         var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider()).Build();
@@ -209,7 +210,8 @@ public class LoaderTests
             // Time is missing
             Source = new Uri("urn:test:source"),
             Type = "com.test.customer.loaded",
-            Data = JsonSerializer.Serialize(new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" })
+            Data = new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" },
+            DataContentType = "application/json"
         };
         var context = GetInitialContext();
         var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider()).Build();
@@ -341,7 +343,8 @@ public class LoaderTests
             Time = DateTimeOffset.UtcNow,
             Source = new Uri("urn:test:source"),
             Type = "com.test.customer.loaded",
-            Data = JsonSerializer.Serialize(new LoaderCustomerIn { CustomerId = customerId, Name = name })
+            Data = new LoaderCustomerIn { CustomerId = customerId, Name = name },
+            DataContentType = "application/json"
         };
     }
 
