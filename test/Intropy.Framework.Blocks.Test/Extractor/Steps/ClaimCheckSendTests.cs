@@ -130,6 +130,59 @@ public class ClaimCheckSendTests
         Assert.Equal(inline.RootElement.GetProperty("data").GetRawText(), Encoding.UTF8.GetString(written!));
     }
 
+    /// <summary>The <c>data</c> (or <c>data_base64</c>) member the formatter writes for
+    /// <paramref name="payload"/>, as its raw JSON text.</summary>
+    private static string InlineDataMember(object payload, out bool base64)
+    {
+        using var inline = JsonDocument.Parse(CloudEventFormat.Formatter.EncodeStructuredModeMessage(
+            new CloudEvent
+            {
+                Id = "evt-1", Source = Source, Type = Type, Subject = "ORD-1", Time = Now,
+                DataContentType = "application/json", Data = payload
+            }, out _).ToArray());
+        base64 = inline.RootElement.TryGetProperty("data_base64", out var b64);
+        return (base64 ? b64 : inline.RootElement.GetProperty("data")).GetRawText();
+    }
+
+    private static async Task<byte[]> StoredBytesAsync(object payload)
+    {
+        var (step, _, store) = StepWith(ClaimCheckPolicy.Always);
+        byte[]? written = null;
+        await store.WriteAsync(Arg.Any<string>(), Arg.Do<byte[]>(b => written = b), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>());
+        await step.ExecuteAsync(Event(payload), new Context([], false), CancellationToken.None);
+        return written!;
+    }
+
+    // A ReadOnlyMemory<byte> is not a shape the formatter moves to data_base64 — it has no case for
+    // it, so it serializes like any other value and lands in `data` as a quoted base64 string.
+    // Storing its raw bytes would hand the consumer something different depending only on size.
+    [Fact]
+    public async Task ExecuteAsync_StoresAReadOnlyMemoryPayload_AsTheQuotedBase64TheFormatterWrites()
+    {
+        var payload = new ReadOnlyMemory<byte>("abc"u8.ToArray());
+
+        var written = await StoredBytesAsync(payload);
+
+        Assert.Equal("\"YWJj\"", Encoding.UTF8.GetString(written));
+        Assert.Equal(InlineDataMember(payload, out var base64), Encoding.UTF8.GetString(written));
+        Assert.False(base64);
+    }
+
+    // The control: a byte[] is the one shape that does become data_base64, and there the consumer
+    // gets the decoded bytes — so the store holds them raw.
+    [Fact]
+    public async Task ExecuteAsync_StoresAByteArrayPayload_Raw_BecauseTheFormatterBase64sItSeparately()
+    {
+        var payload = "abc"u8.ToArray();
+
+        var written = await StoredBytesAsync(payload);
+
+        Assert.Equal("abc", Encoding.UTF8.GetString(written));
+        Assert.Equal("\"YWJj\"", InlineDataMember(payload, out var base64));
+        Assert.True(base64);
+    }
+
     // A byte[] payload is the one shape the formatter encodes as data_base64, which costs a third
     // more on the wire — so it has to be measured as base64, not as its raw length.
     [Fact]

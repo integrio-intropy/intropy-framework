@@ -116,15 +116,25 @@ internal sealed class ClaimCheckSend<TCtx>(
 
     /// <summary>The payload as the wire would carry it, and whether that is base64.</summary>
     /// <remarks>
+    /// <para>
     /// The bytes are what the formatter itself would write into <c>data</c> — same options, so a
-    /// consumer reads the same JSON whether the payload arrived inline or came back out of the
-    /// store. A <see cref="byte"/> array is the one shape the formatter encodes as
-    /// <c>data_base64</c> instead, which costs a third more on the wire and so is measured as such.
+    /// consumer reads the same thing whether the payload arrived inline or came back out of the
+    /// store. That equivalence is the whole contract, so every shape the formatter treats specially
+    /// has to be matched here rather than assumed.
+    /// </para>
+    /// <para>
+    /// A <see cref="byte"/> array is the only shape it moves to <c>data_base64</c>, which costs a
+    /// third more on the wire and so is measured as base64. A <see cref="ReadOnlyMemory{T}"/> of
+    /// bytes is <em>not</em> — the formatter has no case for it, so it goes through the serializer
+    /// like any other value and lands in <c>data</c> as a base64 JSON string, quotes included. It
+    /// therefore belongs on the JSON path here too, which produces exactly those bytes. (With a
+    /// non-JSON content type the formatter refuses it outright, so such an event never publishes
+    /// inline at all.)
+    /// </para>
     /// </remarks>
     private static (byte[] Payload, bool Binary) Encode(object data) => data switch
     {
         byte[] bytes => (bytes, true),
-        ReadOnlyMemory<byte> bytes => (bytes.ToArray(), true),
         _ => (JsonSerializer.SerializeToUtf8Bytes(data, CloudEventFormat.SerializerOptions), false)
     };
 
