@@ -19,6 +19,9 @@ internal sealed class SourcePortStamp<TCtx>(SendStep<TCtx> sender, string source
     public override string StepName => sender.StepName;
 
     /// <inheritdoc/>
+    protected internal override (Uri Source, string Type)? EnvelopeDefaults => sender.EnvelopeDefaults;
+
+    /// <inheritdoc/>
     public override Task<(TechnicalStepResult<CloudEvent> Result, TCtx Context)> ExecuteAsync(CloudEvent input,
         TCtx context, CancellationToken ct)
     {

@@ -60,8 +60,11 @@ internal sealed class DeclaredExtractorRoute<TInput, TOutput, TCtx>(
     {
         var name = match?.Describe();
         return Run(RouteComposition.Build("Extractor", name, componentName, () =>
-            configurePipeline(ExtractorBuilder<TInput, TOutput, TCtx>.Create(
-                    name is null ? $"{componentName}.Process" : $"{componentName}.Process.{name}", scope, port),
-                scope).Build()));
+            // The claim check goes on after the route's own configuration, the same as for an
+            // extractor without routes: every route of a component shares its claim-check settings.
+            ExtractorClaimCheck.Apply(
+                configurePipeline(ExtractorBuilder<TInput, TOutput, TCtx>.Create(
+                        name is null ? $"{componentName}.Process" : $"{componentName}.Process.{name}", scope, port),
+                    scope), scope).Build()));
     }
 }

@@ -1,5 +1,6 @@
 using CloudNative.CloudEvents;
 using Dapr.Client;
+using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Extractor.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.Shared.Steps;
@@ -42,6 +43,8 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private TransformStep<TInput, TOutput, TCtx>? _transformer;
     private SerializeStep<TOutput, TCtx>? _serializer;
     private SendStep<TCtx>? _sender;
+    private IFileAdapter? _claimStore;
+    private ClaimCheckPolicy? _claimCheckPolicy;
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
     private IdempotencyRecordStep<CloudEvent, TCtx>? _idempotencyRecorder;
     private BusinessIncidentRouteStep<CloudEvent, TCtx>? _businessIncidentRouter;
@@ -460,6 +463,39 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures the claim check: a payload too large for the broker is written to
+    /// <paramref name="store"/> before the event is published, and the event carries a pointer to it
+    /// (<c>dataref</c>) instead of the payload. Optional; without it every payload rides inside its
+    /// envelope, as before.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Consumers resolve the pointer on their own, from the claim store registered on them — there
+    /// is nothing to configure in their pipelines. They do need that store configured, reachable and
+    /// pointed at the same storage <em>before</em> this extractor starts claim-checking: an event
+    /// whose payload a consumer cannot fetch fails until the consumer catches up.
+    /// </para>
+    /// <para>
+    /// The sender has to declare the envelope attributes it supplies
+    /// (<see cref="SendStep{TCtx}.EnvelopeDefaults"/>), because the claim check encodes the envelope
+    /// to measure it and encoding refuses one missing its source or type. The built-in senders do,
+    /// however they are configured — including resolved from DI. A custom sender that declares none
+    /// is rejected when the extractor is built.
+    /// </para>
+    /// </remarks>
+    /// <param name="store">The claim store to write payloads to.</param>
+    /// <param name="policy">When a payload is claim-checked: above a threshold, or always.</param>
+    /// <returns>The builder for method chaining.</returns>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithClaimCheck(IFileAdapter store, ClaimCheckPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(policy);
+        _claimStore = store;
+        _claimCheckPolicy = policy;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="Extractor{TInput,TOutput,TContext}"/>.
     /// </summary>
     /// <returns>A configured instance of <see cref="Extractor{TInput,TOutput,TContext}"/></returns>
@@ -493,6 +529,11 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
             throw new InvalidOperationException(
                 "Business incident route step must be configured using WithBusinessIncidents()");
 
+        // Composed inside the source-port stamp so the port extension is on the envelope before it is
+        // measured: it is part of what the broker is handed, so it is part of what counts towards the
+        // threshold.
+        var sender = ClaimChecked(_sender);
+
         return new Extractor<TInput, TOutput, TCtx>(
             _pipelineName,
             _logger,
@@ -501,10 +542,30 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
             _validator,
             _transformer,
             _serializer,
-            _sourcePort is null ? _sender : new SourcePortStamp<TCtx>(_sender, _sourcePort),
+            _sourcePort is null ? sender : new SourcePortStamp<TCtx>(sender, _sourcePort),
             _idempotencyChecker,
             _idempotencyRecorder,
             _businessIncidentRouter
         );
+    }
+
+    /// <summary><paramref name="sender"/> wrapped in the configured claim check, or unchanged when
+    /// none is configured.</summary>
+    /// <exception cref="InvalidOperationException">A claim check is configured on a sender that
+    /// declares no envelope attributes. It fails here rather than at the first oversized payload,
+    /// which could be days into a deployment.</exception>
+    private SendStep<TCtx> ClaimChecked(SendStep<TCtx> sender)
+    {
+        if (_claimStore is null || _claimCheckPolicy is null)
+            return sender;
+
+        if (sender.EnvelopeDefaults is not { } envelope)
+            throw new InvalidOperationException(
+                $"WithClaimCheck() cannot be used with {sender.GetType().Name}: the claim check measures the " +
+                "encoded envelope to decide, and encoding needs the source and type the send step supplies, " +
+                $"but {nameof(SendStep<TCtx>)}.{nameof(SendStep<TCtx>.EnvelopeDefaults)} is null. The built-in " +
+                "senders declare theirs; override it on a custom sender to make it claim-checkable.");
+
+        return new ClaimCheckSend<TCtx>(sender, _claimStore, _claimCheckPolicy, _frameworkOptions, envelope);
     }
 }

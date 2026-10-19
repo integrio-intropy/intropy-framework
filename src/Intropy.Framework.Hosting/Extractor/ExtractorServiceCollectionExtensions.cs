@@ -37,24 +37,27 @@ public static class ExtractorServiceCollectionExtensions
     /// <param name="contextFactory">Creates the context for each source file.</param>
     /// <param name="configureJob">Optional runner settings: the job name (default: the component
     /// name) and the sidecar timeouts.</param>
+    /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
+    /// anything configuration supplied.</param>
     public static IServiceCollection AddExtractor<TInput, TOutput, TCtx>(
         this IServiceCollection services,
         Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
         ContextFactory<TCtx> contextFactory,
-        Action<JobOptions>? configureJob = null) where TCtx : Context
+        Action<JobOptions>? configureJob = null,
+        Action<ExtractorOptions>? configureOptions = null) where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configurePipeline);
         ArgumentNullException.ThrowIfNull(contextFactory);
         ComponentRegistration.EnsureNoOther(services, "extractor");
-        return AddExtractorCore(services, configurePipeline, contextFactory, configureJob);
+        return AddExtractorCore(services, configurePipeline, contextFactory, configureJob, configureOptions);
     }
 
     /// <summary>
     /// Registers one extractor component whose pipelines use the base <see cref="Context"/>. See
     /// <see cref="AddExtractor{TInput,TOutput,TCtx}(IServiceCollection,
     /// Func{ExtractorBuilder{TInput,TOutput,TCtx}, IServiceProvider, ExtractorBuilder{TInput,TOutput,TCtx}},
-    /// ContextFactory{TCtx}, Action{JobOptions}?)"/>; the context factory — plain
+    /// ContextFactory{TCtx}, Action{JobOptions}?, Action{ExtractorOptions}?)"/>; the context factory — plain
     /// <see cref="Context"/> records for each source file — is provided for you.
     /// </summary>
     /// <typeparam name="TInput">The deserialized input.</typeparam>
@@ -63,16 +66,19 @@ public static class ExtractorServiceCollectionExtensions
     /// <param name="configurePipeline">Configures the pipeline builder, given the file's scope.</param>
     /// <param name="configureJob">Optional runner settings: the job name (default: the component
     /// name) and the sidecar timeouts.</param>
+    /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
+    /// anything configuration supplied.</param>
     public static IServiceCollection AddExtractor<TInput, TOutput>(
         this IServiceCollection services,
         Func<ExtractorBuilder<TInput, TOutput, Context>, IServiceProvider, ExtractorBuilder<TInput, TOutput, Context>> configurePipeline,
-        Action<JobOptions>? configureJob = null)
+        Action<JobOptions>? configureJob = null,
+        Action<ExtractorOptions>? configureOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configurePipeline);
         ComponentRegistration.EnsureNoOther(services, "extractor");
         return AddExtractorCore(services, configurePipeline,
-            static (metadata, isRetry) => new Context(metadata, isRetry), configureJob);
+            static (metadata, isRetry) => new Context(metadata, isRetry), configureJob, configureOptions);
     }
 
     /// <typeparam name="TInput">The deserialized input.</typeparam>
@@ -125,7 +131,8 @@ public static class ExtractorServiceCollectionExtensions
         ComponentRegistration.EnsureNoOther(services, "extractor");
         if (definition.SourcePort is { } port)
             services.AddSourcePort(port, definition.Completion);
-        return AddExtractorCore(services, pipeline, contextFactory, definition.ConfigureJob);
+        return AddExtractorCore(services, pipeline, contextFactory, definition.ConfigureJob,
+            definition.Configure);
     }
 
     /// <summary>
@@ -156,9 +163,12 @@ public static class ExtractorServiceCollectionExtensions
     /// <exception cref="InvalidOperationException">No source or route is declared; a route for every
     /// file is combined with other routes; a route names an undeclared port, a port is routed twice
     /// or not at all; a source port or an extractor is already registered.</exception>
+    /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
+    /// anything configuration supplied.</param>
     public static IServiceCollection AddExtractor<TCtx>(this IServiceCollection services,
         Action<FileSources> configureSources, Action<ExtractorRoutes<TCtx>> configureRoutes,
-        ContextFactory<TCtx> contextFactory, Action<JobOptions>? configureJob = null) where TCtx : Context
+        ContextFactory<TCtx> contextFactory, Action<JobOptions>? configureJob = null,
+        Action<ExtractorOptions>? configureOptions = null) where TCtx : Context
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configureSources);
@@ -177,13 +187,13 @@ public static class ExtractorServiceCollectionExtensions
         // Startup guarantees exactly one route per port.
         var declared = routes.Routes.ToList();
         return AddJob(services, port => declared.Single(r => r.Match is null || r.Match.Matches(port.Name)),
-            contextFactory, configureJob);
+            contextFactory, configureJob, configureOptions);
     }
 
     /// <summary>
     /// Registers one extractor component with routes, whose pipelines use the base
     /// <see cref="Context"/>. See
-    /// <see cref="AddExtractor{TCtx}(IServiceCollection, Action{FileSources}, Action{ExtractorRoutes{TCtx}}, ContextFactory{TCtx}, Action{JobOptions}?)"/>;
+    /// <see cref="AddExtractor{TCtx}(IServiceCollection, Action{FileSources}, Action{ExtractorRoutes{TCtx}}, ContextFactory{TCtx}, Action{JobOptions}?, Action{ExtractorOptions}?)"/>;
     /// the context factory — plain <see cref="Context"/> records for each source file — is provided
     /// for you.
     /// </summary>
@@ -193,28 +203,38 @@ public static class ExtractorServiceCollectionExtensions
     /// <param name="configureJob">Optional runner settings: the job name (default: the component
     /// name) and the sidecar timeouts.</param>
     /// <returns>The service collection, for chaining.</returns>
+    /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
+    /// anything configuration supplied.</param>
     public static IServiceCollection AddExtractor(this IServiceCollection services,
         Action<FileSources> configureSources, Action<ExtractorRoutes<Context>> configureRoutes,
-        Action<JobOptions>? configureJob = null) =>
+        Action<JobOptions>? configureJob = null, Action<ExtractorOptions>? configureOptions = null) =>
         services.AddExtractor(configureSources, configureRoutes,
-            static (metadata, isRetry) => new Context(metadata, isRetry), configureJob);
+            static (metadata, isRetry) => new Context(metadata, isRetry), configureJob, configureOptions);
 
     // Without routes: the one registered pipeline handles every file.
     private static IServiceCollection AddExtractorCore<TInput, TOutput, TCtx>(
         IServiceCollection services,
         Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,
         ContextFactory<TCtx> contextFactory,
-        Action<JobOptions>? configureJob) where TCtx : Context
+        Action<JobOptions>? configureJob,
+        Action<ExtractorOptions>? configureOptions) where TCtx : Context
     {
         services.AddScoped(provider => BuildPipeline(provider, configurePipeline));
         var route = new RegisteredExtractorRoute<TInput, TOutput, TCtx>();
-        return AddJob(services, _ => route, contextFactory, configureJob);
+        return AddJob(services, _ => route, contextFactory, configureJob, configureOptions);
     }
 
     private static IServiceCollection AddJob<TCtx>(IServiceCollection services,
         Func<SourcePort, ExtractorRoute<TCtx>> routeFor, ContextFactory<TCtx> contextFactory,
-        Action<JobOptions>? configureJob) where TCtx : Context
+        Action<JobOptions>? configureJob, Action<ExtractorOptions>? configureOptions) where TCtx : Context
     {
+        // Resolved and validated here, at registration, so a threshold that could never be met fails
+        // before the job exists rather than on the first oversized payload.
+        var options = new ExtractorOptions();
+        configureOptions?.Invoke(options);
+        options.EnsureValidClaimCheckThreshold(nameof(configureOptions));
+        services.AddSingleton(options);
+
         services.AddSingleton(provider => new ExtractorJob<TCtx>(provider,
             provider.GetRequiredService<FrameworkOptions>(), routeFor, contextFactory,
             provider.GetRequiredService<ILoggerFactory>()));
@@ -232,7 +252,9 @@ public static class ExtractorServiceCollectionExtensions
         try
         {
             var builder = ExtractorBuilder<TInput, TOutput, TCtx>.Create($"{componentName}.Process", provider);
-            return configurePipeline(builder, provider).Build();
+            // The claim check goes on after the component's own configuration: it is the
+            // deployment's decision, not the pipeline's, and a component never mentions it.
+            return ExtractorClaimCheck.Apply(configurePipeline(builder, provider), provider).Build();
         }
         catch (InvalidOperationException error)
         {

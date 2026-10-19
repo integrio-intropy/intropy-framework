@@ -62,6 +62,11 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
     /// sidecar timeouts.</summary>
     public Action<JobOptions>? ConfigureJob { get; init; }
 
+    /// <summary>Optional extractor settings: the claim check. In the configuration-bound
+    /// registration this runs after the configuration has been applied, so code set here wins over
+    /// the section.</summary>
+    public Action<ExtractorOptions>? Configure { get; init; }
+
     /// <summary>Checks the definition and returns the registration-ready pipeline configurator, so
     /// callers fail fast with the offending member instead of a null dereference when the first
     /// file is composed.</summary>
@@ -87,7 +92,8 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
     /// configuration supplies the <see cref="SourcePort"/> when the factory's definition leaves it
     /// unset, then the factory's definition wins for everything it sets.</summary>
     /// <remarks>
-    /// The section's <c>SourcePort</c> key names the port to sweep. <see cref="Completion"/>
+    /// The section's <c>SourcePort</c> key names the port to sweep, and its <c>ClaimCheckMode</c>
+    /// and <c>ClaimCheckThresholdBytes</c> keys the claim check. <see cref="Completion"/>
     /// binds only in code: it carries behavior, not a value configuration can express.
     /// </remarks>
     /// <param name="configuration">The section holding the extractor's values.</param>
@@ -113,6 +119,13 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
             ContextFactory = source.ContextFactory,
             ConfigureJob = source.ConfigureJob,
             Completion = source.Completion,
+            // Configuration first, then the code's own: a deployment sets the claim check, and a
+            // component that insists on a value overrides it.
+            Configure = options =>
+            {
+                options.Bind(configuration);
+                source.Configure?.Invoke(options);
+            },
         };
     }
 }

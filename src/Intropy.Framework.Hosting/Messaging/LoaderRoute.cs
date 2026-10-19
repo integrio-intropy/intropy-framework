@@ -31,12 +31,14 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
             await using var scope = scopes.CreateAsyncScope();
             var pipeline = Build(scope.ServiceProvider, componentName);
             // The message's attributes go on the context before its payload is chosen, and the two
-            // are read from different places on purpose: a message does not always carry the payload
-            // it names. The pipeline's input is whatever ResolvePayload returns; nothing downstream
-            // knows where it came from.
+            // are read from different places on purpose: a claim-checked message does not carry the
+            // payload it names. Only the attributes are read from the message itself; the payload is
+            // whatever ClaimResolution hands back, and nothing downstream knows where it came from.
+            // Resolution happens here rather than earlier so an unrouted message never pays a fetch:
+            // the route table matched on the event type, which a claim-checked message still carries.
             var context = ContextCreation.Create(contextFactory, ProjectAttributes(message), message.IsRetry,
                 componentName, message.MessageId);
-            var payload = ResolvePayload(message);
+            var payload = await ClaimResolution.ResolveAsync(message, scope.ServiceProvider, cancellationToken);
             var (result, _) = await pipeline.Execute(payload, context, detachTrace: false, cancellationToken);
             return PipelineOutcome.From(result, interrupt);
         }
@@ -45,10 +47,6 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
             return PipelineOutcome.FromException(e, interrupt, cancellationToken);
         }
     }
-
-    /// <summary>The message's payload: the bytes of its <c>data</c> member, as the publisher encoded
-    /// them and with nothing unwrapped, so what a deserializer reads is what was published.</summary>
-    private static ReadOnlyMemory<byte> ResolvePayload(IncomingMessage message) => message.Data;
 
     /// <summary>
     /// The message's CloudEvent attributes, as the context metadata the pipeline reads them from
