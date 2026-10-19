@@ -67,12 +67,21 @@ public class ReceivePipelineBuilder<TCtx> where TCtx : Context
     /// <paramref name="store"/> before the enqueuer runs, and the message carries a pointer to it
     /// instead of the payload. Optional; without it every payload rides inside its envelope, as before.
     /// </summary>
-    /// <remarks>The send side resolves the pointer on its own, from the claim store registered on the
-    /// component — there is nothing to configure there.</remarks>
+    /// <remarks>
+    /// <para>
+    /// Internal because the claim check has one control surface, and it is configuration: the
+    /// hosting layer calls this from the registered claim store (<c>AddClaimStore</c>) and the
+    /// integration's <c>ClaimCheckMode</c> / <c>ClaimCheckThresholdBytes</c>. A pipeline cannot
+    /// configure its own, which is what makes <see cref="ClaimCheckMode.Never"/> a rollback an
+    /// operator can actually reach for.
+    /// </para>
+    /// <para>The send side resolves the pointer on its own, from the claim store registered on the
+    /// component — there is nothing to configure there.</para>
+    /// </remarks>
     /// <param name="store">The claim store to write payloads to.</param>
     /// <param name="policy">When a payload is claim-checked: above a threshold, or always.</param>
     /// <returns>The builder for method chaining.</returns>
-    public ReceivePipelineBuilder<TCtx> WithClaimCheck(IFileAdapter store, ClaimCheckPolicy policy)
+    internal ReceivePipelineBuilder<TCtx> WithClaimCheck(IFileAdapter store, ClaimCheckPolicy policy)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(policy);

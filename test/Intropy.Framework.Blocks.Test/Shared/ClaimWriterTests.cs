@@ -154,7 +154,7 @@ public class ClaimWriterTests
         // Filtered by parent, not just by name: the listener sees the whole Blocks source, and other
         // test classes in this assembly run in parallel and start ClaimCheck spans of their own.
         var claimCheck = Assert.Single(started, a => a.ParentSpanId == step.SpanId);
-        Assert.Equal("ClaimCheck", claimCheck.OperationName);
+        Assert.Equal(ClaimCheckSpanName, claimCheck.OperationName);
         Assert.Equal(key, claimCheck.GetTagItem("intropy.claim_check.key"));
     }
 
@@ -213,9 +213,18 @@ public class ClaimWriterTests
             ActivityStarted = a => started?.Add(a),
             ShouldListenTo = source =>
                 source.Name is "Intropy.Framework.Blocks.Test" or "Intropy.Framework.Blocks",
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            // Narrow on purpose. A listener is global and its vote makes an activity sampled for
+            // everyone, so sampling the whole Blocks source would create spans in test classes
+            // running in parallel that assert on their absence — DaprTopicPublisherTests has one
+            // whose premise is that nothing listens to that source.
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+                options.Source.Name == "Intropy.Framework.Blocks" && options.Name != ClaimCheckSpanName
+                    ? ActivitySamplingResult.None
+                    : ActivitySamplingResult.AllDataAndRecorded,
         };
         ActivitySource.AddActivityListener(listener);
         return listener;
     }
+
+    private const string ClaimCheckSpanName = "ClaimCheck";
 }
