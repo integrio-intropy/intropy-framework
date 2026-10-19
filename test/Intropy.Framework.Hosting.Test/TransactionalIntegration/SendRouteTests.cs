@@ -31,7 +31,7 @@ public class SendRouteTests
     private static IncomingMessage Message(string id = "msg-1", IDictionary<string, string>? extensions = null) =>
         IncomingMessage.From(MessageConsumerTests.Request(id, extensions: extensions));
 
-    private void PipelineReturns(StepResult<string> result) =>
+    private void PipelineReturns(StepResult<byte[]> result) =>
         _pipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<OrderContext>(), Arg.Any<CancellationToken>())
             .Returns(call => (result, call.Arg<OrderContext>()));
 
@@ -41,7 +41,7 @@ public class SendRouteTests
         OrderContext? received = null;
         _pipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Do<OrderContext>(c => received = c),
                 Arg.Any<CancellationToken>())
-            .Returns(call => ((StepResult<string>)new StepResult<string>.Success(""), call.Arg<OrderContext>()));
+            .Returns(call => ((StepResult<byte[]>)new StepResult<byte[]>.Success([]), call.Arg<OrderContext>()));
 
         await Processor().HandleAsync(Message("msg-1", new Dictionary<string, string>
         {
@@ -65,7 +65,7 @@ public class SendRouteTests
         var received = new List<OrderContext>();
         _pipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Do<OrderContext>(received.Add),
                 Arg.Any<CancellationToken>())
-            .Returns(call => ((StepResult<string>)new StepResult<string>.Success(""), call.Arg<OrderContext>()));
+            .Returns(call => ((StepResult<byte[]>)new StepResult<byte[]>.Success([]), call.Arg<OrderContext>()));
 
         await Processor().HandleAsync(Message("msg-1"), null, CancellationToken.None, CancellationToken.None);
         await Processor().HandleAsync(Message("msg-2"), null, CancellationToken.None, CancellationToken.None);
@@ -81,27 +81,27 @@ public class SendRouteTests
         ReadOnlyMemory<byte>? data = null;
         _pipeline.Execute(Arg.Do<ReadOnlyMemory<byte>>(d => data = d), Arg.Any<OrderContext>(),
                 Arg.Any<CancellationToken>())
-            .Returns(call => ((StepResult<string>)new StepResult<string>.Success(""), call.Arg<OrderContext>()));
+            .Returns(call => ((StepResult<byte[]>)new StepResult<byte[]>.Success([]), call.Arg<OrderContext>()));
 
         await Processor().HandleAsync(Message(), null, CancellationToken.None, CancellationToken.None);
 
         Assert.Equal("{}", System.Text.Encoding.UTF8.GetString(data!.Value.Span));
     }
 
-    public static TheoryData<StepResult<string>, string, string?> ResultsAndOutcomes => new()
+    public static TheoryData<StepResult<byte[]>, string, string?> ResultsAndOutcomes => new()
     {
-        { new StepResult<string>.Success(""), nameof(MessageOutcome.Processed), null },
-        { new StepResult<string>.Cancelled(), nameof(MessageOutcome.Skipped), null },
-        { new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed")), nameof(MessageOutcome.Failed), "technical_failure" },
+        { new StepResult<byte[]>.Success([]), nameof(MessageOutcome.Processed), null },
+        { new StepResult<byte[]>.Cancelled(), nameof(MessageOutcome.Skipped), null },
+        { new StepResult<byte[]>.TechnicalFailure(new TechnicalFailure("send failed")), nameof(MessageOutcome.Failed), "technical_failure" },
         // A Transactional Integration leaves a business failure for redelivery too.
-        { new StepResult<string>.BusinessFailure(new BusinessIncidentData { Description = "rejected", Context = [] }), nameof(MessageOutcome.Failed), "business_failure" },
+        { new StepResult<byte[]>.BusinessFailure(new BusinessIncidentData { Description = "rejected", Context = [] }), nameof(MessageOutcome.Failed), "business_failure" },
         // Aborted without being interrupted: for example the processing time limit.
-        { new StepResult<string>.Aborted(), nameof(MessageOutcome.Failed), "aborted" }
+        { new StepResult<byte[]>.Aborted(), nameof(MessageOutcome.Failed), "aborted" }
     };
 
     [Theory]
     [MemberData(nameof(ResultsAndOutcomes))]
-    public async Task HandleAsync_MapsThePipelinesResultToTheMessagesOutcome(StepResult<string> result,
+    public async Task HandleAsync_MapsThePipelinesResultToTheMessagesOutcome(StepResult<byte[]> result,
         string outcome, string? errorType)
     {
         PipelineReturns(result);
@@ -115,7 +115,7 @@ public class SendRouteTests
     [Fact]
     public async Task HandleAsync_AnAbortedPipeline_IsAnInterruption_WhenTheConsumerInterruptedIt()
     {
-        PipelineReturns(new StepResult<string>.Aborted());
+        PipelineReturns(new StepResult<byte[]>.Aborted());
         using var interrupt = new CancellationTokenSource();
         await interrupt.CancelAsync();
 
@@ -128,7 +128,7 @@ public class SendRouteTests
     [Fact]
     public async Task HandleAsync_WithoutRoutes_ReportsNoRouteName()
     {
-        PipelineReturns(new StepResult<string>.Success(""));
+        PipelineReturns(new StepResult<byte[]>.Success([]));
 
         var handled = await Processor().HandleAsync(Message(), null, CancellationToken.None, CancellationToken.None);
 

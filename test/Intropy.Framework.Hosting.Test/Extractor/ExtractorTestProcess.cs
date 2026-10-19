@@ -65,11 +65,11 @@ internal static class ExtractorTestProcess
     internal sealed class Deserializer(ScopedDependency dependency) : DeserializeStep<Input, TestContext>
     {
         public ScopedDependency Dependency { get; } = dependency;
-        public override Task<(BusinessStepResult<Input> Result, TestContext Context)> ExecuteAsync(string input, TestContext context, CancellationToken ct)
+        public override Task<(BusinessStepResult<Input> Result, TestContext Context)> ExecuteAsync(ReadOnlyMemory<byte> input, TestContext context, CancellationToken ct)
         {
             context.Steps.Add("deserialize");
             context.DependencyId = Dependency.Id;
-            return Task.FromResult<(BusinessStepResult<Input>, TestContext)>((new BusinessStepResult<Input>.Success(JsonSerializer.Deserialize<Input>(input)!), context));
+            return Task.FromResult<(BusinessStepResult<Input>, TestContext)>((new BusinessStepResult<Input>.Success(JsonSerializer.Deserialize<Input>(input.Span)!), context));
         }
     }
 

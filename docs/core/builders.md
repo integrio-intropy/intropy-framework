@@ -59,7 +59,7 @@ Configures transformation from `TInput` to `TOutput`. **Required.**
 public SendPipelineBuilder<TInput, TOutput, TCtx> WithSerializer(SerializeStep<TOutput, TCtx> serializer)
 ```
 
-Configures serialization from `TOutput` to `string`. **Required.**
+Configures serialization from `TOutput` to `byte[]`. **Required.** The bytes are sent as they are, so the serializer owns the encoding.
 
 ### WithSender
 
@@ -67,7 +67,7 @@ Configures serialization from `TOutput` to `string`. **Required.**
 public SendPipelineBuilder<TInput, TOutput, TCtx> WithSender(SendStep<TCtx> sender)
 ```
 
-Configures sending (`string` to `string`). **Required.**
+Configures sending (`byte[]` to `byte[]`). **Required.**
 
 ### WithIdempotency
 
@@ -93,7 +93,7 @@ Configures automatic idempotency using the external idempotency service. Sets up
 ```csharp
 public SendPipelineBuilder<TInput, TOutput, TCtx> WithCustomIdempotency(
     IdempotencyCheckStep<TInput, TCtx> idempotencyCheckStep,
-    IdempotencyRecordStep<string, TCtx> idempotencyRecorder)
+    IdempotencyRecordStep<byte[], TCtx> idempotencyRecorder)
 ```
 
 Uses custom idempotency implementations instead of the built-in external service.
@@ -117,7 +117,7 @@ Configures automatic business incident routing. On business failure, routes the 
 
 ```csharp
 public SendPipelineBuilder<TInput, TOutput, TCtx> WithCustomBusinessIncidents(
-    BusinessIncidentRouteStep<string, TCtx> businessIncidentRouteStep)
+    BusinessIncidentRouteStep<byte[], TCtx> businessIncidentRouteStep)
 ```
 
 Uses a custom business incident router instead of the built-in external service.
@@ -228,10 +228,10 @@ Creates a new builder. Resolves `FrameworkOptions` and `ILoggerFactory` from the
 public ExtractorBuilder<TInput, TOutput, TCtx> WithDeserializer(DeserializeStep<TInput, TCtx> deserializer)
 ```
 
-Configures deserialization from `string` to `TInput`. **Required.**
+Configures deserialization from the raw bytes (`ReadOnlyMemory<byte>`) to `TInput`. **Required.** The bytes are not decoded beforehand, so the step owns the encoding.
 
 !!! note "Different from SendPipeline"
-    The Extractor's `DeserializeStep` takes `string` input, while the Send pipeline's takes `ReadOnlyMemory<byte>`. They are different types in different namespaces.
+    The Extractor's `DeserializeStep` and the Send pipeline's both take `ReadOnlyMemory<byte>`, but they are different types in different namespaces.
 
 ### WithValidator
 

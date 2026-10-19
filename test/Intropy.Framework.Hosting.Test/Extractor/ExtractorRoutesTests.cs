@@ -1,4 +1,3 @@
-using System.Text;
 using CloudNative.CloudEvents;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
@@ -66,48 +65,19 @@ public class ExtractorRoutesTests
     }
 
     [Fact]
-    public async Task Run_DecodesEachRoutesFilesWithItsEncoding()
+    public async Task Run_PassesTheFilesBytesToTheDeserializerUndecoded()
     {
-        // The same text in two encodings: the Latin-1 route decodes its bytes as Latin-1, the route
-        // that sets no encoding as UTF-8.
-        _orders.AddFile("order.csv", Encoding.Latin1.GetBytes("Zoë"));
-        _invoices.AddFile("invoice.xml", Encoding.UTF8.GetBytes("Zoë"));
+        // Latin-1 bytes are not valid UTF-8: they reach the deserializer exactly as stored, so it
+        // owns the encoding and nothing is lost to a decode before it.
+        var latin1 = System.Text.Encoding.Latin1;
+        _orders.AddFile("order.csv", latin1.GetBytes("Zoë"));
         await using var provider = Register(routes => routes
-            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted"), Encoding.Latin1)
-            .On<Invoice, Invoice>(["invoices-no"], Pipeline<Invoice>(id => new Invoice(id), "invoices.accepted")));
-
-        var summary = await RunAsync(provider);
-
-        Assert.Equal(2, summary.Processed);
-        Assert.Equal(new Order("Zoë"), _sender.Sent[0].Data);
-        Assert.Equal(new Invoice("Zoë"), _sender.Sent[1].Data);
-    }
-
-    [Fact]
-    public async Task Run_DecodesFilesOfARouteForEveryFileWithItsEncoding()
-    {
-        _orders.AddFile("a.csv", Encoding.Latin1.GetBytes("Zoë"));
-        _invoices.AddFile("b.csv", Encoding.Latin1.GetBytes("Åsa"));
-        await using var provider = Register(routes => routes
-            .OnAny<Order, Order>(Pipeline<Order>(id => new Order(id), "orders.accepted"), Encoding.Latin1));
-
-        await RunAsync(provider);
-
-        Assert.Equal([new Order("Zoë"), new Order("Åsa")], _sender.Sent.Select(e => e.Data));
-    }
-
-    [Fact]
-    public async Task Run_WithoutAnEncoding_DecodesAsUtf8()
-    {
-        // Latin-1 bytes are not valid UTF-8: the default does not guess another encoding.
-        _orders.AddFile("order.csv", Encoding.Latin1.GetBytes("Zoë"));
-        await using var provider = Register(routes => routes
-            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted"))
+            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted", latin1))
             .On<Invoice, Invoice>(["invoices-no"], Pipeline<Invoice>(id => new Invoice(id), "invoices.accepted")));
 
         await RunAsync(provider);
 
-        Assert.Equal(new Order("Zo\uFFFD"), _sender.Sent.Single().Data);
+        Assert.Equal(new Order("Zoë"), _sender.Sent.Single().Data);
     }
 
     [Fact]
@@ -217,9 +187,9 @@ public class ExtractorRoutesTests
     /// <summary>A complete pipeline that reads the file's text as the record id and publishes the
     /// record as <paramref name="type"/>.</summary>
     private static Func<ExtractorBuilder<T, T, Context>, IServiceProvider, ExtractorBuilder<T, T, Context>>
-        Pipeline<T>(Func<string, T> read, string type) where T : IRecord =>
+        Pipeline<T>(Func<string, T> read, string type, System.Text.Encoding? encoding = null) where T : IRecord =>
         (builder, _) => builder
-            .WithDeserializer(new ReadDeserializer<T>(read))
+            .WithDeserializer(new ReadDeserializer<T>(read, encoding ?? System.Text.Encoding.UTF8))
             .WithValidator(new AcceptValidator<T>())
             .WithIdempotency((record, _) => record.Id, (_, _) => DateTimeOffset.UnixEpoch)
             .WithTransformer(new IdentityTransformer<T>())
@@ -264,13 +234,13 @@ public class ExtractorRoutesTests
 
     public sealed record Invoice(string Id) : IRecord;
 
-    private sealed class ReadDeserializer<T>(Func<string, T> read) : DeserializeStep<T, Context>
+    private sealed class ReadDeserializer<T>(Func<string, T> read, System.Text.Encoding encoding) : DeserializeStep<T, Context>
     {
         public override string StepName => "Deserialize";
 
-        public override Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(string input,
+        public override Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(ReadOnlyMemory<byte> input,
             Context context, CancellationToken ct) =>
-            Task.FromResult<(BusinessStepResult<T>, Context)>((new BusinessStepResult<T>.Success(read(input)), context));
+            Task.FromResult<(BusinessStepResult<T>, Context)>((new BusinessStepResult<T>.Success(read(encoding.GetString(input.Span))), context));
     }
 
     private sealed class AcceptValidator<T> : ValidateStep<T, Context>

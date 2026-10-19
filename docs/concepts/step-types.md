@@ -150,8 +150,8 @@ The Blocks package provides pre-named step abstractions for common integration p
 | `ExtractStep<TInput, TCtx>` | `BusinessStep<TInput, TInput, TCtx>` | Enrichment (same type in/out) |
 | `ValidateStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Validation (same type in/out) |
 | `TransformStep<TInput, TOutput, TCtx>` | `TechnicalStep<TInput, TOutput, TCtx>` | Type conversion |
-| `SerializeStep<T, TCtx>` | `TechnicalStep<T, string, TCtx>` | Typed object → string |
-| `SendStep<TCtx>` | `BusinessStep<string, string, TCtx>` | Send to destination |
+| `SerializeStep<T, TCtx>` | `TechnicalStep<T, byte[], TCtx>` | Typed object → bytes |
+| `SendStep<TCtx>` | `BusinessStep<byte[], byte[], TCtx>` | Send to destination |
 
 ### Receive pipeline steps
 
@@ -172,9 +172,8 @@ The Blocks package provides pre-named step abstractions for common integration p
 
 !!! warning "Namespace differences"
     The Send pipeline and Extractor have separate step abstractions in different
-    namespaces. `DeserializeStep` in the Send pipeline takes `ReadOnlyMemory<byte>`,
-    while in the Extractor it takes `string`. Import the correct namespace for your
-    block type.
+    namespaces. `DeserializeStep` in both takes `ReadOnlyMemory<byte>`. Import the
+    correct namespace for your block type.
 
 ## Choosing a step type
 

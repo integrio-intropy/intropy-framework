@@ -39,7 +39,7 @@ This block provides a complete lifecycle for processing files through a message 
 │  │    ExtractStep         → Enrich data (lookups, external calls)      │    │
 │  │    ValidateStep        → Business validation                        │    │
 │  │    TransformStep       → Convert input POCO to output POCO          │    │
-│  │    SerializeStep       → Convert output to string                   │    │
+│  │    SerializeStep       → Convert output to bytes                    │    │
 │  │    SendStep            → Send to destination                        │    │
 │  │    IdempotencyRecord   → Mark as processed                          │    │
 │  │    (BusinessIncidentRouter finalizer)                               │    │
@@ -129,14 +129,14 @@ public class OrderTransformer : TransformStep<OrderInput, OrderOutput, Context>
 
 public class XmlOrderSerializer : SerializeStep<OrderOutput, Context>
 {
-    public override async Task<(TechnicalStepResult<string> Result, Context Context)>
+    public override async Task<(TechnicalStepResult<byte[]> Result, Context Context)>
         ExecuteAsync(OrderOutput input, Context context)
     {
         var serializer = new System.Xml.Serialization.XmlSerializer(typeof(OrderOutput));
-        await using var writer = new StringWriter();
-        serializer.Serialize(writer, input);
+        await using var stream = new MemoryStream();
+        serializer.Serialize(stream, input); // writes UTF-8; pass an XmlWriter to choose another encoding
 
-        return (new TechnicalStepResult<string>.Success(writer.ToString()), context);
+        return (new TechnicalStepResult<byte[]>.Success(stream.ToArray()), context);
     }
 }
 
@@ -149,16 +149,16 @@ public class HttpOrderSender : SendStep<Context>
         _httpClient = httpClient;
     }
 
-    public override async Task<(BusinessStepResult<string> Result, Context Context)>
-        ExecuteAsync(string input, Context context)
+    public override async Task<(BusinessStepResult<byte[]> Result, Context Context)>
+        ExecuteAsync(byte[] input, Context context)
     {
-        var response = await _httpClient.PostAsync(
-            "/api/orders",
-            new StringContent(input, Encoding.UTF8, "application/xml"));
+        using var content = new ByteArrayContent(input);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
+        var response = await _httpClient.PostAsync("/api/orders", content);
 
         response.EnsureSuccessStatusCode();
 
-        return (new BusinessStepResult<string>.Success(input), context);
+        return (new BusinessStepResult<byte[]>.Success(input), context);
     }
 }
 
@@ -266,9 +266,9 @@ The SendPipeline processes messages in this order:
 | **Extract** | `ExtractStep<TInput, TCtx>` | Enrich data - lookups, external calls (BusinessStep) |
 | **Validate** | `ValidateStep<TInput, TCtx>` | Business validation (BusinessStep) |
 | **Transform** | `TransformStep<TInput, TOutput, TCtx>` | Convert input to output (TechnicalStep) |
-| **Serialize** | `SerializeStep<TOutput, TCtx>` | Convert output to string (TechnicalStep) |
+| **Serialize** | `SerializeStep<TOutput, TCtx>` | Convert output to bytes (TechnicalStep) |
 | **Send** | `SendStep<TCtx>` | Send to destination (BusinessStep) |
-| **Idempotency Record** | `IdempotencyRecordStep<string, TCtx>` | Mark as processed |
+| **Idempotency Record** | `IdempotencyRecordStep<byte[], TCtx>` | Mark as processed |
 | **Route Incidents** | Finalizer | Routes any business failures to incident service |
 
 ## Source Sweep

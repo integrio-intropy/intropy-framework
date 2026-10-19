@@ -133,36 +133,37 @@ public class OrderToInvoiceTransformer : TransformStep<Order, Invoice, Context>
 
 ### Serializer
 
-`SerializeStep<T, TCtx>` extends `TechnicalStep<T, string, TCtx>`:
+`SerializeStep<T, TCtx>` extends `TechnicalStep<T, byte[], TCtx>`. The bytes it returns are what the sender receives and writes as they are, so the serializer owns the encoding:
 
 ```csharp
 public class InvoiceSerializer : SerializeStep<Invoice, Context>
 {
-    public override Task<(TechnicalStepResult<string> Result, Context Context)> ExecuteAsync(
+    public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
         Invoice input, Context context)
     {
-        var json = JsonSerializer.Serialize(input);
-        return Task.FromResult<(TechnicalStepResult<string>, Context)>(
-            (new TechnicalStepResult<string>.Success(json), context));
+        var json = JsonSerializer.SerializeToUtf8Bytes(input);
+        return Task.FromResult<(TechnicalStepResult<byte[]>, Context)>(
+            (new TechnicalStepResult<byte[]>.Success(json), context));
     }
 }
 ```
 
 ### Sender
 
-`SendStep<TCtx>` extends `BusinessStep<string, string, TCtx>`:
+`SendStep<TCtx>` extends `BusinessStep<byte[], byte[], TCtx>`:
 
 ```csharp
 public class InvoiceApiSender(HttpClient httpClient) : SendStep<Context>
 {
-    public override async Task<(BusinessStepResult<string> Result, Context Context)> ExecuteAsync(
-        string input, Context context)
+    public override async Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context)
     {
-        var response = await httpClient.PostAsync("/invoices",
-            new StringContent(input, Encoding.UTF8, "application/json"));
+        using var content = new ByteArrayContent(input);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        var response = await httpClient.PostAsync("/invoices", content);
         response.EnsureSuccessStatusCode();
 
-        return (new BusinessStepResult<string>.Success(input), context);
+        return (new BusinessStepResult<byte[]>.Success(input), context);
     }
 }
 ```
@@ -207,19 +208,19 @@ var (result, context) = await sendPipeline.Execute(input, new Context(new Dictio
 
 switch (result)
 {
-    case StepResult<string>.Success success:
+    case StepResult<byte[]>.Success success:
         // success.Value contains the sender's output
         break;
 
-    case StepResult<string>.Cancelled:
+    case StepResult<byte[]>.Cancelled:
         // Idempotency check determined this was already processed
         break;
 
-    case StepResult<string>.BusinessFailure bf:
+    case StepResult<byte[]>.BusinessFailure bf:
         // bf.Value is a BusinessIncident with Description, OccurredAt, and Context
         break;
 
-    case StepResult<string>.TechnicalFailure tf:
+    case StepResult<byte[]>.TechnicalFailure tf:
         // tf.Value is a TechnicalFailure with Description, ErrorMessage, and Exception
         break;
 }

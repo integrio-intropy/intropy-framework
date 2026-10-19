@@ -2,6 +2,7 @@ using System.Text;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
+using Intropy.Framework.Blocks.TransactionalIntegration.Send.Steps;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Microsoft.Extensions.Logging;
@@ -49,7 +50,7 @@ public class SendPipelineTests
         var (result, _) = await pipeline.Execute(input, context);
 
         // Assert
-        Assert.IsType<StepResult<string>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
     }
 
     [Fact]
@@ -73,7 +74,7 @@ public class SendPipelineTests
             var context = MyContext.Create();
             var (result, _) = await pipeline.Execute(input, context);
 
-            Assert.IsType<StepResult<string>.Success>(result);
+            Assert.IsType<StepResult<byte[]>.Success>(result);
         }
 
         await _idempotencyServiceClient.ReceivedWithAnyArgs(rawInputs.Length).GetStatusAsync(Arg.Any<MessageInfo>());
@@ -97,7 +98,7 @@ public class SendPipelineTests
         var (result, _) = await pipeline.Execute(input, context);
 
         // Assert
-        Assert.IsType<StepResult<string>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
         await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
@@ -128,7 +129,7 @@ public class SendPipelineTests
         var (result, _) = await pipeline.Execute(input, context);
 
         // Assert
-        Assert.IsType<StepResult<string>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
         await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().GetStatusAsync(Arg.Any<MessageInfo>());
         await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().CommitAsync(Arg.Any<MessageInfo>());
     }
@@ -158,9 +159,52 @@ public class SendPipelineTests
         var (result, _) = await pipeline.Execute(input, context);
 
         // Assert - validation fails and there's no router to convert the failure to success
-        Assert.IsType<StepResult<string>.BusinessFailure>(result);
+        Assert.IsType<StepResult<byte[]>.BusinessFailure>(result);
         await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task Pipeline_SendsTheSerializedBytesUntouched()
+    {
+        // Arrange: ISO-8859-1 bytes are not valid UTF-8; the serializer produces them and the sender
+        // must receive exactly those bytes (no string in between to corrupt æøå).
+        var latin1 = Encoding.Latin1.GetBytes("<Order>blåbär</Order>");
+        var sender = new CapturingSender();
+        var pipeline = GetPreparedPipelineBuilder()
+            .WithSerializer(new FixedBytesSerializer(latin1))
+            .WithSender(sender)
+            .Build();
+        var input = new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(
+            """{"orderId": "123", "eventDateTime": "2025-01-01T00:00:01"}"""));
+
+        // Act
+        var (result, _) = await pipeline.Execute(input, MyContext.Create());
+
+        // Assert
+        Assert.IsType<StepResult<byte[]>.Success>(result);
+        Assert.Equal(latin1, sender.Received);
+    }
+
+    private sealed class FixedBytesSerializer(byte[] bytes) : SerializeStep<MyOutput, MyContext>
+    {
+        public override Task<(TechnicalStepResult<byte[]> Result, MyContext Context)> ExecuteAsync(MyOutput input,
+            MyContext context, CancellationToken ct) =>
+            Task.FromResult<(TechnicalStepResult<byte[]>, MyContext)>(
+                (new TechnicalStepResult<byte[]>.Success(bytes), context));
+    }
+
+    private sealed class CapturingSender : SendStep<MyContext>
+    {
+        public byte[]? Received { get; private set; }
+
+        public override Task<(BusinessStepResult<byte[]> Result, MyContext Context)> ExecuteAsync(byte[] input,
+            MyContext context, CancellationToken ct)
+        {
+            Received = input;
+            return Task.FromResult<(BusinessStepResult<byte[]>, MyContext)>(
+                (new BusinessStepResult<byte[]>.Success(input), context));
+        }
     }
 
     private SendPipelineBuilder<MyInput, MyOutput, MyContext> GetPreparedPipelineBuilder()

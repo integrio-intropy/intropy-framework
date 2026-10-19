@@ -11,7 +11,7 @@ namespace Intropy.Framework.Blocks.Extractor;
 /// <summary>
 /// A pipeline template used for extractor components. It follows these steps:
 /// <list type="number">
-///   <item>Deserialize: deserializes the string data into a POCO</item>
+///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
 ///   <item>Extractor(s): Extract additional information from external sources</item>     
 ///   <item>Validate: validates the POCO</item>
 ///   <item>Idempotency check: checks so that the same data has not been processed already</item>
@@ -53,7 +53,7 @@ public class Extractor<TInput, TOutput, TCtx>(
     /// <summary>
     /// 
     /// </summary>
-    /// <param name="input">The input data to use</param>
+    /// <param name="input">The raw bytes of the source item, passed to the deserializer undecoded</param>
     /// <param name="context">The pipeline context</param>
     /// <param name="detachTrace">When false (the default), the execution continues the ambient
     /// trace — what a host sets up per item (the file's or message's own trace); when true, it
@@ -61,7 +61,7 @@ public class Extractor<TInput, TOutput, TCtx>(
     /// false explicitly; standalone callers rarely need to detach.</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution</param>
     /// <returns></returns>
-    public async Task<(StepResult<CloudEvent> Result, TCtx Context)> Execute(string input, TCtx context, bool detachTrace = false,
+    public async Task<(StepResult<CloudEvent> Result, TCtx Context)> Execute(ReadOnlyMemory<byte> input, TCtx context, bool detachTrace = false,
         CancellationToken ct = default)
     {
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline

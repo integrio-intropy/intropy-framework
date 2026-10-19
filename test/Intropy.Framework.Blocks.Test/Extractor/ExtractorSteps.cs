@@ -24,11 +24,11 @@ public sealed class CustomerDeserializer : DeserializeStep<CustomerIn, Context>
     public override string StepName => "Deserialize";
 
     public override Task<(BusinessStepResult<CustomerIn> Result, Context Context)> ExecuteAsync(
-        string input, Context context, CancellationToken ct)
+        ReadOnlyMemory<byte> input, Context context, CancellationToken ct)
     {
         var obj = new CustomerIn
         {
-            CustomerId = input,
+            CustomerId = System.Text.Encoding.UTF8.GetString(input.Span),
             EventDate = DateTime.Parse("1970-01-01")
         };
 

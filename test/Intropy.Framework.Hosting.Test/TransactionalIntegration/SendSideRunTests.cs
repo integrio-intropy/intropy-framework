@@ -29,7 +29,7 @@ public class SendSideRunTests
 
     private readonly ISendPipeline<Context> _pipeline = Substitute.For<ISendPipeline<Context>>();
 
-    public SendSideRunTests() => PipelineReturns(_ => new StepResult<string>.Success(""));
+    public SendSideRunTests() => PipelineReturns(_ => new StepResult<byte[]>.Success([]));
 
     private static TransactionalIntegrationOptions Options(TimeSpan? idleTimeout = null,
         TimeSpan? gracePeriod = null) => new()
@@ -47,7 +47,7 @@ public class SendSideRunTests
             "test-integration", NullLoggerFactory.Instance, time);
 
     /// <summary>The send pipeline's result for each message, by its message id.</summary>
-    private void PipelineReturns(Func<string, StepResult<string>> result) =>
+    private void PipelineReturns(Func<string, StepResult<byte[]>> result) =>
         _pipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
             .Returns(call => (result(call.Arg<Context>().Metadata[ContextKeys.MessageId]), call.Arg<Context>()));
 
@@ -137,9 +137,9 @@ public class SendSideRunTests
     {
         PipelineReturns(id => id switch
         {
-            "duplicate" => new StepResult<string>.Cancelled(),
-            "failing" => new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed")),
-            _ => new StepResult<string>.Success("")
+            "duplicate" => new StepResult<byte[]>.Cancelled(),
+            "failing" => new StepResult<byte[]>.TechnicalFailure(new TechnicalFailure("send failed")),
+            _ => new StepResult<byte[]>.Success([])
         });
         var options = Options();
         var publishing = new TaskCompletionSource();
@@ -253,8 +253,8 @@ public class SendSideRunTests
     {
         var attempts = 0;
         PipelineReturns(_ => Interlocked.Increment(ref attempts) == 1
-            ? new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed"))
-            : new StepResult<string>.Success(""));
+            ? new StepResult<byte[]>.TechnicalFailure(new TechnicalFailure("send failed"))
+            : new StepResult<byte[]>.Success([]));
         var options = Options();
         var publishing = new TaskCompletionSource();
         var run = Subscriber(options).ExecuteAsync(publishing.Task);
@@ -283,7 +283,7 @@ public class SendSideRunTests
             .Returns(call =>
             {
                 consumer = Activity.Current;
-                return ((StepResult<string>)new StepResult<string>.Success(""), call.Arg<Context>());
+                return ((StepResult<byte[]>)new StepResult<byte[]>.Success([]), call.Arg<Context>());
             });
         var options = Options();
         var publishing = new TaskCompletionSource();
@@ -315,7 +315,7 @@ public class SendSideRunTests
             {
                 entered.TrySetResult();
                 await Task.Delay(Timeout.Infinite, call.Arg<CancellationToken>());
-                return ((StepResult<string>)new StepResult<string>.Success(""), call.Arg<Context>());
+                return ((StepResult<byte[]>)new StepResult<byte[]>.Success([]), call.Arg<Context>());
             });
         var options = Options(gracePeriod: TimeSpan.FromMilliseconds(200));
         using var host = new CancellationTokenSource();

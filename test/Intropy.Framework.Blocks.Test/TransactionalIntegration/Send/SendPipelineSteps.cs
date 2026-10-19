@@ -83,24 +83,24 @@ public sealed class MyBusinessTransformer : TransformStep<MyInput, MyOutput, MyC
 
 public sealed class XmlSerializer : SerializeStep<MyOutput, MyContext>
 {
-    public override async Task<(TechnicalStepResult<string> Result, MyContext Context)> ExecuteAsync(MyOutput input,
+    public override async Task<(TechnicalStepResult<byte[]> Result, MyContext Context)> ExecuteAsync(MyOutput input,
         MyContext context, CancellationToken ct)
     {
         var xmlSerializer = new System.Xml.Serialization.XmlSerializer(typeof(MyOutput));
         await using var stringWriter = new StringWriter();
         xmlSerializer.Serialize(stringWriter, input);
-        var serialized = stringWriter.ToString();
+        var serialized = System.Text.Encoding.UTF8.GetBytes(stringWriter.ToString());
 
-        return (new TechnicalStepResult<string>.Success(serialized), context);
+        return (new TechnicalStepResult<byte[]>.Success(serialized), context);
     }
 }
 
 public sealed class HttpSender : SendStep<MyContext>
 {
-    public override Task<(BusinessStepResult<string> Result, MyContext Context)> ExecuteAsync(string input,
+    public override Task<(BusinessStepResult<byte[]> Result, MyContext Context)> ExecuteAsync(byte[] input,
         MyContext context, CancellationToken ct)
     {
-        return Task.FromResult<(BusinessStepResult<string> Result, MyContext Context)>((
-            new BusinessStepResult<string>.Success(input), context));
+        return Task.FromResult<(BusinessStepResult<byte[]> Result, MyContext Context)>((
+            new BusinessStepResult<byte[]>.Success(input), context));
     }
 }
