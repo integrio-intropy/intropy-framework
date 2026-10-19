@@ -61,14 +61,15 @@ public class ClaimCheckSendTests
 
     /// <summary>An event as the serialize step hands it over: id and subject set, payload an object,
     /// source and type still the send step's to supply.</summary>
-    private static CloudEvent Event(object? data, string? id = "evt-1") => new()
-    {
-        Id = id,
-        Subject = "ORD-1",
-        Time = Now,
-        DataContentType = "application/json",
-        Data = data
-    };
+    private static CloudEvent Event(object? data, string? id = "evt-1", string contentType = "application/json") =>
+        new()
+        {
+            Id = id,
+            Subject = "ORD-1",
+            Time = Now,
+            DataContentType = contentType,
+            Data = data
+        };
 
     private static string? DataRef(CloudEvent cloudEvent) =>
         cloudEvent.GetPopulatedAttributes()
@@ -242,6 +243,62 @@ public class ClaimCheckSendTests
         await step.ExecuteAsync(Event(new Payload("ORD-1", 3), id), new Context([], false), CancellationToken.None);
 
         Assert.Equal($"{Component}/2026/03/07/{id}", DataRef(sender.Sent!));
+    }
+
+    // A real sidecar hands a subscriber the raw text of a string payload whose content type it does
+    // not read as JSON, rather than the JSON string the formatter wrote — pinned in
+    // LoaderCallbackDaprTests.AStringPayload_IsDeliveredRaw_UnlessItsContentTypeIsJson. The store has
+    // to hold the same thing, or the same pipeline would hand its consumer different bytes
+    // depending only on the payload's size.
+    [Theory]
+    [InlineData("text/plain")]
+    [InlineData("text/csv")]
+    [InlineData("application/xml")]
+    public async Task ExecuteAsync_StoresAStringPayloadRaw_WhenItsContentTypeIsNotJson(string contentType)
+    {
+        var (step, _, store) = StepWith(ClaimCheckPolicy.Always);
+        byte[]? written = null;
+        await store.WriteAsync(Arg.Any<string>(), Arg.Do<byte[]>(b => written = b), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>());
+
+        await step.ExecuteAsync(Event("a,b\nc,d", contentType: contentType), new Context([], false),
+            CancellationToken.None);
+
+        Assert.Equal("a,b\nc,d", Encoding.UTF8.GetString(written!));
+    }
+
+    // The control: under a JSON content type the sidecar leaves the JSON string alone, so the store
+    // holds the quoted form the formatter wrote.
+    [Theory]
+    [InlineData("application/json")]
+    [InlineData("application/vnd.acme.order+json")]
+    [InlineData("application/json; charset=utf-8")]
+    public async Task ExecuteAsync_StoresAStringPayloadQuoted_WhenItsContentTypeIsJson(string contentType)
+    {
+        var (step, _, store) = StepWith(ClaimCheckPolicy.Always);
+        byte[]? written = null;
+        await store.WriteAsync(Arg.Any<string>(), Arg.Do<byte[]>(b => written = b), Arg.Any<string?>(),
+            Arg.Any<CancellationToken>());
+
+        await step.ExecuteAsync(Event("a,b\nc,d", contentType: contentType), new Context([], false),
+            CancellationToken.None);
+
+        Assert.Equal("\"a,b\\nc,d\"", Encoding.UTF8.GetString(written!));
+    }
+
+    // The threshold measures the envelope, which carries the JSON string whatever the content type
+    // — so a raw-stored payload is still counted at its encoded cost, not its shorter raw length.
+    [Fact]
+    public async Task ExecuteAsync_MeasuresAStringPayload_AtItsEncodedCost_NotItsRawLength()
+    {
+        // 300 quote characters encode to 600 bytes of \" escapes; the envelope overhead is well
+        // under 100, so a threshold of 500 sits above the raw length and below the encoded one.
+        var (step, sender, _) = StepWith(ClaimCheckPolicy.Above(500));
+
+        await step.ExecuteAsync(Event(new string('"', 300), contentType: "text/plain"), new Context([], false),
+            CancellationToken.None);
+
+        Assert.Equal(ExpectedKey, DataRef(sender.Sent!));
     }
 
     [Fact]

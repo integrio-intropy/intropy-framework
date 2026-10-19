@@ -15,9 +15,18 @@ public sealed class JsonDeserializer<T> : DeserializeStep<T, Context>
     // The framework publishes camelCase payloads.
     private static readonly JsonSerializerOptions s_options = new(JsonSerializerDefaults.Web);
 
+    /// <summary>The bytes the pipeline was last handed, recorded before anything interprets them —
+    /// the only place a test can see what a real sidecar actually delivered.</summary>
+    public ReadOnlyMemory<byte> LastInput { get; private set; }
+
+    /// <summary>Clears <see cref="LastInput"/>, so a test can wait for the next delivery rather
+    /// than race a previous one.</summary>
+    public void Reset() => LastInput = default;
+
     public override Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(ReadOnlyMemory<byte> input,
         Context context, CancellationToken ct)
     {
+        LastInput = input.ToArray();
         var value = JsonSerializer.Deserialize<T>(input.Span, s_options)!;
         return Task.FromResult<(BusinessStepResult<T>, Context)>((new BusinessStepResult<T>.Success(value), context));
     }

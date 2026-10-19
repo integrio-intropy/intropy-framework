@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using CloudNative.CloudEvents;
 using Intropy.Framework.Adapters.File;
@@ -98,12 +99,12 @@ internal sealed class ClaimCheckSend<TCtx>(
                 "'..'. Give the serialize step an id of that shape — the built-in CloudEventSerializeStep's " +
                 "GUIDs already are — or turn the claim check off for this extractor.");
 
-        var (payload, binary) = Encode(input.Data);
+        var (payload, wireLength, binary) = Encode(input.Data, input.DataContentType);
 
         var activity = Activity.Current;
         activity?.SetTag("intropy.claim_check.payload_size", payload.Length);
 
-        if (!WouldExceed(input, payload.Length, binary))
+        if (!WouldExceed(input, wireLength, binary))
         {
             // Small enough to ride inside the envelope: the event passes through unchanged.
             activity?.SetTag("intropy.claim_check", false);
@@ -126,29 +127,59 @@ internal sealed class ClaimCheckSend<TCtx>(
         return await sender.ExecuteAsync(input, context, ct);
     }
 
-    /// <summary>The payload as the wire would carry it, and whether that is base64.</summary>
+    /// <summary>What the store must hold, how much the envelope would cost, and whether that cost
+    /// is base64.</summary>
     /// <remarks>
     /// <para>
-    /// The bytes are what the formatter itself would write into <c>data</c> — same options, so a
-    /// consumer reads the same thing whether the payload arrived inline or came back out of the
-    /// store. That equivalence is the whole contract, so every shape the formatter treats specially
-    /// has to be matched here rather than assumed.
+    /// The stored bytes are what a consumer would have received inline — not necessarily what the
+    /// envelope carries, because the two differ for a string payload. That equivalence is the whole
+    /// contract, so every shape the formatter or the sidecar treats specially has to be matched
+    /// here rather than assumed.
     /// </para>
     /// <para>
-    /// A <see cref="byte"/> array is the only shape it moves to <c>data_base64</c>, which costs a
-    /// third more on the wire and so is measured as base64. A <see cref="ReadOnlyMemory{T}"/> of
-    /// bytes is <em>not</em> — the formatter has no case for it, so it goes through the serializer
-    /// like any other value and lands in <c>data</c> as a base64 JSON string, quotes included. It
-    /// therefore belongs on the JSON path here too, which produces exactly those bytes. (With a
-    /// non-JSON content type the formatter refuses it outright, so such an event never publishes
-    /// inline at all.)
+    /// A <see cref="byte"/> array is the only shape the formatter moves to <c>data_base64</c>, which
+    /// costs a third more on the wire and so is measured as base64. A <see cref="ReadOnlyMemory{T}"/>
+    /// of bytes is <em>not</em> — the formatter has no case for it, so it serializes like any other
+    /// value into <c>data</c> as a base64 JSON string, quotes included.
+    /// </para>
+    /// <para>
+    /// A <see cref="string"/> is the case where stored and wire bytes diverge. The formatter always
+    /// writes it as a JSON string, but the sidecar hands a subscriber the <em>raw text</em> back
+    /// whenever the content type is not one it reads as JSON — verified against a real sidecar in
+    /// <c>LoaderCallbackDaprTests.AStringPayload_IsDeliveredRaw_UnlessItsContentTypeIsJson</c>. So
+    /// such a payload is stored raw, while the threshold is still measured against the JSON string
+    /// the envelope actually carries.
     /// </para>
     /// </remarks>
-    private static (byte[] Payload, bool Binary) Encode(object data) => data switch
+    private static (byte[] Store, int WireLength, bool Binary) Encode(object data, string? dataContentType)
     {
-        byte[] bytes => (bytes, true),
-        _ => (JsonSerializer.SerializeToUtf8Bytes(data, CloudEventFormat.SerializerOptions), false)
-    };
+        if (data is byte[] bytes)
+            return (bytes, bytes.Length, true);
+
+        var json = JsonSerializer.SerializeToUtf8Bytes(data, CloudEventFormat.SerializerOptions);
+        return data is string text && !IsJson(dataContentType)
+            ? (Encoding.UTF8.GetBytes(text), json.Length, false)
+            : (json, json.Length, false);
+    }
+
+    /// <summary>Whether the sidecar would read a payload of this content type as JSON, and so leave
+    /// a string payload as the JSON string the formatter wrote.</summary>
+    /// <remarks>No content type is treated as JSON: the formatter writes JSON regardless, and the
+    /// framework's own serialize step defaults the attribute to <c>application/json</c>.</remarks>
+    private static bool IsJson(string? dataContentType)
+    {
+        if (string.IsNullOrEmpty(dataContentType))
+            return true;
+
+        var media = dataContentType.AsSpan();
+        var parameters = media.IndexOf(';');
+        if (parameters >= 0)
+            media = media[..parameters];
+        media = media.Trim();
+
+        return media.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+               || media.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>Whether the payload must be claim-checked, measured against the envelope as it
     /// would be published but without its data.</summary>
