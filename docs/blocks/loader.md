@@ -352,6 +352,39 @@ switch (result)
 }
 ```
 
+## Claim check
+
+A payload too large for the broker does not ride inside its message. The publisher writes it to a
+*claim store* and publishes a pointer instead (the CloudEvents standard `dataref` attribute); the
+loader fetches the payload back before the pipeline runs. Register the store and there is nothing
+else to configure:
+
+```csharp
+builder.Services.AddClaimStore(builder.Configuration);
+```
+
+The pipeline never sees the mechanism — its input is the payload either way, so no `DeserializeStep`
+and no component code changes. Resolution happens after the message has been routed, so a message no
+route handles never pays for a fetch, and it happens before the idempotency check, so a duplicate
+still fetches its payload before being cancelled.
+
+Unlike the publishing side, a loader has no claim-check *mode*: it resolves a pointer whenever a
+message carries one. That is deliberate, and it is what lets a publisher roll back to
+`ClaimCheckMode.Never` while the pointers already on the queue keep draining.
+
+!!! warning "Upgrade and configure the consumers first"
+
+    A loader consuming a claim-checked topic needs the claim store registered, reachable, and
+    pointed at the same storage the publisher writes to — *before* that publisher turns its claim
+    check on. A pointer arriving at a loader with no store fails with a technical error naming the
+    missing store, and the message is redelivered until it dead-letters. Deploy consumers first,
+    then enable writing; roll back in the reverse order.
+
+A fetch that fails — a missing payload, an unreachable store — is a technical failure, never a
+business one: the message is left for redelivery and the broker dead-letters it once redelivery
+gives up. A `dataref` that is not a well-formed claim key is refused without the store being read at
+all, because the file adapters join a key onto the store's base path without normalising it.
+
 ## Related
 
 - [Extractor](extractor.md) — the counterpart that publishes CloudEvents from a source system

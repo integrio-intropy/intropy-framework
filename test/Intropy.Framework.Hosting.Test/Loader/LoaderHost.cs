@@ -31,6 +31,9 @@ public sealed class LoaderHost : IAsyncDisposable
     public FakeIdempotencyServiceClient Idempotency { get; } = new();
     public FakeBusinessIncidentServiceClient Incidents { get; } = new();
     public RecordingSender<OrderCreated> CreatedSender { get; } = new();
+
+    /// <summary>The created route's deserializer, which records the bytes it was handed.</summary>
+    public JsonDeserializer<OrderCreated> CreatedDeserializer { get; } = new();
     public RecordingSender<OrderCancelled> CancelledSender { get; } = new();
 
     /// <summary>A loader routing <see cref="Created"/> and <see cref="Cancelled"/>.</summary>
@@ -46,7 +49,8 @@ public sealed class LoaderHost : IAsyncDisposable
             {
                 routes
                     .On<OrderCreated, OrderCreated, Context>(Created,
-                        (builder, _) => Pipeline(builder, fixture.CreatedSender),
+                        (builder, _) => Pipeline(builder, fixture.CreatedSender,
+                            deserializer: fixture.CreatedDeserializer),
                         (metadata, isRetry) => new Context(metadata, isRetry))
                     .On<OrderCancelled, OrderCancelled, Context>(Cancelled,
                         (builder, _) => Pipeline(builder, fixture.CancelledSender),
@@ -55,16 +59,24 @@ public sealed class LoaderHost : IAsyncDisposable
             }));
 
     /// <summary>A loader without routes: one pipeline for every event type.</summary>
+    /// <param name="reject">Inputs the validator fails as a business incident.</param>
+    /// <param name="configure">Further loader options, applied over <see cref="Defaults"/>.</param>
+    /// <param name="extraServices">Registrations the loader resolves at run time — a claim store,
+    /// for instance. Applied before the loader is added.</param>
     public static Task<LoaderHost> StartSingleAsync(Func<OrderCreated, bool>? reject = null,
-        Action<LoaderOptions>? configure = null) =>
-        StartAsync((services, fixture) => services.AddLoader<OrderCreated, OrderCreated, Context>(
-            (builder, _) => Pipeline(builder, fixture.CreatedSender, reject),
-            (metadata, isRetry) => new Context(metadata, isRetry),
-            options =>
-            {
-                Defaults(options);
-                configure?.Invoke(options);
-            }));
+        Action<LoaderOptions>? configure = null, Action<IServiceCollection>? extraServices = null) =>
+        StartAsync((services, fixture) =>
+        {
+            extraServices?.Invoke(services);
+            services.AddLoader<OrderCreated, OrderCreated, Context>(
+                (builder, _) => Pipeline(builder, fixture.CreatedSender, reject),
+                (metadata, isRetry) => new Context(metadata, isRetry),
+                options =>
+                {
+                    Defaults(options);
+                    configure?.Invoke(options);
+                });
+        });
 
     public static async Task<LoaderHost> StartAsync(Action<IServiceCollection, LoaderHost> addLoader)
     {
@@ -115,9 +127,9 @@ public sealed class LoaderHost : IAsyncDisposable
     }
 
     private static LoaderBuilder<T, T, Context> Pipeline<T>(LoaderBuilder<T, T, Context> builder,
-        RecordingSender<T> sender, Func<T, bool>? reject = null) =>
+        RecordingSender<T> sender, Func<T, bool>? reject = null, JsonDeserializer<T>? deserializer = null) =>
         builder
-            .WithDeserializer(new JsonDeserializer<T>())
+            .WithDeserializer(deserializer ?? new JsonDeserializer<T>())
             .WithValidator(new TestValidator<T>(reject))
             .WithIdempotency()
             .WithTransformer(new IdentityTransformer<T>())

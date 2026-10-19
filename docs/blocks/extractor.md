@@ -271,6 +271,115 @@ public class HttpSender : SendStep<Context>
 
 Then use `.WithSender(new HttpSender(httpClient))` instead of the Dapr methods.
 
+## Claim check
+
+Brokers cap message size — Azure Service Bus Standard at 256 KB, for example — and a payload larger
+than that cap cannot ride inside its event. With a *claim store* registered, the extractor writes an
+oversized payload to the store and publishes a pointer to it instead (the CloudEvents standard
+`dataref` attribute); the consumer fetches the payload back before its pipeline runs. No pipeline on
+either side sees the mechanism.
+
+The store is registered on its own, with its adapter configured under `ClaimStore` — the same
+settings a port takes (`Kind`, `DaprBindingName`, `BasePath`), validated the same way:
+
+```csharp
+builder.Services.AddClaimStore(builder.Configuration);
+builder.Services.AddExtractor<In, Out, Context>(
+    Pipeline,
+    contextFactory,
+    configureJob: null,
+    configureOptions: opts =>
+    {
+        opts.ClaimCheckMode = ClaimCheckMode.Auto;   // default
+        opts.ClaimCheckThresholdBytes = 230_000;     // required in Auto
+    });
+```
+
+| Option | Description |
+|--------|-------------|
+| `ClaimCheckMode` | `Auto` claim-checks above the threshold, `Always` claim-checks everything, `Never` claim-checks nothing |
+| `ClaimCheckThresholdBytes` | The largest encoded event published inline. Required in `Auto`, ignored otherwise |
+
+Both are deployment decisions, so bind them from configuration rather than hard-coding them —
+`Never` is the rollback, and reaching for it must not need a rebuild:
+
+```csharp
+configureOptions: opts => opts.Bind(builder.Configuration.GetSection("Extractor"))
+```
+
+`Bind` reads `ClaimCheckMode` and `ClaimCheckThresholdBytes`, leaving alone any key the section does
+not set, so calling it first lets code override what a deployment supplied.
+
+Without a claim store registered every payload rides inline whatever the mode. Set the threshold
+1–2 KB below the broker's limit rather than at it: the measurement is taken before the trace context
+is attached, and Dapr adds attributes of its own (`topic`, `pubsubname`, `traceid`) when it forwards
+the event.
+
+!!! warning "A claim-checking extractor constrains its CloudEvent ids"
+
+    The event's `id` names its payload in the claim store, so with the claim check configured every
+    id must be one or more letters, digits, `.`, `-` or `_` — and neither `.` nor `..`. The
+    built-in `CloudEventSerializeStep` mints GUIDs, which already qualify; a custom serialize step
+    setting something like `urn:uuid:…` or `order:42` does not.
+
+    The id is checked on every event that carries data, before its size is considered — so an
+    extractor with an unusable id scheme fails on its first event, as a technical failure that
+    retries and then dead-letters. That is deliberate: the alternative is discovering the problem
+    weeks later, the first time a payload happens to grow past the threshold.
+
+The claim check needs the sender to declare the envelope attributes it supplies — its `Source`, and
+the `Type` it falls back to — because it encodes the envelope to measure it, and encoding refuses one
+missing either. Both built-in senders declare theirs, however they are configured, so
+`WithDaprTopicPublisher(...)` and a publisher resolved from DI through `WithSender(...)` both work.
+A [custom sender](#custom-sender) declares none by default and is rejected when the extractor is
+built; override `EnvelopeDefaults` on it to make it claim-checkable:
+
+```csharp
+public class HttpSender(Uri source, string type) : SendStep<Context>
+{
+    protected override (Uri Source, string Type)? EnvelopeDefaults => (source, type);
+    // ...
+}
+```
+
+In practice only pub/sub needs this. Service invocation has no broker in the path, so no
+message-size limit to work around — whatever limit the target service imposes is its own.
+
+A payload is written before its pointer is published, so a crash can orphan a payload but never
+leave a pointer to one that was never written. The framework never deletes a claimed payload: keys
+are partitioned by date (`{component}/{yyyy}/{MM}/{dd}/{id}`) so a storage lifecycle policy can
+expire them, and configuring that policy is the platform's job.
+
+!!! danger "A claim-checked event has no `data`, so `data.*` subscription filters stop matching it"
+
+    This is a limitation of the pattern, not something the framework works around. A Dapr
+    subscription rule that filters on `data.foo` cannot match an event whose payload is in the claim
+    store — the message lands on `/unhandled` instead.
+
+    Lift anything used for routing out of the payload and onto a CloudEvent extension attribute,
+    which survives claim-checking. The framework already demonstrates this: `intropysourceport` is
+    an extension attribute precisely so routing on it keeps working, and routing on the event
+    **type** is unaffected either way.
+
+    Before enabling the claim check on a topic, audit its subscriptions for rules that read `data.*`.
+
+### Rolling out and back
+
+Unlike a Transactional Integration, an extractor publishes onto the system bus: its consumers are
+*other components*, and the wire between them stops being private.
+
+Roll out in this order: deploy the store and the consumers that can resolve pointers first, then
+enable writing. A publisher that claim-checks before its consumers can resolve produces events that
+fail until the consumers catch up — each one with a technical error naming the missing store, and
+redelivery until they dead-letter.
+
+Roll back in the reverse order, which is why `Never` is a mode rather than an absence of a store:
+
+1. Set `ClaimCheckMode` to `Never`. New payloads stay inline immediately.
+2. Leave the store registered on the consumers until the topic has drained every pointer already on
+   it. A consumer resolves a pointer whenever an event carries one, whatever this extractor's mode.
+3. Remove the store.
+
 ## Executing the Extractor
 
 Call `Execute` with the raw bytes and a context:

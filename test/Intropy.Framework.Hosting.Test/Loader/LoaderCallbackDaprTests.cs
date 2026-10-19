@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
 
 namespace Intropy.Framework.Hosting.Test.Loader;
 
@@ -136,6 +138,35 @@ public class LoaderCallbackDaprTests(LoaderDaprFixture dapr) : IClassFixture<Loa
     private int SentTo(string orderId) => Sender.Sent.Count(s => s.Value.OrderId == orderId);
 
     private static Task WaitUntilAsync(Func<bool> condition) => WaitUntilAsync(() => Task.FromResult(condition()));
+
+    // What the sidecar hands a subscriber for a JSON-string `data` member decides whether the claim
+    // check's stored bytes and an inline payload are the same thing. The formatter writes a string
+    // the same way for every content type (a JSON string in `data`), so if the sidecar unwrapped it
+    // for text/* the two paths would diverge on size alone. Pinned against the real sidecar because
+    // our own harness only models it.
+    [Theory]
+    [InlineData("application/json", true)]
+    [InlineData("text/plain", false)]
+    [InlineData("text/csv", false)]
+    [InlineData("application/xml", false)]
+    public async Task AStringPayload_IsDeliveredRaw_UnlessItsContentTypeIsJson(string contentType, bool asJsonString)
+    {
+        const string text = "a,b\nc,d";
+        var published = JsonSerializer.Serialize(text);
+        dapr.Loader.CreatedDeserializer.Reset();
+
+        await dapr.PublishRawAsync(Guid.NewGuid().ToString(), LoaderHost.Created, NewOrderId(), published,
+            contentType);
+
+        await WaitUntilAsync(() => Task.FromResult(!dapr.Loader.CreatedDeserializer.LastInput.IsEmpty));
+        var delivered = Encoding.UTF8.GetString(dapr.Loader.CreatedDeserializer.LastInput.Span);
+
+        // The discriminator is JSON-ness, not text/*: the sidecar unwraps the JSON string the
+        // formatter wrote back to its raw text for every content type it does not read as JSON.
+        // A "+json" suffix is left out deliberately — the sidecar delivered no such event at all in
+        // this harness, so there is nothing here to pin.
+        Assert.Equal(asJsonString ? published : text, delivered);
+    }
 
     private static async Task WaitUntilAsync(Func<Task<bool>> condition)
     {

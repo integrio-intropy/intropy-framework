@@ -35,6 +35,10 @@ internal sealed record TestExtractor<TInput, TOutput, TCtx> where TCtx : Context
     public required Func<TCtx, string> IncidentSubject { get; init; }
     public required ContextFactory<TCtx> ContextFactory { get; init; }
 
+    /// <summary>The extractor's own settings — the claim check — as a component's registration
+    /// supplies them.</summary>
+    public Action<ExtractorOptions>? ConfigureOptions { get; init; }
+
     /// <summary>Registers the steps (existing registrations win), a default Dapr publisher, and
     /// the extractor itself.</summary>
     public IServiceCollection Register(IServiceCollection services, Action<JobOptions>? configureJob = null)
@@ -47,7 +51,8 @@ internal sealed record TestExtractor<TInput, TOutput, TCtx> where TCtx : Context
             "orders.accepted"));
         // The tests register the source adapter themselves (a fake), so only the port is declared.
         services.AddSourcePort(SourcePort, Completion);
-        return services.AddExtractor<TInput, TOutput, TCtx>(Configure, ContextFactory, configureJob);
+        return services.AddExtractor<TInput, TOutput, TCtx>(Configure, ContextFactory, configureJob,
+            ConfigureOptions);
     }
 
     /// <summary>A job over this extractor, for tests that drive the job without the runner.</summary>

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Containers;
 using DotNet.Testcontainers.Networks;
@@ -107,6 +108,37 @@ public class LoaderDaprFixture : IAsyncLifetime
         };
         if (traceParent is not null)
             request.Headers.Add("traceparent", traceParent);
+        using var response = await s_http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>Publishes a CloudEvent whose <c>data</c> member is <paramref name="rawData"/>
+    /// verbatim, under <paramref name="dataContentType"/>: for payloads that are not camelCase JSON
+    /// objects, where what the sidecar makes of the member is the thing under test.</summary>
+    /// <param name="id">The CloudEvent id.</param>
+    /// <param name="type">The CloudEvent type, which the subscription routes on.</param>
+    /// <param name="subject">The CloudEvent subject.</param>
+    /// <param name="rawData">The <c>data</c> member as JSON text — <c>"a,b"</c> for a JSON string,
+    /// <c>{"a":1}</c> for an object.</param>
+    /// <param name="dataContentType">The <c>datacontenttype</c> attribute.</param>
+    public async Task PublishRawAsync(string id, string type, string subject, string rawData,
+        string dataContentType)
+    {
+        var envelope = new JsonObject
+        {
+            ["specversion"] = "1.0",
+            ["id"] = id,
+            ["source"] = "urn:test:source",
+            ["type"] = type,
+            ["subject"] = subject,
+            ["datacontenttype"] = dataContentType,
+            ["data"] = JsonNode.Parse(rawData),
+        };
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            new Uri(_dapr, $"/v1.0/publish/pubsub/{LoaderHost.Topic}"))
+        {
+            Content = new StringContent(envelope.ToJsonString(), Encoding.UTF8, "application/cloudevents+json"),
+        };
         using var response = await s_http.SendAsync(request);
         response.EnsureSuccessStatusCode();
     }

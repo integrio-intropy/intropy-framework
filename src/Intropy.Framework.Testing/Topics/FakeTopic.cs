@@ -27,6 +27,20 @@ public class FakeTopic<TCtx> : SendStep<TCtx> where TCtx : Context
     private volatile Exception? _sendException;
 
     /// <summary>
+    /// The envelope attributes this fake stands in for, so it substitutes for the real publisher in
+    /// a pipeline with a claim check configured.
+    /// </summary>
+    /// <remarks>
+    /// The claim check encodes the envelope to measure it, and encoding refuses one missing its
+    /// source or type — a sender declaring neither cannot be claim-checked at all. Declaring them
+    /// here keeps the fake swappable for <c>DaprTopicPublisher</c> in exactly the cases a claim
+    /// check is being tested. The values are placeholders: nothing asserts on them, and a test that
+    /// cares reads <see cref="Events"/> instead.
+    /// </remarks>
+    protected override (Uri Source, string Type)? EnvelopeDefaults =>
+        (new Uri("urn:intropy:testing:fake-topic"), "intropy.testing.fake-topic");
+
+    /// <summary>
     /// Gets the number of published events.
     /// </summary>
     public int Count

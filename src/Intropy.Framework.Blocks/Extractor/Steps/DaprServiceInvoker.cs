@@ -36,6 +36,9 @@ public class DaprServiceInvoker<TCtx>(
     private const string MethodName = "ingest";
 
     /// <inheritdoc/>
+    protected internal override (Uri Source, string Type)? EnvelopeDefaults => (source, type);
+
+    /// <inheritdoc/>
     public override async Task<(TechnicalStepResult<CloudEvent> Result, TCtx Context)> ExecuteAsync(CloudEvent input,
         TCtx context, CancellationToken ct)
     {
@@ -51,9 +54,10 @@ public class DaprServiceInvoker<TCtx>(
                 "CloudEvent.Time must be set by the SerializeStep. The time indicates when the event occurred in the source system.");
 
         // Set the source from configuration; the configured type is the fallback — a type set by
-        // the serialize step (component-supplied type extractor) wins.
-        input.Source = source;
-        input.Type ??= type;
+        // the serialize step (component-supplied type extractor) wins. Already done when a claim
+        // check ran ahead of this step, which has to complete the envelope to measure it; the rule
+        // lives in one place so the measured envelope and the published one cannot disagree.
+        EnvelopeCompletion.Apply(input, source, type);
 
         // Serialize CloudEvent to JSON
         var bytes = CloudEventFormat.Formatter.EncodeStructuredModeMessage(input, out var contentType);
