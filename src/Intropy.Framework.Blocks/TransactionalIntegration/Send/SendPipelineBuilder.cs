@@ -29,8 +29,8 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
     private SerializeStep<TOutput, TCtx>? _serializer;
     private SendStep<TCtx>? _sender;
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
-    private IdempotencyRecordStep<string, TCtx>? _idempotencyRecorder;
-    private BusinessIncidentRouteStep<string, TCtx>? _businessIncidentRouter;
+    private IdempotencyRecordStep<byte[], TCtx>? _idempotencyRecorder;
+    private BusinessIncidentRouteStep<byte[], TCtx>? _businessIncidentRouter;
 
     private SendPipelineBuilder(string pipelineName, FrameworkOptions frameworkOptions,
         ILoggerFactory loggerFactory)
@@ -84,7 +84,7 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
 
         // Create the finalizer step
         var recorder =
-            new ExternalIdempotencyRecorder<string, TCtx>(client, _frameworkOptions);
+            new ExternalIdempotencyRecorder<byte[], TCtx>(client, _frameworkOptions);
 
         // Configure both steps
         _idempotencyChecker = checker;
@@ -100,7 +100,7 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
     /// <returns></returns>
     public SendPipelineBuilder<TInput, TOutput, TCtx> WithCustomIdempotency(
         IdempotencyCheckStep<TInput, TCtx> idempotencyCheckStep,
-        IdempotencyRecordStep<string, TCtx> idempotencyRecorder)
+        IdempotencyRecordStep<byte[], TCtx> idempotencyRecorder)
     {
         _idempotencyChecker = idempotencyCheckStep;
         _idempotencyRecorder = idempotencyRecorder;
@@ -109,9 +109,9 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
 
     /// <summary>
     /// Configures deserialization using a custom deserializer.
-    /// This step processes the raw string input to deserialize it into the input POCO type.
+    /// This step processes the raw byte input to deserialize it into the input POCO type.
     /// </summary>
-    /// <param name="deserializer">The <see cref="DeserializeStep{TInput, TContext}"/> that converts string to TInput.</param>
+    /// <param name="deserializer">The <see cref="DeserializeStep{TInput, TContext}"/> that converts bytes to TInput.</param>
     /// <returns>The builder for method chaining.</returns>
     public SendPipelineBuilder<TInput, TOutput, TCtx> WithDeserializer(
         DeserializeStep<TInput, TCtx> deserializer)
@@ -160,9 +160,9 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
 
     /// <summary>
     /// Configures serialization using a custom serializer step.
-    /// This step serializes the transformed output into a string.
+    /// This step serializes the transformed output into bytes.
     /// </summary>
-    /// <param name="serializer">The <see cref="SerializeStep{TOutput, TContext}"/> that converts TOutput to string.</param>
+    /// <param name="serializer">The <see cref="SerializeStep{TOutput, TContext}"/> that converts TOutput to bytes.</param>
     /// <returns>The builder for method chaining.</returns>
     public SendPipelineBuilder<TInput, TOutput, TCtx> WithSerializer(
         SerializeStep<TOutput, TCtx> serializer)
@@ -199,8 +199,8 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
         Func<TCtx, string> subjectExtractor)
     {
         _businessIncidentRouter =
-            new ExternalBusinessIncidentRouter<string, TCtx>(client, _frameworkOptions, messageIdExtractor,
-                subjectExtractor, defaultValueFactory: () => "");
+            new ExternalBusinessIncidentRouter<byte[], TCtx>(client, _frameworkOptions, messageIdExtractor,
+                subjectExtractor, defaultValueFactory: () => []);
 
         return this;
     }
@@ -211,7 +211,7 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
     /// <param name="businessIncidentRouteStep"></param>
     /// <returns></returns>
     public SendPipelineBuilder<TInput, TOutput, TCtx> WithCustomBusinessIncidents(
-        BusinessIncidentRouteStep<string, TCtx> businessIncidentRouteStep)
+        BusinessIncidentRouteStep<byte[], TCtx> businessIncidentRouteStep)
     {
         _businessIncidentRouter = businessIncidentRouteStep;
         return this;

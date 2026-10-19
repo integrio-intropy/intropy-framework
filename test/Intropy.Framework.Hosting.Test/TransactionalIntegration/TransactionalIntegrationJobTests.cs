@@ -215,7 +215,7 @@ public class TransactionalIntegrationJobTests
         // One broken source port must not hold the other ports' messages on the queue: the run
         // consumes what reached the queue, then fails naming the sweep's error.
         _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo => ((StepResult<string>)new StepResult<string>.Success(""), callInfo.Arg<Context>()));
+            .Returns(callInfo => ((StepResult<byte[]>)new StepResult<byte[]>.Success([]), callInfo.Arg<Context>()));
         var listingMayFail = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var source = Substitute.For<IFileAdapter>();
         source.ListAsync().Returns<Task<List<Adapters.Common.FileEntry>>>(async _ =>
@@ -305,7 +305,7 @@ public class TransactionalIntegrationJobTests
     public async Task ExecuteAsync_ShouldProcessPushedMessages()
     {
         // Verifies that messages pushed to the run's callback are passed to the send pipeline
-        var pipelineResult = ((StepResult<string>)new StepResult<string>.Success(""),
+        var pipelineResult = ((StepResult<byte[]>)new StepResult<byte[]>.Success([]),
             new Context(new Dictionary<string, string>()));
         _sendPipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<Context>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(pipelineResult));
@@ -333,10 +333,10 @@ public class TransactionalIntegrationJobTests
                 // The sidecar hands the payload over as the JSON the publisher wrote: a quoted string.
                 var data = System.Text.Encoding.UTF8.GetString(callInfo.Arg<ReadOnlyMemory<byte>>().Span);
                 var result = data.Contains("fail", StringComparison.Ordinal)
-                    ? (StepResult<string>)new StepResult<string>.TechnicalFailure(new TechnicalFailure("send failed"))
+                    ? (StepResult<byte[]>)new StepResult<byte[]>.TechnicalFailure(new TechnicalFailure("send failed"))
                     : data.Contains("duplicate", StringComparison.Ordinal)
-                        ? new StepResult<string>.Cancelled()
-                        : new StepResult<string>.Success("");
+                        ? new StepResult<byte[]>.Cancelled()
+                        : new StepResult<byte[]>.Success([]);
                 return (result, callInfo.Arg<Context>());
             });
         using var jobSource = new ActivitySource($"lifecycle-test-{Guid.NewGuid()}");

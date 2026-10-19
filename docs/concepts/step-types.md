@@ -150,8 +150,8 @@ The Blocks package provides pre-named step abstractions for common integration p
 | `ExtractStep<TInput, TCtx>` | `BusinessStep<TInput, TInput, TCtx>` | Enrichment (same type in/out) |
 | `ValidateStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Validation (same type in/out) |
 | `TransformStep<TInput, TOutput, TCtx>` | `TechnicalStep<TInput, TOutput, TCtx>` | Type conversion |
-| `SerializeStep<T, TCtx>` | `TechnicalStep<T, string, TCtx>` | Typed object → string |
-| `SendStep<TCtx>` | `BusinessStep<string, string, TCtx>` | Send to destination |
+| `SerializeStep<T, TCtx>` | `TechnicalStep<T, byte[], TCtx>` | Typed object → bytes |
+| `SendStep<TCtx>` | `BusinessStep<byte[], byte[], TCtx>` | Send to destination |
 
 ### Receive pipeline steps
 

@@ -187,12 +187,12 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
         public int Count => Volatile.Read(ref _count);
         public TaskCompletionSource<byte[]> Delivered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task<(StepResult<string> Result, Context Context)> Execute(ReadOnlyMemory<byte> input,
+        public Task<(StepResult<byte[]> Result, Context Context)> Execute(ReadOnlyMemory<byte> input,
             Context context, CancellationToken ct = default)
         {
             Interlocked.Increment(ref _count);
             Delivered.TrySetResult(input.ToArray());
-            return Task.FromResult(((StepResult<string>)new StepResult<string>.Success("sent"), context));
+            return Task.FromResult(((StepResult<byte[]>)new StepResult<byte[]>.Success("sent"u8.ToArray()), context));
         }
     }
 

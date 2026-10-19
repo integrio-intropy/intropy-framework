@@ -10,13 +10,13 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Send;
 /// <summary>
 /// A pipeline used on the receiving end of a message based integration flow. It follows these steps:
 /// <list type="number">
-///   <item>Deserialize: deserializes the string data into a POCO</item>
+///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
 ///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Extract: extracts extra data that is required during processing. E.g. ID lookups, enrich data, etc.</item>
 ///   <item>Validate: validates the POCO</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
-///   <item>Serialize: serializes the output POCO into string</item>
-///   <item>Send: sends the string data to the destination</item>
+///   <item>Serialize: serializes the output POCO into bytes</item>
+///   <item>Send: sends the bytes to the destination</item>
 ///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Route business incidents (optional): routes any business incidents that occurred during the execution</item>
 /// </list>
@@ -45,17 +45,17 @@ public class SendPipeline<TInput, TOutput, TCtx>(
     SerializeStep<TOutput, TCtx> serializer,
     SendStep<TCtx> sender,
     IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
-    IdempotencyRecordStep<string, TCtx>? idempotencyRecorder,
-    BusinessIncidentRouteStep<string, TCtx>? businessIncidentRouter) : ISendPipeline<TCtx> where TCtx : Context
+    IdempotencyRecordStep<byte[], TCtx>? idempotencyRecorder,
+    BusinessIncidentRouteStep<byte[], TCtx>? businessIncidentRouter) : ISendPipeline<TCtx> where TCtx : Context
 {
     /// <summary>
     /// Executes the pipeline
     /// </summary>
-    /// <param name="input">The data to process, represented as string.</param>
+    /// <param name="input">The data to process, as raw bytes.</param>
     /// <param name="context">The context to use in the execution.</param>
     /// <param name="ct">A cancellation token that can be used to abort the pipeline execution.</param>
     /// <returns>A tuple of the final result of the pipeline execution and the final context.</returns>
-    public async Task<(StepResult<string> Result, TCtx Context)> Execute(ReadOnlyMemory<byte> input, TCtx context,
+    public async Task<(StepResult<byte[]> Result, TCtx Context)> Execute(ReadOnlyMemory<byte> input, TCtx context,
         CancellationToken ct = default)
     {
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline
