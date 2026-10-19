@@ -26,7 +26,7 @@ public class SendRouteClaimCheckTests
     private RoutingMessageHandler Processor(IFileAdapter? store)
     {
         _pipeline.Execute(Arg.Any<ReadOnlyMemory<byte>>(), Arg.Any<OrderContext>(), Arg.Any<CancellationToken>())
-            .Returns(call => ((StepResult<string>)new StepResult<string>.Success(""), call.Arg<OrderContext>()));
+            .Returns(call => ((StepResult<byte[]>)new StepResult<byte[]>.Success([]), call.Arg<OrderContext>()));
         return SendRouting.Handler(
             new MessageRouteTable([
                 new RegisteredSendRoute<OrderContext>((metadata, isRetry) => new OrderContext(metadata, isRetry))
