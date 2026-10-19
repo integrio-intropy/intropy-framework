@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CloudNative.CloudEvents;
 using Dapr.Client;
 using Intropy.Contracts.BusinessIncidentService;
@@ -84,8 +85,13 @@ public class ExtractorClaimCheckTests
         Assert.IsType<StepResult<CloudEvent>.Success>(result);
         using var envelope = JsonDocument.Parse(_published!);
         var key = envelope.RootElement.GetProperty(CloudEventExtensionKeys.DataRef).GetString();
-        Assert.Equal($"orders/{DateTimeOffset.UtcNow:yyyy/MM/dd}/{envelope.RootElement.GetProperty("id").GetString()}",
-            key);
+        // The key's shape, not a date computed here: reading the clock a second time would make the
+        // test flake across midnight UTC, and in a custom format string "/" is the current culture's
+        // date separator, which is "-" on sv-SE. ClaimCheckSendTests pins the exact date against a
+        // fixed TimeProvider; what matters at this level is that the component and the date
+        // partition reach the key at all.
+        var id = Regex.Escape(envelope.RootElement.GetProperty("id").GetString()!);
+        Assert.Matches("^orders/[0-9]{4}/[0-9]{2}/[0-9]{2}/" + id + "$", key);
         Assert.False(envelope.RootElement.TryGetProperty("data", out _));
         Assert.False(envelope.RootElement.TryGetProperty("data_base64", out _));
 
