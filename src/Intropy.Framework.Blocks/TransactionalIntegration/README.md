@@ -196,6 +196,10 @@ builder.Services.AddSourcePort("order-source", builder.Configuration); // or Fil
 // Add HTTP client for the sender
 builder.Services.AddHttpClient();
 
+// Optional: where payloads too large for the broker are kept while a pointer travels instead.
+// Its adapter is configured under ClaimStore, the same settings a port takes.
+builder.Services.AddClaimStore(builder.Configuration);
+
 // Configure the lifecycle, including the receive side (sweep + publish to the topic)
 builder.Services.AddTransactionalIntegration(options =>
 {
@@ -204,6 +208,7 @@ builder.Services.AddTransactionalIntegration(options =>
     options.IdleTimeout = TimeSpan.FromSeconds(5);
     options.PostIdleGracePeriod = TimeSpan.FromSeconds(45);
     options.MaxMessageProcessingTime = TimeSpan.FromSeconds(40);
+    options.ClaimCheckThresholdBytes = 230_000; // required once a claim store is registered
 });
 
 // Register the SendPipeline
@@ -241,6 +246,8 @@ return await runner.RunAsync();
 | `IdleTimeout` | 5 seconds | Time to wait after no new messages before shutdown |
 | `PostIdleGracePeriod` | 45 seconds | Grace period for in-flight messages to complete |
 | `MaxMessageProcessingTime` | 40 seconds | Maximum time allowed for processing a single message |
+| `ClaimCheckMode` | `Auto` | When a payload is moved to the claim store instead of riding inside its message: `Auto` above the threshold, `Always` whatever the size, `Never` not at all. Applies only when a claim store is registered (`AddClaimStore`). See [Claim check](../../../docs/blocks/transactional-integration.md#claim-check) |
+| `ClaimCheckThresholdBytes` | none | The largest encoded message published inline. Required with a claim store registered in `Auto`. Set it 1–2 KB below the broker's maximum message size |
 
 ## ReceivePipeline Steps
 

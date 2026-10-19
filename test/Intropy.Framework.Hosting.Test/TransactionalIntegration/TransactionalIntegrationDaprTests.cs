@@ -7,11 +7,11 @@ using DotNet.Testcontainers.Containers;
 using DotNet.Testcontainers.Networks;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
-using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
@@ -76,6 +76,58 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AClaimCheckedFile_TravelsAsAPointer_AndArrivesIntact()
+    {
+        using var client = await StartSidecarAsync(withSubscription: true);
+        const string payload = "{\"orderId\":\"ORD-1001\",\"note\":\"too big to ride along\"}";
+        var source = new InMemoryFileAdapter().AddFile("ORD-1001.json", payload);
+        var claims = new InMemoryFileAdapter();
+        var sink = new RecordingSendPipeline();
+        await using var provider = Services(client, source, sink, FileCompletion.Delete,
+            claimStore: claims).BuildServiceProvider();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        var summary = await provider.GetRequiredService<TransactionalIntegrationJob<Context>>()
+            .ExecuteAsync(deadline.Token);
+        var delivered = await sink.Delivered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // The payload went to the claim store and came back out of it, over a real broker, without the
+        // send pipeline knowing: what it received is the file, byte for byte.
+        Assert.Equal(payload, Encoding.UTF8.GetString(delivered));
+        var claim = Assert.Single(claims.Files);
+        Assert.Equal(payload, Encoding.UTF8.GetString(claim.Value));
+        // Keyed by component, date and the id the message carries, so a dead-lettered message leads
+        // back to its payload.
+        Assert.Matches($@"^{AppId}/\d{{4}}/\d{{2}}/\d{{2}}/[0-9a-f-]{{36}}$", claim.Key);
+        Assert.Empty(source.Files);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 0, Skipped: 0), summary);
+    }
+
+    [Fact]
+    public async Task NeverMode_KeepsTheStoreRegistered_AndStillSendsThePayloadInline()
+    {
+        // The rollback state: claims are no longer written, but the store stays registered so messages
+        // already carrying a pointer can still be resolved and drained.
+        using var client = await StartSidecarAsync(withSubscription: true);
+        const string payload = "{\"orderId\":\"ORD-1003\",\"note\":\"inline again\"}";
+        var source = new InMemoryFileAdapter().AddFile("ORD-1003.json", payload);
+        var claims = new InMemoryFileAdapter();
+        var sink = new RecordingSendPipeline();
+        await using var provider = Services(client, source, sink, FileCompletion.Delete,
+            claimStore: claims, claimCheckMode: ClaimCheckMode.Never).BuildServiceProvider();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+
+        var summary = await provider.GetRequiredService<TransactionalIntegrationJob<Context>>()
+            .ExecuteAsync(deadline.Token);
+        var delivered = await sink.Delivered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(payload, Encoding.UTF8.GetString(delivered));
+        Assert.Empty(claims.Files);
+        Assert.Empty(source.Files);
+        Assert.Equal(new RunSummary(Processed: 1, Failed: 0, Skipped: 0), summary);
+    }
+
+    [Fact]
     public async Task MissingSubscription_LeavesTheSourceUntouched_AndExitsAsInfrastructureFailure()
     {
         using var client = await StartSidecarAsync(withSubscription: false);
@@ -97,7 +149,8 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
     }
 
     private ServiceCollection Services(DaprClient client, IFileAdapter source, ISendPipeline<Context> sink,
-        FileCompletion completion, TimeSpan? internalQueueReadyTimeout = null)
+        FileCompletion completion, TimeSpan? internalQueueReadyTimeout = null, IFileAdapter? claimStore = null,
+        ClaimCheckMode claimCheckMode = ClaimCheckMode.Always)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -111,6 +164,8 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
         });
         services.AddKeyedSingleton(Source, source);
         services.AddSingleton(sink);
+        if (claimStore is not null)
+            services.AddKeyedSingleton(ClaimStoreServiceCollectionExtensions.ClaimStoreKey, claimStore);
         services.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>
         {
             SourcePort = Source,
@@ -122,6 +177,7 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
                 options.PostIdleGracePeriod = TimeSpan.FromSeconds(5);
                 options.InternalQueueReadyTimeout = internalQueueReadyTimeout ?? TimeSpan.FromSeconds(30);
                 options.InternalQueueProbeInterval = TimeSpan.FromMilliseconds(100);
+                options.ClaimCheckMode = claimCheckMode;
             }
         });
         return services;

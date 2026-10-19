@@ -88,6 +88,7 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), "definition");
         options.EnsureValidInternalQueueReadyTimeout("definition");
+        options.EnsureValidClaimCheckThreshold("definition");
         return options;
     }
 

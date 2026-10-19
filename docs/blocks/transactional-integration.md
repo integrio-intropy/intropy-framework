@@ -160,6 +160,79 @@ builder.Services.AddSendPipeline<Order, Invoice, Context>("order-send",
             ctx => ctx.Metadata["message_id"]));
 ```
 
+## Claim check
+
+Brokers cap message size — Azure Service Bus Standard at 256 KB, for example — and a source file
+larger than that cap cannot ride inside its message. With a *claim store* registered, the receive
+side writes an oversized payload to the store and publishes a pointer to it instead (the CloudEvents
+standard `dataref` attribute); the send side fetches the payload back before the send pipeline runs.
+No send pipeline sees the mechanism: its input is the payload either way.
+
+The store is registered on its own, with its adapter configured under `ClaimStore` — the same
+settings a port takes (`Kind`, `DaprBindingName`, `BasePath`), validated the same way:
+
+```csharp
+builder.Services.AddClaimStore(builder.Configuration);
+builder.Services.AddTransactionalIntegration(opts =>
+{
+    opts.ClaimCheckMode = ClaimCheckMode.Auto;   // default
+    opts.ClaimCheckThresholdBytes = 230_000;     // required in Auto
+});
+```
+
+The two calls stay separate on purpose, including in the configuration-bound overload. Which store a
+component writes to is a deployment decision, as a port's adapter is, and registering a store is what
+makes claim-checking possible at all; the mode only decides whether the component uses it.
+
+| Option | Description |
+|--------|-------------|
+| `ClaimCheckMode` | `Auto` claim-checks above the threshold, `Always` claim-checks everything, `Never` claim-checks nothing |
+| `ClaimCheckThresholdBytes` | The largest encoded message published inline. Required in `Auto`, ignored otherwise |
+
+Without a claim store registered every payload rides inline whatever the mode, and a message that
+arrives carrying a pointer fails with a technical error naming the missing store.
+
+Set the threshold 1–2 KB below the broker's limit rather than at it. The measurement is taken before
+the trace context is attached, and Dapr adds attributes of its own (`topic`, `pubsubname`, `traceid`)
+when it forwards the event, so the message the broker is handed is always somewhat larger than what
+the threshold was compared against.
+
+A payload is written before its pointer is published, so a crash can orphan a payload but never
+leave a pointer to one that was never written.
+
+### How large a payload can get
+
+The claim check covers payloads between the broker's limit and about 4 MB. The Dapr sidecar caps
+request size at 4 MB by default, and that cap applies both to reading the source file and to writing
+the claim through its binding, so it — not the broker — is the real ceiling. Raise it with the
+`dapr.io/max-body-size` annotation if the integration carries files larger than that.
+
+### Retention
+
+The framework never deletes a claimed payload. Keys are partitioned by date
+(`{component}/{yyyy}/{MM}/{dd}/{messageId}`) so a storage lifecycle policy can expire them, and
+configuring that policy is the platform's job.
+
+Give it a retention longer than the dead-letter retention plus any window in which a dead-lettered
+message might be resubmitted. A payload expired while its message is still resubmittable makes that
+message fail with `FileNotFoundException` on every redelivery, with no way to recover it.
+
+### Rolling out and back
+
+Roll out in this order: deploy the store and the consumers that can resolve pointers first, then
+enable writing. A publisher that claim-checks before its consumers can resolve produces messages that
+fail until the consumers catch up.
+
+Roll back in the reverse order, which is why `Never` is a mode rather than an absence of a store:
+
+1. Set `ClaimCheckMode` to `Never`. New payloads stay inline immediately.
+2. Leave the store registered until the queue has drained every pointer already on it. The send side
+   resolves a pointer whenever a message carries one, whatever the mode.
+3. Remove the store.
+
+Removing the store first fails the messages still carrying pointers; they redeliver, dead-letter, and
+their payloads are stranded.
+
 ## Several source ports and send routes
 
 One integration can sweep several source ports and send each port's files through the send
@@ -218,7 +291,10 @@ Registration fails if:
 - the definition sets `SourcePort` or `Completion`, or a source port is already registered.
 
 Every route's send pipeline is built once at startup, so a route that cannot be composed fails the
-run before any file is touched, naming the route.
+run before any file is touched, naming the route. The receive pipeline is built once there too, so a
+configuration it cannot be built from — a claim store registered in `Auto` with no
+`ClaimCheckThresholdBytes`, say — is reported at the same point, before the sidecar is waited for and
+the internal queue is probed.
 
 Because every port has a route, every swept file reaches a send pipeline. A message that reaches
 the send side from a port no route handles, because the routes changed while it was queued, is left

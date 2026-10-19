@@ -1,8 +1,8 @@
 using Dapr.Client;
+using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Receive.Steps;
-using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
@@ -92,6 +92,7 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         ComponentRegistration.EnsureValidCallbackPort(options.CallbackPort,
             nameof(TransactionalIntegrationOptions), nameof(configureOptions));
         options.EnsureValidInternalQueueReadyTimeout(nameof(configureOptions));
+        options.EnsureValidClaimCheckThreshold(nameof(configureOptions));
 
         ComponentRegistration.MarkRegistered(services, "transactional integration");
         return AddTransactionalIntegrationCore(services, options, contextFactory, configureJob);
@@ -272,6 +273,12 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         if (ComponentConfigurationReader.Int32(configuration, nameof(TransactionalIntegrationOptions.CallbackPort),
                 $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.CallbackPort)}") is { } port)
             options.CallbackPort = port;
+        if (ComponentConfigurationReader.Enum<ClaimCheckMode>(configuration, nameof(TransactionalIntegrationOptions.ClaimCheckMode),
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.ClaimCheckMode)}") is { } claimCheckMode)
+            options.ClaimCheckMode = claimCheckMode;
+        if (ComponentConfigurationReader.Int32(configuration, nameof(TransactionalIntegrationOptions.ClaimCheckThresholdBytes),
+                $"{nameof(TransactionalIntegrationOptions)}.{nameof(TransactionalIntegrationOptions.ClaimCheckThresholdBytes)}") is { } claimCheckThreshold)
+            options.ClaimCheckThresholdBytes = claimCheckThreshold;
     }
 
     // routes: the send routes, or null for the one caller-registered send pipeline for every file.
@@ -298,11 +305,24 @@ public static class TransactionalIntegrationServiceCollectionExtensions
         services.TryAddSingleton<IReceivePipeline<TCtx>>(sp =>
         {
             var frameworkOptions = sp.GetRequiredService<FrameworkOptions>();
-            return ReceivePipelineBuilder<TCtx>
+            var builder = ReceivePipelineBuilder<TCtx>
                 .Create($"{frameworkOptions.ComponentName}.Receive", frameworkOptions,
                     sp.GetRequiredService<ILoggerFactory>())
-                .WithEnqueuer(sp.GetRequiredService<EnqueueStep<TCtx>>())
-                .Build();
+                .WithEnqueuer(sp.GetRequiredService<EnqueueStep<TCtx>>());
+            var claimStore = sp.GetKeyedService<IFileAdapter>(ClaimStoreServiceCollectionExtensions.ClaimStoreKey);
+            if (claimStore is not null)
+            {
+                var resolved = sp.GetRequiredService<TransactionalIntegrationOptions>();
+                if (resolved.ClaimCheckPolicy() is { } policy)
+                    builder = builder.WithClaimCheck(claimStore, policy);
+                else
+                    sp.GetRequiredService<ILoggerFactory>()
+                        .CreateLogger(typeof(ClaimStoreServiceCollectionExtensions))
+                        .LogInformation(
+                            "Claim store registered; claim check mode {Mode}: resolving pointers, writing none",
+                            resolved.ClaimCheckMode);
+            }
+            return builder.Build();
         });
 
         // The send side: the message processor, and the callback the sidecar pushes the queue to.
@@ -329,12 +349,21 @@ public static class TransactionalIntegrationServiceCollectionExtensions
             sp.GetRequiredService<FrameworkOptions>(), contextFactory, sp.GetRequiredService<ILoggerFactory>()));
         // The internal queue is probed through the enqueuer that publishes the files, so a replaced enqueuer
         // (a test fake, another transport) that cannot be probed sweeps without the gate.
-        services.AddSingleton(sp => new TransactionalIntegrationJob<TCtx>(
-            sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
-            sp.GetRequiredService<SendSideRun>(),
-            sp.GetRequiredService<ILoggerFactory>(),
-            InternalQueueReadinessGateFor(sp.GetRequiredService<EnqueueStep<TCtx>>(),
-                sp.GetRequiredService<TransactionalIntegrationOptions>(), sp.GetRequiredService<ILoggerFactory>())));
+        services.AddSingleton(sp =>
+        {
+            // The receive pipeline is built once here for the same reason the send routes are: so a
+            // configuration it cannot be built from — a claim store with no threshold, say — fails
+            // alongside them, rather than once the sidecar is up and the queue has been probed. The
+            // sweep validates it again per port before listing a file, which is what keeps a bad
+            // configuration from touching one; this only moves the report earlier.
+            _ = sp.GetRequiredService<IReceivePipeline<TCtx>>();
+            return new TransactionalIntegrationJob<TCtx>(
+                sp.GetRequiredService<TransactionalIntegrationReceiver<TCtx>>(),
+                sp.GetRequiredService<SendSideRun>(),
+                sp.GetRequiredService<ILoggerFactory>(),
+                InternalQueueReadinessGateFor(sp.GetRequiredService<EnqueueStep<TCtx>>(),
+                    sp.GetRequiredService<TransactionalIntegrationOptions>(), sp.GetRequiredService<ILoggerFactory>()));
+        });
 
         services.AddJob<TransactionalIntegrationJob<TCtx>>(configureJob);
 

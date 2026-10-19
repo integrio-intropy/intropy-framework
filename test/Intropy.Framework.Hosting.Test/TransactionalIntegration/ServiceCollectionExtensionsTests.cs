@@ -208,6 +208,59 @@ public class ServiceCollectionExtensionsTests
         byDefinition.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>());
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    [InlineData(int.MinValue)]
+    public void InvalidClaimCheckThreshold_FailsAtRegistrationInBothShapes(int thresholdBytes)
+    {
+        var byOptions = GetServices();
+        var optionsError = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            byOptions.AddTransactionalIntegration(options => options.ClaimCheckThresholdBytes = thresholdBytes));
+        Assert.Contains("TransactionalIntegrationOptions.ClaimCheckThresholdBytes", optionsError.Message,
+            StringComparison.Ordinal);
+        // A rejected registration must not prevent a corrected retry.
+        byOptions.AddTransactionalIntegration(options => options.ClaimCheckThresholdBytes = 262_144);
+
+        var byDefinition = GetServices();
+        var definitionError = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            byDefinition.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>
+            {
+                Configure = options => options.ClaimCheckThresholdBytes = thresholdBytes
+            }));
+        Assert.Contains("TransactionalIntegrationOptions.ClaimCheckThresholdBytes", definitionError.Message,
+            StringComparison.Ordinal);
+        byDefinition.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>());
+    }
+
+    [Fact]
+    public void AnUnsetClaimCheckThreshold_IsAccepted_BecauseTheModeDecidesWhetherOneIsNeeded()
+    {
+        // Only the range is checked at registration; whether a threshold is required depends on the
+        // mode and on a claim store, which may be registered either side of the integration.
+        var services = GetServices();
+
+        services.AddTransactionalIntegration(options => options.ClaimCheckThresholdBytes = null);
+
+        Assert.Null(services.BuildServiceProvider()
+            .GetRequiredService<TransactionalIntegrationOptions>().ClaimCheckThresholdBytes);
+    }
+
+    [Fact]
+    public void ValidClaimCheckThreshold_FlowsThroughConfiguration()
+    {
+        var services = GetServices();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["ClaimCheckThresholdBytes"] = "262144" })
+            .Build();
+
+        services.AddTransactionalIntegration(configuration, () => new TransactionalIntegrationDefinition<Context>());
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Equal(262_144,
+            provider.GetRequiredService<TransactionalIntegrationOptions>().ClaimCheckThresholdBytes);
+    }
+
     [Fact]
     public void ValidInternalQueueReadyTimeout_FlowsThroughConfiguration()
     {
