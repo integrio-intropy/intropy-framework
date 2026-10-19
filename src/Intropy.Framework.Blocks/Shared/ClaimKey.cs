@@ -65,6 +65,12 @@ internal static class ClaimKey
                && IsSegment(segments[4]);
     }
 
+    /// <summary>Whether <paramref name="segment"/> can name a part of a claim key, so a caller can
+    /// refuse a value it did not choose before <see cref="For"/> throws over it.</summary>
+    /// <param name="segment">The candidate segment — a component name, or the id of the message the
+    /// pointer will travel on.</param>
+    internal static bool CanName(string? segment) => segment is { Length: > 0 } s && IsSegment(s);
+
     /// <summary>One or more letters, digits, dots, dashes or underscores, and neither <c>.</c> nor
     /// <c>..</c>: the two that would traverse rather than name.</summary>
     private static bool IsSegment(string segment)

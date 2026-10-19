@@ -482,6 +482,13 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// however they are configured — including resolved from DI. A custom sender that declares none
     /// is rejected when the extractor is built.
     /// </para>
+    /// <para>
+    /// Constrains the pipeline's CloudEvent ids: the id names its payload in the store, so it must be
+    /// one or more letters, digits, <c>.</c>, <c>-</c> or <c>_</c>, and neither <c>.</c> nor
+    /// <c>..</c>. The GUIDs <see cref="CloudEventSerializeStep{TOutput,TCtx}"/> mints qualify; a
+    /// custom serialize step setting <c>urn:uuid:…</c> or <c>order:42</c> does not, and such an
+    /// extractor publishes small events fine and fails only once one crosses the threshold.
+    /// </para>
     /// </remarks>
     /// <param name="store">The claim store to write payloads to.</param>
     /// <param name="policy">When a payload is claim-checked: above a threshold, or always.</param>

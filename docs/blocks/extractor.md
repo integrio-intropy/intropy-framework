@@ -315,6 +315,17 @@ Without a claim store registered every payload rides inline whatever the mode. S
 is attached, and Dapr adds attributes of its own (`topic`, `pubsubname`, `traceid`) when it forwards
 the event.
 
+!!! warning "A claim-checking extractor constrains its CloudEvent ids"
+
+    The event's `id` names its payload in the claim store, so with the claim check configured every
+    id must be one or more letters, digits, `.`, `-` or `_` — and neither `.` nor `..`. The
+    built-in `CloudEventSerializeStep` mints GUIDs, which already qualify; a custom serialize step
+    setting something like `urn:uuid:…` or `order:42` does not.
+
+    This is worth checking before enabling the claim check rather than after, because of *when* it
+    fails: such an extractor publishes small events perfectly well and only breaks once one crosses
+    the threshold, as a technical failure that retries and then dead-letters.
+
 The claim check needs the sender to declare the envelope attributes it supplies — its `Source`, and
 the `Type` it falls back to — because it encodes the envelope to measure it, and encoding refuses one
 missing either. Both built-in senders declare theirs, however they are configured, so

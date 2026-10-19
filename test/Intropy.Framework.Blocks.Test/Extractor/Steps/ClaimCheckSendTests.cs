@@ -211,6 +211,39 @@ public class ClaimCheckSendTests
         Assert.Equal($"{Component}/2026/03/07/{sender.Sent.Id}", DataRef(sender.Sent));
     }
 
+    // The failure mode this guards is a latent one: an id outside the key's charset publishes small
+    // events perfectly well and only breaks once one crosses the threshold, so the message has to
+    // name the id rather than talk about key segments.
+    [Theory]
+    [InlineData("urn:uuid:7c3f1a90-0f4e-4a1e-9a7e-2f3c5d6e7f80")]
+    [InlineData("order:42")]
+    [InlineData("order/42")]
+    [InlineData("..")]
+    public async Task ExecuteAsync_RefusesAnIdThatCannotNameAKey_NamingTheId(string id)
+    {
+        var (step, sender, store) = StepWith(ClaimCheckPolicy.Always);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            step.ExecuteAsync(Event(new Payload("ORD-1", 3), id), new Context([], false), CancellationToken.None));
+
+        Assert.Contains(id, error.Message, StringComparison.Ordinal);
+        Assert.Contains("claim-checked", error.Message, StringComparison.Ordinal);
+        Assert.Null(sender.Sent);
+        await store.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default, default);
+    }
+
+    // The control: an id of the shape the built-in serialize step mints goes through untouched.
+    [Fact]
+    public async Task ExecuteAsync_AcceptsAGuidId_AsTheBuiltInSerializeStepMints()
+    {
+        var (step, sender, _) = StepWith(ClaimCheckPolicy.Always);
+        var id = Guid.NewGuid().ToString();
+
+        await step.ExecuteAsync(Event(new Payload("ORD-1", 3), id), new Context([], false), CancellationToken.None);
+
+        Assert.Equal($"{Component}/2026/03/07/{id}", DataRef(sender.Sent!));
+    }
+
     [Fact]
     public async Task ExecuteAsync_StoresEveryPayload_InAlwaysMode()
     {

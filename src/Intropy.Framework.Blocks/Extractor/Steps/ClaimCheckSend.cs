@@ -86,6 +86,18 @@ internal sealed class ClaimCheckSend<TCtx>(
         if (string.IsNullOrEmpty(input.Id))
             input.Id = Guid.NewGuid().ToString();
 
+        // An id the key format cannot hold is refused by name, here, rather than as an
+        // ArgumentException about a "segment" from inside ClaimKey. It is worth the separate check
+        // because of when it surfaces: such a component publishes small events perfectly well and
+        // only fails once one crosses the threshold, so the message has to point straight at the id
+        // and at the step that chose it.
+        if (!ClaimKey.CanName(input.Id))
+            throw new InvalidOperationException(
+                $"CloudEvent id '{input.Id}' cannot be claim-checked: the id names the payload's key in the " +
+                "claim store, so it must be one or more letters, digits, '.', '-' or '_', and neither '.' nor " +
+                "'..'. Give the serialize step an id of that shape — the built-in CloudEventSerializeStep's " +
+                "GUIDs already are — or turn the claim check off for this extractor.");
+
         var (payload, binary) = Encode(input.Data);
 
         var activity = Activity.Current;
