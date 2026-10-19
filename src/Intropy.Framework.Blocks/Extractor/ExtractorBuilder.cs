@@ -503,6 +503,25 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Removes any claim check this builder has been given, so the pipeline publishes every payload
+    /// inside its envelope.
+    /// </summary>
+    /// <remarks>
+    /// Internal because it exists for one caller: the hosting layer applying
+    /// <see cref="ClaimCheckMode.Never"/>. That mode is the documented rollback — it has to stop new
+    /// claims whatever configured the check, including a pipeline that called
+    /// <see cref="WithClaimCheck"/> itself, or the rollback would silently do nothing for exactly
+    /// the component that needed it.
+    /// </remarks>
+    /// <returns>The builder for method chaining.</returns>
+    internal ExtractorBuilder<TInput, TOutput, TCtx> WithoutClaimCheck()
+    {
+        _claimStore = null;
+        _claimCheckPolicy = null;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="Extractor{TInput,TOutput,TContext}"/>.
     /// </summary>
     /// <returns>A configured instance of <see cref="Extractor{TInput,TOutput,TContext}"/></returns>

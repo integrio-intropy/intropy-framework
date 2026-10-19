@@ -44,8 +44,16 @@ public class ExtractorClaimCheckWiringTests
             .WithSender(provider.GetRequiredService<SendStep<Context>>())
             .WithBusinessIncidents(_ => "orders", _ => "orders");
 
+    /// <summary>A pipeline that configures its own claim check against its own store, the way a
+    /// component registering a prebuilt extractor would.</summary>
+    private static ExtractorBuilder<Order, Order, Context> PipelineWithOwnClaimCheck(
+        InMemoryFileAdapter ownStore, ExtractorBuilder<Order, Order, Context> builder,
+        IServiceProvider provider) =>
+        Pipeline(builder, provider).WithClaimCheck(ownStore, ClaimCheckPolicy.Always);
+
     private static ServiceProvider Services(Action<ExtractorOptions>? configure, bool withClaimStore,
-        List<string>? log = null)
+        List<string>? log = null,
+        Func<ExtractorBuilder<Order, Order, Context>, IServiceProvider, ExtractorBuilder<Order, Order, Context>>? pipeline = null)
     {
         var idempotency = Substitute.For<IIdempotencyServiceClient>();
         idempotency.GetStatusAsync(Arg.Any<MessageInfo>())
@@ -75,7 +83,7 @@ public class ExtractorClaimCheckWiringTests
         if (withClaimStore)
             services.AddKeyedSingleton<IFileAdapter>(ClaimStoreServiceCollectionExtensions.ClaimStoreKey,
                 new InMemoryFileAdapter());
-        services.AddExtractor<Order, Order, Context>(Pipeline,
+        services.AddExtractor<Order, Order, Context>(pipeline ?? Pipeline,
             (metadata, isRetry) => new Context(metadata, isRetry), configureJob: null, configureOptions: configure);
         return services.BuildServiceProvider();
     }
@@ -124,6 +132,34 @@ public class ExtractorClaimCheckWiringTests
         await RunAsync(provider);
 
         Assert.Contains(log, m => m.Contains("claim check mode Never", StringComparison.Ordinal));
+    }
+
+    // Never is the documented rollback, so it has to stop new claims whatever configured them. A
+    // pipeline that called WithClaimCheck itself, against a store the host never registered, is the
+    // case that would otherwise keep claim-checking while its configuration said it had stopped.
+    [Fact]
+    public async Task NeverMode_AlsoClearsAClaimCheckThePipelineConfiguredItself()
+    {
+        var ownStore = new InMemoryFileAdapter();
+        var provider = Services(o => o.ClaimCheckMode = ClaimCheckMode.Never, withClaimStore: false,
+            pipeline: (b, p) => PipelineWithOwnClaimCheck(ownStore, b, p));
+
+        await RunAsync(provider);
+
+        Assert.Empty(ownStore.Files);
+    }
+
+    // The control: without Never, the pipeline's own claim check is left alone.
+    [Fact]
+    public async Task APipelinesOwnClaimCheck_IsLeftAlone_WhenTheModeIsNotNever()
+    {
+        var ownStore = new InMemoryFileAdapter();
+        var provider = Services(o => o.ClaimCheckThresholdBytes = 1_000, withClaimStore: false,
+            pipeline: (b, p) => PipelineWithOwnClaimCheck(ownStore, b, p));
+
+        await RunAsync(provider);
+
+        Assert.Single(ownStore.Files);
     }
 
     // Registering a store is what makes claim-checking possible at all; the mode only decides

@@ -30,21 +30,31 @@ internal static class ExtractorClaimCheck
     internal static ExtractorBuilder<TInput, TOutput, TCtx> Apply<TInput, TOutput, TCtx>(
         ExtractorBuilder<TInput, TOutput, TCtx> builder, IServiceProvider scope) where TCtx : Context
     {
+        var options = scope.GetRequiredService<ExtractorOptions>();
         var store = scope.GetKeyedService<IFileAdapter>(ClaimStoreServiceCollectionExtensions.ClaimStoreKey);
+
+        // The mode is read before the store, and Never clears rather than merely declining to add:
+        // it is the documented rollback, so it has to stop new claims whatever configured them —
+        // including a pipeline that called WithClaimCheck itself, with a store of its own that was
+        // never registered here. Declining would leave exactly that component claim-checking while
+        // its configuration said otherwise.
+        if (options.ClaimCheckMode == ClaimCheckMode.Never)
+        {
+            // Worth one line, because the alternative is an operator wondering why the store they
+            // registered stays empty.
+            if (store is not null)
+                scope.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger(typeof(ClaimStoreServiceCollectionExtensions))
+                    .LogInformation(
+                        "Claim store registered; claim check mode {Mode}: publishing every payload inline",
+                        options.ClaimCheckMode);
+            return builder.WithoutClaimCheck();
+        }
+
         if (store is null)
             return builder;
 
-        var options = scope.GetRequiredService<ExtractorOptions>();
-        if (options.ClaimCheckPolicy() is { } policy)
-            return builder.WithClaimCheck(store, policy);
-
-        // A store with nothing to write is the rollback, not a misconfiguration — but it is worth
-        // one line in the log, because the alternative is an operator wondering why the store stays
-        // empty.
-        scope.GetRequiredService<ILoggerFactory>()
-            .CreateLogger(typeof(ClaimStoreServiceCollectionExtensions))
-            .LogInformation("Claim store registered; claim check mode {Mode}: publishing every payload inline",
-                options.ClaimCheckMode);
-        return builder;
+        // Non-null after the Never guard above; a missing threshold throws here, naming the setting.
+        return builder.WithClaimCheck(store, options.ClaimCheckPolicy()!);
     }
 }
