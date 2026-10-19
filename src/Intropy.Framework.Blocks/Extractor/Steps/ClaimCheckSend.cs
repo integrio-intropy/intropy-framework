@@ -88,10 +88,11 @@ internal sealed class ClaimCheckSend<TCtx>(
             input.Id = Guid.NewGuid().ToString();
 
         // An id the key format cannot hold is refused by name, here, rather than as an
-        // ArgumentException about a "segment" from inside ClaimKey. It is worth the separate check
-        // because of when it surfaces: such a component publishes small events perfectly well and
-        // only fails once one crosses the threshold, so the message has to point straight at the id
-        // and at the step that chose it.
+        // ArgumentException about a "segment" from inside ClaimKey. Deliberately before the size
+        // decision below, so every event carrying data is checked rather than only the ones large
+        // enough to be claim-checked: an id scheme this pipeline cannot use is a configuration
+        // mistake, and finding it on the first event beats finding it weeks later, the first time a
+        // payload happens to grow past the threshold.
         if (!ClaimKey.CanName(input.Id))
             throw new InvalidOperationException(
                 $"CloudEvent id '{input.Id}' cannot be claim-checked: the id names the payload's key in the " +

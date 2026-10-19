@@ -486,8 +486,10 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// Constrains the pipeline's CloudEvent ids: the id names its payload in the store, so it must be
     /// one or more letters, digits, <c>.</c>, <c>-</c> or <c>_</c>, and neither <c>.</c> nor
     /// <c>..</c>. The GUIDs <see cref="CloudEventSerializeStep{TOutput,TCtx}"/> mints qualify; a
-    /// custom serialize step setting <c>urn:uuid:…</c> or <c>order:42</c> does not, and such an
-    /// extractor publishes small events fine and fails only once one crosses the threshold.
+    /// custom serialize step setting <c>urn:uuid:…</c> or <c>order:42</c> does not. The id is
+    /// checked on every event that carries data, before its size is considered, so a pipeline with
+    /// an unusable id scheme fails on its first event rather than on the first one large enough to
+    /// be claim-checked.
     /// </para>
     /// </remarks>
     /// <param name="store">The claim store to write payloads to.</param>

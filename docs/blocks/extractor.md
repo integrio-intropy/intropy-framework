@@ -322,9 +322,10 @@ the event.
     built-in `CloudEventSerializeStep` mints GUIDs, which already qualify; a custom serialize step
     setting something like `urn:uuid:…` or `order:42` does not.
 
-    This is worth checking before enabling the claim check rather than after, because of *when* it
-    fails: such an extractor publishes small events perfectly well and only breaks once one crosses
-    the threshold, as a technical failure that retries and then dead-letters.
+    The id is checked on every event that carries data, before its size is considered — so an
+    extractor with an unusable id scheme fails on its first event, as a technical failure that
+    retries and then dead-letters. That is deliberate: the alternative is discovering the problem
+    weeks later, the first time a payload happens to grow past the threshold.
 
 The claim check needs the sender to declare the envelope attributes it supplies — its `Source`, and
 the `Type` it falls back to — because it encodes the envelope to measure it, and encoding refuses one

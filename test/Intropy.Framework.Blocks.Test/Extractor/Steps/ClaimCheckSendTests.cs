@@ -233,6 +233,22 @@ public class ClaimCheckSendTests
         await store.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default, default);
     }
 
+    // Checked before the size decision, so a payload that would never be claim-checked is refused
+    // too: the id scheme is a configuration mistake, and this pipeline finds it on its first event
+    // rather than on the first one large enough to cross the threshold.
+    [Fact]
+    public async Task ExecuteAsync_RefusesAnIdThatCannotNameAKey_EvenWhenThePayloadWouldStayInline()
+    {
+        var (step, sender, store) = StepWith(ClaimCheckPolicy.Above(100_000));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            step.ExecuteAsync(Event(new Payload("ORD-1", 3), "order:42"), new Context([], false),
+                CancellationToken.None));
+
+        Assert.Null(sender.Sent);
+        await store.DidNotReceiveWithAnyArgs().WriteAsync(default!, default!, default, default);
+    }
+
     // The control: an id of the shape the built-in serialize step mints goes through untouched.
     [Fact]
     public async Task ExecuteAsync_AcceptsAGuidId_AsTheBuiltInSerializeStepMints()
