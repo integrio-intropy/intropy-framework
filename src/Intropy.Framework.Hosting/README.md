@@ -108,7 +108,8 @@ its actual path.
 `AddExtractor` registers a file-driven extractor as a run-to-completion job. Each
 run sweeps the source once: every file goes through the extractor pipeline (deserialize →
 validate → enrichments → idempotency check → transform → CloudEvent serialize → publish →
-record idempotency → incident routing) in its own DI scope. The file is completed (deleted by
+record idempotency → incident routing) in its own DI scope. Idempotency is optional: without
+`WithIdempotency` the check and record are skipped and every file is published. The file is completed (deleted by
 default, or archived, or a custom `FileCompletion`) only after it has been handled.
 
 Component code supplies the process steps (the existing `DeserializeStep`, `ValidateStep`,
@@ -116,8 +117,8 @@ Component code supplies the process steps (the existing `DeserializeStep`, `Vali
 `ExtractorBuilder`, the same way a Transactional Integration configures its pipelines:
 
 ```csharp
-// Caller-owned: the component identity, logging, DaprClient, IIdempotencyServiceClient,
-// IBusinessIncidentServiceClient, the process steps, and the source port.
+// Caller-owned: the component identity, logging, DaprClient, IIdempotencyServiceClient (only
+// with WithIdempotency), IBusinessIncidentServiceClient, the process steps, and the source port.
 services.AddIntropyFramework(o => { o.ComponentName = "orders-extractor"; o.ServiceNamespace = "example"; });
 services.AddSourcePort("orders-source", configuration, FileCompletion.Archive("archive")); // completion optional; default: delete
 services.AddScoped<OrderDeserializer>();
@@ -175,7 +176,7 @@ fakes with ordinary registrations. To replace the publisher too, configure the p
 services.RemoveAllKeyed<IFileAdapter>("orders-source");
 services.AddKeyedSingleton<IFileAdapter>("orders-source", new InMemoryFileAdapter());
 services.AddSingleton<SendStep<OrderContext>>(new FakeTopic<OrderContext>());
-services.AddSingleton<IIdempotencyServiceClient>(new FakeIdempotencyServiceClient());
+services.AddSingleton<IIdempotencyServiceClient>(new FakeIdempotencyServiceClient()); // only with WithIdempotency
 services.AddSingleton<IBusinessIncidentServiceClient>(new FakeBusinessIncidentServiceClient());
 ```
 
@@ -184,7 +185,7 @@ services.AddSingleton<IBusinessIncidentServiceClient>(new FakeBusinessIncidentSe
 | Pipeline result | Source file | Counted as |
 |----------------|-------------|---------|
 | `Success` (published, or incident routed) | Completed | `Processed` |
-| `Cancelled` (idempotent duplicate) | Completed | `Skipped` |
+| `Cancelled` (idempotent duplicate; only with `WithIdempotency`) | Completed | `Skipped` |
 | `TechnicalFailure`, `BusinessFailure`, empty content, exception | Kept | `Failed` |
 | Completion fails after success or duplicate | Kept | `Failed` |
 | `Aborted` with a host cancellation | Kept | Not counted; the sweep stops |
@@ -197,7 +198,8 @@ its outcome, and marked as an error when the file is kept. Logs written while a 
 carry `FileName` and `SourcePort` as a logging scope. Any `Failed` file makes the run exit 1; the kept file is retried on the next run. Host
 cancellation is checked before listing and before each file; in-flight work is always awaited.
 Delivery is at-least-once: a crash after publishing but before the idempotency record means the
-next run may publish the file again.
+next run may publish the file again. Without idempotency, a crash after publishing but before
+the file is completed has the same effect, and so does a source that delivers the same file twice.
 
 ## Sweeping a source
 

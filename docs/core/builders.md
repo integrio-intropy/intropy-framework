@@ -79,7 +79,7 @@ public SendPipelineBuilder<TInput, TOutput, TCtx> WithIdempotency(
     Func<TInput, string>? hashGenerator = null)
 ```
 
-Configures automatic idempotency using the external idempotency service. Sets up both the check step (before validation) and the record step (after sending). **Required** (or use `WithCustomIdempotency`).
+Configures automatic idempotency using the external idempotency service. Sets up both the check step (before validation) and the record step (after sending). **Optional**: without it (or `WithCustomIdempotency`), both steps are skipped.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -313,12 +313,13 @@ Configures sending CloudEvents to a Dapr service via service invocation. Invokes
 
 ```csharp
 public ExtractorBuilder<TInput, TOutput, TCtx> WithIdempotency(
-    Func<TInput, string> idExtractor,
-    Func<TInput, DateTime> dateExtractor,
-    Func<TInput, string>? hashGenerator = null)
+    Func<TInput, TCtx, string> idExtractor,
+    Func<TInput, TCtx, DateTimeOffset> dateExtractor,
+    Func<TInput, string>? hashGenerator = null,
+    IdempotencyScope scope = IdempotencyScope.Route)
 ```
 
-Configures idempotency. Resolves `IIdempotencyServiceClient` from the service provider. **Required.**
+Configures idempotency. Resolves `IIdempotencyServiceClient` from the service provider. **Optional**: without it, the check and record steps are skipped and no `IIdempotencyServiceClient` needs to be registered.
 
 ### WithBusinessIncidents
 

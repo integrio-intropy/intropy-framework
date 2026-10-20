@@ -9,10 +9,10 @@ graph LR
     A[Payload bytes] --> B[Deserialize]
     B --> C["Extract(s)"]
     C --> D[Validate]
-    D --> E[Idempotency Check]
+    D --> E["Idempotency Check (optional)"]
     E --> F[Transform]
     F --> G[Send]
-    G --> H[Idempotency Record]
+    G --> H["Idempotency Record (optional)"]
     H --> I["Send Receipt (optional)"]
     I --> J[Business Incident Route]
 ```
@@ -22,7 +22,7 @@ The Loader is a standalone pipeline for loading canonical data into a target sys
 
 The message's own attributes — id, subject, time, source, type, data content type — travel on the context, not through the pipeline. Whoever runs the pipeline puts them there first: the hosting layer projects them from each delivery, and the `CloudEvent` overload of `Execute` does it for a standalone caller.
 
-You can call the Loader's `Execute` method directly — there is no lifecycle manager or message subscription involved. The Loader handles its own OpenTelemetry tracing, idempotency, and business incident routing. By default an execution continues the ambient trace, which is what a host sets up per message; pass `detachTrace: true` to start its own instead.
+You can call the Loader's `Execute` method directly — there is no lifecycle manager or message subscription involved. The Loader handles its own OpenTelemetry tracing, idempotency (optional), and business incident routing. By default an execution continues the ambient trace, which is what a host sets up per message; pass `detachTrace: true` to start its own instead.
 
 The Loader is the natural counterpart to the Extractor: where the Extractor reads from a source and publishes CloudEvents, the Loader subscribes to CloudEvents and writes to a target. Together they form the two halves of a Golden Record pipeline.
 
@@ -38,10 +38,10 @@ The pipeline executes in this order:
 1. **Deserialize** (`ReadOnlyMemory<byte> → TInput`) — Deserialize the payload bytes into a typed object
 2. **Extract** (`TInput → TInput`) — Enrich with additional data (optional, multiple allowed)
 3. **Validate** (`TInput → TInput`) — Validate the enriched object
-4. **Idempotency Check** (`TInput → TInput`) — Check if this message was already processed (uses `Subject` and `Time` from the context)
+4. **Idempotency Check** (`TInput → TInput`) — Check if this message was already processed (uses `Subject` and `Time` from the context; optional, configured with `WithIdempotency`)
 5. **Transform** (`TInput → TOutput`) — Convert to the target system's model
 6. **Send** (`TOutput → TOutput`) — Send the data to the external system
-7. **Idempotency Record** — Record that this CloudEvent was processed (finalizer)
+7. **Idempotency Record** — Record that this CloudEvent was processed (optional, configured with `WithIdempotency`)
 8. **Send Receipt** (`TOutput → TOutput`) — Send a receipt after a successful load (optional step)
 9. **Business Incident Route** — Route any business incidents (finalizer)
 
@@ -60,7 +60,7 @@ The message's attributes are stamped onto the context **before any step runs** �
 | `cloudevent.type` | `Type` | `"com.company.customer.extracted"` |
 | `cloudevent.datacontenttype` | `DataContentType` | `"application/json"` |
 
-The idempotency checker uses `cloudevent.subject` as the ID and `cloudevent.time` as the date, so both must be on the context — which means both must be set on the incoming message. An attribute the message does not carry is left off the context rather than written empty, so a missing one fails where it is required instead of silently keying a record on nothing.
+When idempotency is configured, the checker uses `cloudevent.subject` as the ID and `cloudevent.time` as the date, so both must be on the context — which means both must be set on the incoming message. An attribute the message does not carry is left off the context rather than written empty, so a missing one fails where it is required instead of silently keying a record on nothing.
 
 ## Implementing steps
 
@@ -206,6 +206,8 @@ public class CrmApiSender : SendStep<CrmContact, Context>
 
 ## Idempotency
 
+Idempotency is optional. Without `WithIdempotency` the check and record steps are skipped: every message that reaches the pipeline is loaded, no `IIdempotencyServiceClient` needs to be registered, the framework reads no subject or time from the message, and the result is never `Cancelled`. Leave it out only when the target tolerates a message loaded twice — delivery is at-least-once.
+
 The Loader's idempotency strategy is based on the message's metadata on the context, which means you don't need to provide ID or date extractors like you do with the Extractor or Send Pipeline.
 
 The idempotency checker extracts:
@@ -243,7 +245,7 @@ public class CustomerRecord : IHashable
 
 After the data is loaded into the external system, the Loader can optionally send a receipt. This is useful for notifying downstream systems that a record was successfully loaded.
 
-The receipt sender is a regular `SendStep<TOutput, TCtx>` that runs after idempotency is recorded. Because it's a pipeline step (not a finalizer), it only executes on success — if any earlier step fails, the receipt is not sent. If the receipt sender itself fails, the pipeline result becomes a `TechnicalFailure`.
+The receipt sender is a regular `SendStep<TOutput, TCtx>` that runs after the send step, and after idempotency is recorded when it is configured. Because it's a pipeline step (not a finalizer), it only executes on success — if any earlier step fails, the receipt is not sent. If the receipt sender itself fails, the pipeline result becomes a `TechnicalFailure`.
 
 ```csharp
 .WithReceiptSender(new LoadReceiptPublisher(daprClient))
@@ -298,7 +300,7 @@ var loader = LoaderBuilder<CustomerRecord, CrmContact, Context>
     .Build();
 ```
 
-All builder methods except `WithExtractor` and `WithReceiptSender` are required. The builder throws `InvalidOperationException` on `Build()` if any required step is missing.
+All builder methods except `WithExtractor`, `WithIdempotency` and `WithReceiptSender` are required. The builder throws `InvalidOperationException` on `Build()` if any required step is missing.
 
 ### DI requirements
 
@@ -341,7 +343,7 @@ switch (result)
         // success.Value is the sent object
         break;
     case StepResult<CrmContact>.Cancelled:
-        // Idempotency check found this message was already processed
+        // Idempotency check found this message was already processed (only with WithIdempotency)
         break;
     case StepResult<CrmContact>.BusinessFailure bf:
         // bf.Value is a BusinessIncident (routed automatically by the finalizer)

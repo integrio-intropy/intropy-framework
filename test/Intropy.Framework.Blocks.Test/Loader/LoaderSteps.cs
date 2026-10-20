@@ -121,10 +121,13 @@ public sealed class CustomerTransformer : TransformStep<LoaderCustomerIn, Loader
 
 public sealed class CustomerSender : SendStep<LoaderCustomerOut, Context>
 {
+    public int SentCount { get; private set; }
+
     public override Task<(TechnicalStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
         LoaderCustomerOut input, Context context, CancellationToken ct)
     {
         // Simulate successful send
+        SentCount++;
         return Task.FromResult<(TechnicalStepResult<LoaderCustomerOut>, Context)>(
             (new TechnicalStepResult<LoaderCustomerOut>.Success(input), context));
     }

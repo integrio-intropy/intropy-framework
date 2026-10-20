@@ -18,13 +18,15 @@ namespace Intropy.Framework.Blocks.Extractor;
 /// <list type="number">
 ///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
 ///   <item>Validate: validates the POCO</item>
-///   <item>Idempotency check: checks so that the same data has not been processed already</item>
+///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
 ///   <item>Serialize: serializes the output POCO into string</item>
 ///   <item>Send: sends the string data to the destination</item>
-///   <item>Record idempotency: records that the data has been processed</item>
+///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
 /// </list>
+/// Idempotency is optional: without <see cref="WithIdempotency"/> the check and record steps are
+/// skipped, and every item that reaches the pipeline is published.
 /// </summary>
 /// <typeparam name="TInput"></typeparam>
 /// <typeparam name="TOutput"></typeparam>
@@ -414,7 +416,8 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
     /// <summary>
     /// Configures automatic idempotency handling using dependency injection to resolve the <see cref="IIdempotencyServiceClient"/>.
-    /// This method configures both the check and recording steps.
+    /// This method configures both the check and recording steps. Optional: without it, both steps
+    /// are skipped and no <see cref="IIdempotencyServiceClient"/> needs to be registered.
     /// </summary>
     /// <remarks>
     /// In an extractor that routes several source ports, <paramref name="scope"/> decides whether the
@@ -522,15 +525,13 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <exception cref="InvalidOperationException">Thrown when any of the steps are not configured.</exception>
     public Extractor<TInput, TOutput, TCtx> Build()
     {
-        // Validate all required steps are configured
+        // Validate all required steps are configured. Idempotency is optional and its steps are
+        // skipped at runtime when not configured (see Extractor using AddOptionalStep).
         if (_deserializer == null)
             throw new InvalidOperationException("Deserialize step must be configured using WithDeserialization()");
 
         if (_validator == null)
             throw new InvalidOperationException("Validate step must be configured using WithValidation()");
-
-        if (_idempotencyChecker == null)
-            throw new InvalidOperationException("Idempotency must be configured using WithIdempotency()");
 
         if (_transformer == null)
             throw new InvalidOperationException("Transform step must be configured using WithTransformation()");
@@ -541,9 +542,6 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
         if (_sender == null)
             throw new InvalidOperationException(
                 "Sender step must be configured using WithDaprTopicPublisher(), WithDaprServiceInvoker(), WithSender() or WithSenderFromServices()");
-
-        if (_idempotencyRecorder == null)
-            throw new InvalidOperationException("Idempotency must be configured using WithIdempotency()");
 
         if (_businessIncidentRouter == null)
             throw new InvalidOperationException(

@@ -64,6 +64,36 @@ public class LoaderTests
     }
 
     [Fact]
+    public async Task SingleRoute_WithoutIdempotency_BootsAndLoadsEveryDelivery_WithNoIdempotencyClientRegistered()
+    {
+        await using var host = await LoaderHost.StartSingleAsync(idempotent: false);
+        var message = Event("any.type", "ORD-1", Created("ORD-1"));
+
+        var first = await host.DeliverAsync(message);
+        var redelivered = await host.DeliverAsync(message, redelivery: true);
+
+        // Nothing checks for a duplicate, so the redelivery is loaded again.
+        Assert.Null(host.Host.Services.GetService<IIdempotencyServiceClient>());
+        Assert.Equal(DeliveryAck.Success, first);
+        Assert.Equal(DeliveryAck.Success, redelivered);
+        Assert.Equal(2, host.CreatedSender.Sent.Count);
+        Assert.Empty(host.Idempotency.StatusChecks);
+        Assert.Empty(host.Idempotency.Committed);
+    }
+
+    [Fact]
+    public async Task SingleRoute_WithoutIdempotency_RoutesBusinessIncidentsAndAcksSuccess()
+    {
+        await using var host = await LoaderHost.StartSingleAsync(reject: _ => true, idempotent: false);
+
+        var ack = await host.DeliverAsync(Event("any.type", "ORD-1", Created("ORD-1")));
+
+        Assert.Equal(DeliveryAck.Success, ack);
+        Assert.Single(host.Incidents.Incidents);
+        Assert.Empty(host.CreatedSender.Sent);
+    }
+
+    [Fact]
     public async Task Routes_DispatchEachMessageToItsEventTypesPipeline()
     {
         await using var host = await LoaderHost.StartRoutingAsync();

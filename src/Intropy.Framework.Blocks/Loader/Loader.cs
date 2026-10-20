@@ -15,10 +15,10 @@ namespace Intropy.Framework.Blocks.Loader;
 ///   <item>Deserialize: deserializes the message's payload bytes into a POCO</item>
 ///   <item>Extract: extracts data from the input</item>
 ///   <item>Validate: validates the POCO</item>
-///   <item>Idempotency check: checks so that the same data has not been processed already</item>
+///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
 ///   <item>Send: sends the data to the external system</item>
-///   <item>Record idempotency: records that the data has been processed</item>
+///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Send receipt (optional): sends a receipt after a successful load</item>
 ///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
 /// </list>
@@ -28,9 +28,10 @@ namespace Intropy.Framework.Blocks.Loader;
 /// are read from the context, where its caller puts them before the pipeline runs (see
 /// <see cref="CloudEventContextKeys"/>). A host projects them from the delivery it received; a
 /// standalone caller gets the same projection from the
-/// <see cref="Execute(CloudEvent,TCtx,bool,CancellationToken)"/> overload. Idempotency reads
-/// <see cref="CloudEventContextKeys.Subject"/> and <see cref="CloudEventContextKeys.Time"/> from
-/// there, so a context without them fails the pipeline.
+/// <see cref="Execute(CloudEvent,TCtx,bool,CancellationToken)"/> overload. Idempotency, when
+/// configured, reads <see cref="CloudEventContextKeys.Subject"/> and
+/// <see cref="CloudEventContextKeys.Time"/> from there, so a context without them fails the
+/// pipeline.
 /// </remarks>
 /// <param name="pipelineName">The name of the pipeline</param>
 /// <param name="logger">Logger for tracing</param>
@@ -39,8 +40,8 @@ namespace Intropy.Framework.Blocks.Loader;
 /// <param name="validator">Step that validates the input</param>
 /// <param name="transformer">Step that transforms TInput to TOutput</param>
 /// <param name="sender">Step that sends data to the external system</param>
-/// <param name="idempotencyChecker">Step that checks for duplicate processing</param>
-/// <param name="idempotencyRecorder">Step that records successful processing</param>
+/// <param name="idempotencyChecker">Optional step that checks for duplicate processing. Skipped when null.</param>
+/// <param name="idempotencyRecorder">Optional step that records successful processing. Skipped when null.</param>
 /// <param name="businessIncidentRouter">Finalizer that routes business incidents</param>
 /// <param name="receiptSender">Optional step that sends a receipt after a successful load</param>
 /// <typeparam name="TInput">The input type (deserialized from the payload)</typeparam>
@@ -54,8 +55,8 @@ public class Loader<TInput, TOutput, TCtx>(
     ValidateStep<TInput, TCtx> validator,
     TransformStep<TInput, TOutput, TCtx> transformer,
     SendStep<TOutput, TCtx> sender,
-    IdempotencyCheckStep<TInput, TCtx> idempotencyChecker,
-    IdempotencyRecordStep<TOutput, TCtx> idempotencyRecorder,
+    IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
+    IdempotencyRecordStep<TOutput, TCtx>? idempotencyRecorder,
     BusinessIncidentRouteStep<TOutput, TCtx> businessIncidentRouter,
     SendStep<TOutput, TCtx>? receiptSender = null)
     where TCtx : Context
@@ -83,10 +84,10 @@ public class Loader<TInput, TOutput, TCtx>(
                     .AddStep(deserializer)
                     .AddSteps(extractors)
                     .AddStep(validator)
-                    .AddStep(idempotencyChecker)
+                    .AddOptionalStep(idempotencyChecker)
                     .AddStep(transformer)
                     .AddStep(sender)
-                    .AddStep(idempotencyRecorder);
+                    .AddOptionalStep(idempotencyRecorder);
 
                 if (receiptSender != null)
                     pipeline = pipeline.AddStep(receiptSender);

@@ -9,17 +9,17 @@ graph LR
     A[byte input] --> B[Deserialize]
     B --> C[Validate]
     C --> D["Extract(s)"]
-    D --> E[Idempotency Check]
+    D --> E["Idempotency Check (optional)"]
     E --> F[Transform]
     F --> G[Serialize]
     G --> H[Send]
-    H --> I[Idempotency Record]
+    H --> I["Idempotency Record (optional)"]
     I --> J[Business Incident Route]
 ```
 
 The Extractor is a standalone pipeline for extracting data from a source system, transforming it into a canonical model, and publishing it as a CloudEvent. It takes the raw bytes of the source item as input (`ReadOnlyMemory<byte>`), processes it through a series of typed steps, and outputs a `StepResult<CloudEvent>`.
 
-You call the Extractor's `Execute` method directly with the item's raw bytes — there is no lifecycle manager or message subscription involved. The Extractor handles its own OpenTelemetry tracing (each execution creates a detached trace), idempotency, and business incident routing.
+You call the Extractor's `Execute` method directly with the item's raw bytes — there is no lifecycle manager or message subscription involved. The Extractor handles its own OpenTelemetry tracing (each execution creates a detached trace), idempotency (optional), and business incident routing.
 
 The output is always a `CloudEvent`, which makes the Extractor well suited for publishing canonical data to topics or downstream services. Two built-in senders are included: `DaprTopicPublisher` for pub/sub and `DaprServiceInvoker` for service-to-service calls.
 
@@ -35,11 +35,11 @@ The pipeline executes in this order:
 1. **Deserialize** (`ReadOnlyMemory<byte> → TInput`) — Parse the raw bytes into a typed object. Nothing decodes them first, so this step owns the encoding
 2. **Validate** (`TInput → TInput`) — Validate the parsed object
 3. **Extract** (`TInput → TInput`) — Enrich with additional data (optional, multiple allowed)
-4. **Idempotency Check** (`TInput → TInput`) — Check if this data was already processed
+4. **Idempotency Check** (`TInput → TInput`) — Check if this data was already processed (optional, configured with `WithIdempotency`)
 5. **Transform** (`TInput → TOutput`) — Convert to the output model
 6. **Serialize** (`TOutput → CloudEvent`) — Create a CloudEvent from the output
 7. **Send** (`CloudEvent → CloudEvent`) — Publish the CloudEvent to a destination
-8. **Idempotency Record** — Record that this data was processed (finalizer)
+8. **Idempotency Record** — Record that this data was processed (optional, configured with `WithIdempotency`)
 9. **Business Incident Route** — Route any business incidents (finalizer)
 
 Each pipeline execution creates a detached OpenTelemetry trace (a new root span linked to the parent) via `PipelineTracing.ExecuteWithTracing`. `WithDaprTopicPublisher` publishes under a `send {topic}` producer span and puts that span's W3C trace context on the CloudEvent (`traceparent`, `tracestate`), so the consumer can continue the extractor's trace.
@@ -201,7 +201,9 @@ var extractor = ExtractorBuilder<CustomerRecord, CanonicalCustomer, Context>
     .Build();
 ```
 
-All builder methods except `WithExtractor` and `WithSender` are required. The builder throws `InvalidOperationException` on `Build()` if any required step is missing.
+All builder methods except `WithExtractor`, `WithIdempotency` and `WithSender` are required. The builder throws `InvalidOperationException` on `Build()` if any required step is missing.
+
+Idempotency is optional. Without `WithIdempotency` the check and record steps are skipped: every item that reaches the pipeline is published, no `IIdempotencyServiceClient` needs to be registered, and the result is never `Cancelled`. Leave it out only when the source does not hand the same item over twice, or when the consumers tolerate a duplicate.
 
 ### DI requirements
 
@@ -398,7 +400,7 @@ switch (result)
         // success.Value is the published CloudEvent
         break;
     case StepResult<CloudEvent>.Cancelled:
-        // Idempotency check found this was already processed
+        // Idempotency check found this was already processed (only with WithIdempotency)
         break;
     case StepResult<CloudEvent>.BusinessFailure bf:
         // bf.Value is a BusinessIncident (routed automatically by the finalizer)

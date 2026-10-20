@@ -28,7 +28,9 @@ helpers for delivering CloudEvents to loaders exactly as a Dapr sidecar does:
      `WithDaprTopicPublisher(...)`.
    - Loaders: override the keyed `IFileAdapter` registration with an
      `InMemoryFileAdapter`, and the two service clients with their fakes
-     (plain DI override — last registration wins).
+     (plain DI override — last registration wins). A pipeline without
+     `WithIdempotency` never resolves `IIdempotencyServiceClient`, so its
+     fake is only needed when the pipeline configures idempotency.
 3. **Assert on fake state:** topic count/events, adapter files, recorded
    incidents/resolutions and commits, delivery acks.
 
@@ -154,7 +156,7 @@ receive over HTTP delivery.
 | Scenario | Ack | Side effects |
 |---|---|---|
 | Valid message | `SUCCESS` | File written to destination |
-| Duplicate (idempotency `Ignore`) | `SUCCESS` | Nothing written |
+| Duplicate (idempotency `Ignore`; only with `WithIdempotency`) | `SUCCESS` | Nothing written |
 | Business-rule violation | `SUCCESS` | Incident routed — **consumed, never retried** |
 | Destination throws | `RETRY` | Nothing written |
 | Idempotency service down (`StatusException`) | `RETRY` | Technical failure |
@@ -175,7 +177,7 @@ receive over HTTP delivery.
 | Scenario | Published | Source file |
 |---|---|---|
 | Valid | Yes | Deleted |
-| Duplicate (idempotency `Ignore`) | No | Still deleted |
+| Duplicate (idempotency `Ignore`; only with `WithIdempotency`) | No | Still deleted |
 | Validation failure | Incident routed | Consumed (empty-`CloudEvent` success) |
 | Technical failure (`SendException` / `ReadException`) | No | Left for the next run |
 
