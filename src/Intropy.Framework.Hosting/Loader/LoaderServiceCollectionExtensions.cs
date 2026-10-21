@@ -18,7 +18,8 @@ public static class LoaderServiceCollectionExtensions
 {
     /// <summary>
     /// Registers a loader whose single pipeline handles every message on the topic, whatever its
-    /// CloudEvent type. Its idempotency records are keyed on the CloudEvent subject.
+    /// CloudEvent type. Its idempotency records, when the pipeline configures idempotency, are
+    /// keyed on the CloudEvent subject.
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
     /// <param name="configurePipeline">Configures the pipeline builder, given the message's scope.</param>

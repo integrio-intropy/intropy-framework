@@ -29,6 +29,9 @@ internal sealed record TestExtractor<TInput, TOutput, TCtx> where TCtx : Context
     public required Func<TInput, TCtx, string> InputIdentity { get; init; }
     public required Func<TInput, TCtx, DateTimeOffset> InputDate { get; init; }
     public Func<TInput, string>? InputHash { get; init; }
+
+    /// <summary>Whether the pipeline configures idempotency. Default: it does.</summary>
+    public bool Idempotent { get; init; } = true;
     public required Func<TOutput, string> OutputSubject { get; init; }
     public required Func<TOutput, DateTimeOffset> OutputTime { get; init; }
     public required Func<TCtx, string> IncidentIdentity { get; init; }
@@ -66,11 +69,12 @@ internal sealed record TestExtractor<TInput, TOutput, TCtx> where TCtx : Context
         builder
             .WithDeserializer((DeserializeStep<TInput, TCtx>)provider.GetRequiredService(Deserializer))
             .WithValidator((ValidateStep<TInput, TCtx>)provider.GetRequiredService(Validator))
-            .WithIdempotency(InputIdentity, InputDate, InputHash)
             .WithTransformer((TransformStep<TInput, TOutput, TCtx>)provider.GetRequiredService(Transformer))
             .WithSerializer(new CloudEventSerializeStep<TOutput, TCtx>(OutputSubject, OutputTime))
             .WithSenderFromServices()
             .WithBusinessIncidents(IncidentIdentity, IncidentSubject);
+        if (Idempotent)
+            builder.WithIdempotency(InputIdentity, InputDate, InputHash);
         foreach (var enrichment in Enrichments)
             builder.WithExtractor((ExtractStep<TInput, TCtx>)provider.GetRequiredService(enrichment));
         return builder;

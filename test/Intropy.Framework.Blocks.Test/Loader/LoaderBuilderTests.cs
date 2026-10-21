@@ -80,7 +80,6 @@ public class LoaderBuilderTests
 
     [Theory]
     [InlineData("Deserialize")]
-    [InlineData("Idempotency")]
     [InlineData("Validate")]
     [InlineData("Transform")]
     [InlineData("Sender")]
@@ -110,6 +109,21 @@ public class LoaderBuilderTests
 
         // Act
         var result = _builder.Build();
+
+        // Assert
+        Assert.IsType<Loader<int, int, Context>>(result);
+    }
+
+    [Fact]
+    public void Build_WithoutIdempotency_CreatesLoader_WithNoIdempotencyServiceClientRegistered()
+    {
+        // Arrange
+        var serviceProvider = GetServiceCollection().RemoveAll<IIdempotencyServiceClient>().BuildServiceProvider();
+        var builder = LoaderBuilder<int, int, Context>.Create("Test", serviceProvider);
+        ConfigureAllDependenciesExcept("Idempotency", builder);
+
+        // Act
+        var result = builder.Build();
 
         // Assert
         Assert.IsType<Loader<int, int, Context>>(result);
@@ -216,14 +230,16 @@ public class LoaderBuilderTests
         return serviceCollection;
     }
 
-    private void ConfigureAllDependenciesExcept(string skip)
+    private void ConfigureAllDependenciesExcept(string skip) => ConfigureAllDependenciesExcept(skip, _builder);
+
+    private void ConfigureAllDependenciesExcept(string skip, LoaderBuilder<int, int, Context> builder)
     {
-        if (skip != "Deserialize") _builder.WithDeserializer(_deserializer);
-        if (skip != "Idempotency") _builder.WithIdempotency();
-        if (skip != "Validate") _builder.WithValidator(_validator);
-        if (skip != "Transform") _builder.WithTransformer(_transformer);
-        if (skip != "Sender") _builder.WithSender(_sender);
-        if (skip != "Business incident route") _builder.WithBusinessIncidents(x => x.Metadata["TEST"],
+        if (skip != "Deserialize") builder.WithDeserializer(_deserializer);
+        if (skip != "Idempotency") builder.WithIdempotency();
+        if (skip != "Validate") builder.WithValidator(_validator);
+        if (skip != "Transform") builder.WithTransformer(_transformer);
+        if (skip != "Sender") builder.WithSender(_sender);
+        if (skip != "Business incident route") builder.WithBusinessIncidents(x => x.Metadata["TEST"],
             x => x.Metadata["TEST"]);
     }
 

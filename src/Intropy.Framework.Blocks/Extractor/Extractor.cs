@@ -14,11 +14,11 @@ namespace Intropy.Framework.Blocks.Extractor;
 ///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
 ///   <item>Extractor(s): Extract additional information from external sources</item>     
 ///   <item>Validate: validates the POCO</item>
-///   <item>Idempotency check: checks so that the same data has not been processed already</item>
+///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
 ///   <item>Serialize: serializes the output POCO into string</item>
 ///   <item>Send: sends the string data to the destination</item>
-///   <item>Record idempotency: records that the data has been processed</item>
+///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
 /// </list>
 /// </summary>
@@ -30,8 +30,8 @@ namespace Intropy.Framework.Blocks.Extractor;
 /// <param name="transformer"></param>
 /// <param name="serializer"></param>
 /// <param name="sender"></param>
-/// <param name="idempotencyChecker"></param>
-/// <param name="idempotencyRecorder"></param>
+/// <param name="idempotencyChecker">Optional idempotency check step. Skipped when null.</param>
+/// <param name="idempotencyRecorder">Optional idempotency record step. Skipped when null.</param>
 /// <param name="businessIncidentRouter"></param>
 /// <typeparam name="TInput"></typeparam>
 /// <typeparam name="TOutput"></typeparam>
@@ -45,8 +45,8 @@ public class Extractor<TInput, TOutput, TCtx>(
     TransformStep<TInput, TOutput, TCtx> transformer,
     SerializeStep<TOutput, TCtx> serializer,
     SendStep<TCtx> sender,
-    IdempotencyCheckStep<TInput, TCtx> idempotencyChecker,
-    IdempotencyRecordStep<CloudEvent, TCtx> idempotencyRecorder,
+    IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
+    IdempotencyRecordStep<CloudEvent, TCtx>? idempotencyRecorder,
     BusinessIncidentRouteStep<CloudEvent, TCtx> businessIncidentRouter)
     where TCtx : Context
 {
@@ -69,11 +69,11 @@ public class Extractor<TInput, TOutput, TCtx>(
                 .AddStep(deserializer)
                 .AddStep(validator)
                 .AddSteps(extractors)
-                .AddStep(idempotencyChecker)
+                .AddOptionalStep(idempotencyChecker)
                 .AddStep(transformer)
                 .AddStep(serializer)
                 .AddStep(sender)
-                .AddStep(idempotencyRecorder)
+                .AddOptionalStep(idempotencyRecorder)
                 .AddFinalizer(businessIncidentRouter),
             pipelineName: pipelineName,
             logger: logger,

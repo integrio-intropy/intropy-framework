@@ -12,14 +12,15 @@ namespace Intropy.Framework.Hosting.Extractor;
 /// through the pipeline of the port's route. A published file (or one routed as a delivered
 /// business incident) and an idempotent duplicate are completed as the source port says
 /// (<c>AddSourcePort</c>, or the extractor's sources); a failed file stays for the next scheduled
-/// run — the idempotency check makes the retry safe.
+/// run — the idempotency check, when the pipeline configures one, makes the retry safe.
 /// </summary>
 /// <remarks>
 /// Delivery semantics: publication happens before the idempotency recording, and delivery is
 /// at-least-once, not exactly-once. A crash after publication but before the record means the
 /// next run processes the file again and may publish it a second time. (A source file that could
 /// not be deleted after a fully recorded success is different: the record exists, so the
-/// redelivery is cancelled as a duplicate.)
+/// redelivery is cancelled as a duplicate.) Without idempotency nothing is cancelled: a file
+/// handled again is published again.
 /// <para>
 /// Each port's files go through the pipeline of the route that handles the port (the
 /// <c>routeFor</c> argument), chosen once per run.

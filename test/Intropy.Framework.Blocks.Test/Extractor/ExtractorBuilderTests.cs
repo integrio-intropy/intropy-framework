@@ -153,7 +153,6 @@ public class ExtractorBuilderTests
 
     [Theory]
     [InlineData("Deserialize")]
-    [InlineData("Idempotency")]
     [InlineData("Validate")]
     [InlineData("Transform")]
     [InlineData("Serialize")]
@@ -186,6 +185,21 @@ public class ExtractorBuilderTests
 
         // Act
         var result = _builder.Build();
+
+        // Assert
+        Assert.IsType<Extractor<int, int, Context>>(result);
+    }
+
+    [Fact]
+    public void Build_WithoutIdempotency_CreatesExtractor_WithNoIdempotencyServiceClientRegistered()
+    {
+        // Arrange
+        var serviceProvider = GetServiceCollection().RemoveAll<IIdempotencyServiceClient>().BuildServiceProvider();
+        var builder = ExtractorBuilder<int, int, Context>.Create("Test", serviceProvider);
+        ConfigureAllDependenciesExcept("Idempotency", builder);
+
+        // Act
+        var result = builder.Build();
 
         // Assert
         Assert.IsType<Extractor<int, int, Context>>(result);
@@ -227,16 +241,18 @@ public class ExtractorBuilderTests
         return serviceCollection;
     }
 
-    private void ConfigureAllDependenciesExcept(string skip)
+    private void ConfigureAllDependenciesExcept(string skip) => ConfigureAllDependenciesExcept(skip, _builder);
+
+    private void ConfigureAllDependenciesExcept(string skip, ExtractorBuilder<int, int, Context> builder)
     {
-        if (skip != "Deserialize") _builder.WithDeserializer(_deserializer);
-        if (skip != "Idempotency") _builder.WithIdempotency((_, _) => "test", (_, _) => DateTime.Now);
-        if (skip != "Validate") _builder.WithValidator(_validator);
-        if (skip != "Transform") _builder.WithTransformer(_transformer);
-        if (skip != "Serialize") _builder.WithSerializer(_serializer);
-        if (skip != "Sender") _builder.WithSender(_sender);
+        if (skip != "Deserialize") builder.WithDeserializer(_deserializer);
+        if (skip != "Idempotency") builder.WithIdempotency((_, _) => "test", (_, _) => DateTime.Now);
+        if (skip != "Validate") builder.WithValidator(_validator);
+        if (skip != "Transform") builder.WithTransformer(_transformer);
+        if (skip != "Serialize") builder.WithSerializer(_serializer);
+        if (skip != "Sender") builder.WithSender(_sender);
         if (skip != "Business incident route")
-            _builder.WithBusinessIncidents(x => x.Metadata["TEST"],
+            builder.WithBusinessIncidents(x => x.Metadata["TEST"],
                 x => x.Metadata["TEST2"]
             );
     }

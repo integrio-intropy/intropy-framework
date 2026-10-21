@@ -8,6 +8,7 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -334,6 +335,89 @@ public class LoaderTests
                 Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
 
+    [Fact]
+    public async Task Execute_WithoutIdempotency_LoadsAndNeverCallsTheIdempotencyService()
+    {
+        // Arrange
+        var cloudEvent = CreateCloudEvent("1337", "John Doe");
+        var sender = new CustomerSender();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), withIdempotency: false,
+            sender: sender).Build();
+
+        // Act - the same message twice: without idempotency neither is a duplicate
+        var (first, firstContext) = await pipeline.Execute(cloudEvent, GetInitialContext());
+        var (second, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
+
+        // Assert
+        Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
+        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(first);
+        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(second);
+        Assert.Equal(2, sender.SentCount);
+        Assert.False(firstContext.Metadata.ContainsKey(IdempotencyContextKeys.Id));
+        Assert.False(firstContext.Metadata.ContainsKey(IdempotencyContextKeys.Hash));
+    }
+
+    [Fact]
+    public async Task Execute_WithoutIdempotency_SendsReceiptOnSuccess()
+    {
+        // Arrange
+        var cloudEvent = CreateCloudEvent("1337", "John Doe");
+        var receiptSender = new ReceiptSender();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), withIdempotency: false)
+            .WithReceiptSender(receiptSender)
+            .Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
+
+        // Assert - the receipt follows the load even with no idempotency record in between
+        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        var receipt = Assert.Single(receiptSender.SentReceipts);
+        Assert.Equal(1337, receipt.CustomerId);
+        Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
+    }
+
+    [Fact]
+    public async Task Execute_WithoutIdempotency_StillRoutesBusinessIncidents()
+    {
+        // Arrange
+        var cloudEvent = CreateCloudEvent("invalid-id", "John Doe"); // Non-numeric ID
+        _businessIncidentServiceClient.Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+                Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>())
+            .ReturnsForAnyArgs(Task.CompletedTask);
+        var receiptSender = new ReceiptSender();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), withIdempotency: false)
+            .WithReceiptSender(receiptSender)
+            .Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
+
+        // Assert
+        Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
+        await _businessIncidentServiceClient.ReceivedWithAnyArgs(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+        Assert.Empty(receiptSender.SentReceipts);
+        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+    }
+
+    [Fact]
+    public async Task Execute_WithoutIdempotency_NeedsNoCloudEventSubjectOrTime()
+    {
+        // Arrange - a message without the attributes idempotency would key on
+        var cloudEvent = CreateCloudEvent("1337", "John Doe");
+        cloudEvent.Subject = null;
+        cloudEvent.Time = null;
+        _serviceCollection.RemoveAll<IIdempotencyServiceClient>();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), withIdempotency: false).Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
+
+        // Assert
+        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+    }
+
     private static CloudEvent CreateCloudEvent(string customerId, string name)
     {
         return new CloudEvent
@@ -355,14 +439,16 @@ public class LoaderTests
     }
 
     private static LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> GetPipelineBuilder(
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider, bool withIdempotency = true, CustomerSender? sender = null)
     {
-        return LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context>.Create("LoaderTest", serviceProvider)
+        var builder = LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context>.Create("LoaderTest", serviceProvider)
             .WithDeserializer(new CustomerDeserializer())
-            .WithValidator(new CustomerValidator())
-            .WithIdempotency()
+            .WithValidator(new CustomerValidator());
+        if (withIdempotency)
+            builder.WithIdempotency();
+        return builder
             .WithTransformer(new CustomerTransformer())
-            .WithSender(new CustomerSender())
+            .WithSender(sender ?? new CustomerSender())
             .WithBusinessIncidents(context =>
                     context.Metadata.GetValueOrDefault(CloudEventContextKeys.Subject, "unknown"),
                 context => context.Metadata.GetValueOrDefault(CloudEventContextKeys.Subject, "unknown"));

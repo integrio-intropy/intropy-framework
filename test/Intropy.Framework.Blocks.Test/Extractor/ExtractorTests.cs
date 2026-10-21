@@ -9,6 +9,7 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using NSubstitute.ExceptionExtensions;
@@ -218,6 +219,66 @@ public class ExtractorTests
         Assert.IsType<StepResult<CloudEvent>.Success>(result);
     }
 
+    [Fact]
+    public async Task Execute_WithoutIdempotency_PublishesAndNeverCallsTheIdempotencyService()
+    {
+        // Arrange
+        const string customerId = "1337";
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), withIdempotency: false).Build();
+
+        // Act - the same item twice: without idempotency neither is a duplicate
+        var (first, firstContext) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId),
+            GetInitialContext(customerId));
+        var (second, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId),
+            GetInitialContext(customerId));
+
+        // Assert
+        Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
+        Assert.IsType<StepResult<CloudEvent>.Success>(first);
+        Assert.IsType<StepResult<CloudEvent>.Success>(second);
+        await _serviceInvocationClient.ReceivedWithAnyArgs(2)
+            .SendAsync(Arg.Any<HttpRequestMessage>(), Arg.Any<CancellationToken>());
+        Assert.False(firstContext.Metadata.ContainsKey(IdempotencyContextKeys.Id));
+        Assert.False(firstContext.Metadata.ContainsKey(IdempotencyContextKeys.Hash));
+    }
+
+    [Fact]
+    public async Task Execute_WithoutIdempotency_StillRoutesBusinessIncidents()
+    {
+        // Arrange
+        const string customerId = "abc"; // fails validation
+        _businessIncidentServiceClient.Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+                Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>())
+            .ReturnsForAnyArgs(Task.CompletedTask);
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), withIdempotency: false).Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId),
+            GetInitialContext(customerId));
+
+        // Assert
+        Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
+        await _businessIncidentServiceClient.ReceivedWithAnyArgs(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+        Assert.IsType<StepResult<CloudEvent>.Success>(result);
+    }
+
+    [Fact]
+    public async Task Execute_WithoutIdempotency_RunsWithNoIdempotencyServiceClientRegistered()
+    {
+        // Arrange
+        const string customerId = "1337";
+        _serviceCollection.RemoveAll<IIdempotencyServiceClient>();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), withIdempotency: false).Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(System.Text.Encoding.UTF8.GetBytes(customerId),
+            GetInitialContext(customerId));
+
+        // Assert
+        Assert.IsType<StepResult<CloudEvent>.Success>(result);
+    }
+
     private static Context GetInitialContext(string customerId)
     {
         var metadata = new Dictionary<string, string> { { ContextKeyCustomerId, customerId } };
@@ -225,13 +286,15 @@ public class ExtractorTests
     }
 
     private ExtractorBuilder<CustomerIn, CustomerOut, Context> GetPipelineBuilder(
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider, bool withIdempotency = true)
     {
-        return ExtractorBuilder<CustomerIn, CustomerOut, Context>.Create("Test", serviceProvider)
-            .WithDeserializer(new CustomerDeserializer())
-            .WithIdempotency(
+        var builder = ExtractorBuilder<CustomerIn, CustomerOut, Context>.Create("Test", serviceProvider)
+            .WithDeserializer(new CustomerDeserializer());
+        if (withIdempotency)
+            builder.WithIdempotency(
                 (input, _) => input.CustomerId,
-                (input, _) => input.EventDate)
+                (input, _) => input.EventDate);
+        return builder
             .WithExtractor(new CustomerExtractor())
             .WithValidator(new CustomerValidator())
             .WithTransformer(new CustomerTransformer())

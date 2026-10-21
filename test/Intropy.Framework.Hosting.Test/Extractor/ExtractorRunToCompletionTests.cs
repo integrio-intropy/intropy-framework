@@ -1,4 +1,5 @@
 using Dapr.Client;
+using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Core.Configuration;
@@ -130,6 +131,34 @@ public class ExtractorRunToCompletionTests
         Assert.Equal(JobExitCodes.Success, exitCode);
         Assert.Empty(fakes.Topic.Events);
         Assert.Empty(fakes.Files.Files); // deleted as a duplicate
+    }
+
+    [Fact]
+    public async Task Runner_WithoutIdempotency_BootsAndPublishesEveryFile_WithNoIdempotencyClientRegistered()
+    {
+        var fakes = new ExtractorSweepTestProcess.SweepFakes();
+        fakes.Files.AddFile("order-1.json", ValidInput);
+        fakes.Files.AddFile("order-1-again.json", ValidInput);
+        var services = fakes.CreateEdgeServices();
+        services.RemoveAll<IIdempotencyServiceClient>();
+        services.AddExtractor(ExtractorSweepTestProcess.Definition() with { Idempotent = false }, options =>
+        {
+            options.SidecarTimeout = TimeSpan.FromSeconds(1);
+            options.SidecarShutdownTimeout = TimeSpan.FromSeconds(1);
+        });
+        await using var provider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+
+        await provider.ValidateExtractorCompositionAsync<ExtractorTestProcess.Input, ExtractorTestProcess.Output,
+            ExtractorTestProcess.TestContext>();
+        var exitCode = await provider.GetRequiredService<JobRunner>().RunAsync();
+
+        // The same content twice is published twice: nothing checks for a duplicate.
+        Assert.Equal(JobExitCodes.Success, exitCode);
+        Assert.Equal(2, fakes.Topic.Events.Count);
+        Assert.Empty(fakes.Files.Files);
+        Assert.Empty(fakes.Idempotency.StatusChecks);
+        Assert.Empty(fakes.Idempotency.Committed);
     }
 
     [Fact]

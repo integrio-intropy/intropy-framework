@@ -17,13 +17,15 @@ namespace Intropy.Framework.Blocks.Loader;
 ///   <item>Deserialize: deserializes the CloudEvent data into a POCO, extracts CloudEvent metadata to context</item>
 ///   <item>Extract: extracts data from the input</item>
 ///   <item>Validate: validates the POCO</item>
-///   <item>Idempotency check: checks so that the same data has not been processed already</item>
+///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
 ///   <item>Send: sends the data to the external system</item>
-///   <item>Record idempotency: records that the data has been processed</item>
+///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Send receipt (optional): sends a receipt after a successful load</item>
 ///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
 /// </list>
+/// Idempotency is optional: without <see cref="WithIdempotency"/> the check and record steps are
+/// skipped, and every message that reaches the pipeline is loaded.
 /// </summary>
 /// <typeparam name="TInput">The input type (deserialized from CloudEvent.Data)</typeparam>
 /// <typeparam name="TOutput">The output type (sent to external system)</typeparam>
@@ -294,7 +296,8 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
-    /// Configures an optional receipt sender that runs after a successful load and idempotency record.
+    /// Configures an optional receipt sender that runs after a successful load and, when idempotency
+    /// is configured, after its record.
     /// The receipt sender receives the pipeline output (TOutput) and can publish it in any format
     /// (e.g., CloudEvent to a Dapr topic, HTTP call, etc.).
     /// </summary>
@@ -334,7 +337,9 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <summary>
     /// Configures automatic idempotency handling using CloudEvent metadata from context.
     /// Uses CloudEvent.Subject as the ID and CloudEvent.Time as the date.
-    /// The hash is generated from the TInput payload.
+    /// The hash is generated from the TInput payload. Optional: without it, the check and record
+    /// steps are skipped, no <see cref="IIdempotencyServiceClient"/> needs to be registered, and the
+    /// framework reads no subject or time from the message.
     /// </summary>
     /// <remarks>
     /// In a loader that routes several event types, <paramref name="scope"/> decides whether this
@@ -344,7 +349,10 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// already processed for the entity, of any type, is ignored). A loader without routes is
     /// always keyed on the subject alone.
     /// </remarks>
-    /// <param name="hashGenerator">Optional function to generate a hash of the payload. If not provided, uses a default implementation (property reflection + SHA256).</param>
+    /// <param name="hashGenerator">Optional function to generate a hash of the payload. If not provided, the payload's
+    /// <see cref="Intropy.Framework.Core.Pipeline.Abstractions.IHashable.GetHashString"/> when it implements
+    /// <see cref="Intropy.Framework.Core.Pipeline.Abstractions.IHashable"/>, otherwise its JSON serialization,
+    /// is hashed with SHA-256.</param>
     /// <param name="scope">Which records this route's idempotency is checked against.</param>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="IIdempotencyServiceClient"/> is not registered in the service provider.</exception>
@@ -389,15 +397,13 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <exception cref="InvalidOperationException">Thrown when any of the steps are not configured.</exception>
     public Loader<TInput, TOutput, TCtx> Build()
     {
-        // Validate all required steps are configured
+        // Validate all required steps are configured. Idempotency is optional and its steps are
+        // skipped at runtime when not configured (see Loader using AddOptionalStep).
         if (_deserializer == null)
             throw new InvalidOperationException("Deserialize step must be configured using WithDeserializer()");
 
         if (_validator == null)
             throw new InvalidOperationException("Validate step must be configured using WithValidator()");
-
-        if (_idempotencyChecker == null)
-            throw new InvalidOperationException("Idempotency must be configured using WithIdempotency()");
 
         if (_transformer == null)
             throw new InvalidOperationException("Transform step must be configured using WithTransformer()");
@@ -405,9 +411,6 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         if (_sender == null)
             throw new InvalidOperationException(
                 "Sender step must be configured using WithSender() or WithSenderFromServices()");
-
-        if (_idempotencyRecorder == null)
-            throw new InvalidOperationException("Idempotency must be configured using WithIdempotency()");
 
         if (_businessIncidentRouter == null)
             throw new InvalidOperationException(

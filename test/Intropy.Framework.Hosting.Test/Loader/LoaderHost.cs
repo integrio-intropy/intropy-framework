@@ -63,22 +63,26 @@ public sealed class LoaderHost : IAsyncDisposable
     /// <param name="configure">Further loader options, applied over <see cref="Defaults"/>.</param>
     /// <param name="extraServices">Registrations the loader resolves at run time — a claim store,
     /// for instance. Applied before the loader is added.</param>
+    /// <param name="idempotent">Whether the pipeline configures idempotency. Without it, no
+    /// <see cref="IIdempotencyServiceClient"/> is registered either.</param>
     public static Task<LoaderHost> StartSingleAsync(Func<OrderCreated, bool>? reject = null,
-        Action<LoaderOptions>? configure = null, Action<IServiceCollection>? extraServices = null) =>
+        Action<LoaderOptions>? configure = null, Action<IServiceCollection>? extraServices = null,
+        bool idempotent = true) =>
         StartAsync((services, fixture) =>
         {
             extraServices?.Invoke(services);
             services.AddLoader<OrderCreated, OrderCreated, Context>(
-                (builder, _) => Pipeline(builder, fixture.CreatedSender, reject),
+                (builder, _) => Pipeline(builder, fixture.CreatedSender, reject, idempotent: idempotent),
                 (metadata, isRetry) => new Context(metadata, isRetry),
                 options =>
                 {
                     Defaults(options);
                     configure?.Invoke(options);
                 });
-        });
+        }, registerIdempotency: idempotent);
 
-    public static async Task<LoaderHost> StartAsync(Action<IServiceCollection, LoaderHost> addLoader)
+    public static async Task<LoaderHost> StartAsync(Action<IServiceCollection, LoaderHost> addLoader,
+        bool registerIdempotency = true)
     {
         var fixture = new LoaderHost();
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(
@@ -89,7 +93,8 @@ public sealed class LoaderHost : IAsyncDisposable
             o.ComponentName = "test-loader";
             o.ServiceNamespace = "test";
         });
-        builder.Services.AddSingleton<IIdempotencyServiceClient>(fixture.Idempotency);
+        if (registerIdempotency)
+            builder.Services.AddSingleton<IIdempotencyServiceClient>(fixture.Idempotency);
         builder.Services.AddSingleton<IBusinessIncidentServiceClient>(fixture.Incidents);
         addLoader(builder.Services, fixture);
 
@@ -127,13 +132,18 @@ public sealed class LoaderHost : IAsyncDisposable
     }
 
     private static LoaderBuilder<T, T, Context> Pipeline<T>(LoaderBuilder<T, T, Context> builder,
-        RecordingSender<T> sender, Func<T, bool>? reject = null, JsonDeserializer<T>? deserializer = null) =>
+        RecordingSender<T> sender, Func<T, bool>? reject = null, JsonDeserializer<T>? deserializer = null,
+        bool idempotent = true)
+    {
         builder
             .WithDeserializer(deserializer ?? new JsonDeserializer<T>())
-            .WithValidator(new TestValidator<T>(reject))
-            .WithIdempotency()
+            .WithValidator(new TestValidator<T>(reject));
+        if (idempotent)
+            builder.WithIdempotency();
+        return builder
             .WithTransformer(new IdentityTransformer<T>())
             .WithSender(sender)
             .WithBusinessIncidents(ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"),
                 ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"));
+    }
 }
