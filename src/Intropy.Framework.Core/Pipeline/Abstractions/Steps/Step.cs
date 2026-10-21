@@ -95,6 +95,7 @@ public abstract class Step<TIn, TOut, TCtx>
         if (result is StepResult<TOut>.BusinessFailure bf)
         {
             activity.SetTag("step.business_failure_message", bf.Value.Description);
+            activity.SetTag("step.business_failure_retriable", bf.Retriable);
         }
         else if (result is StepResult<TOut>.TechnicalFailure tf)
         {

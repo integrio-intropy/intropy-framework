@@ -204,12 +204,14 @@ Per delivered message:
 | Valid | Yes | Committed |
 | Duplicate (idempotency `Ignore`) | No | No new commit |
 | Validation failure | No — incident routed, consumed | No commit |
-| Destination throws | No — business failure, incident routed² | No commit |
+| Destination throws | No — incident routed, message left for redelivery² | No commit |
 
-² Transactional `SendStep` is a `BusinessStep`; an uncaught exception routes an
-incident, it is *not* a technical failure. This is why this package ships no
-`FakeSendStep` for the send pipeline: a `FakeTopic`-style `SendException` knob
-would surface as a business incident and mis-model production. Assert through
+² Transactional `SendStep` is a `BusinessStep`, so an uncaught exception routes an
+incident rather than becoming a technical failure — but it is retriable, so the
+message is left for redelivery rather than acknowledged. A send step that wants
+the message consumed says so: `Failure(incident, Retriable: false)`.
+
+This package still ships no `FakeSendStep` for the send pipeline. Assert through
 the component's real sender + `InMemoryFileAdapter` instead — it tests more,
 including the file-naming convention.
 

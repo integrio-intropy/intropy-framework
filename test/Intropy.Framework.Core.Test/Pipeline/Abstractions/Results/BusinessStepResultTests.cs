@@ -43,6 +43,30 @@ public class BusinessStepResultTests
         Assert.Equal(expectedType, result);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ToStepResult_ShouldCarryRetriability(bool retriable)
+    {
+        // Arrange
+        var inputResult = new BusinessStepResult<string>.Failure(Incident, retriable);
+
+        // Act
+        var result = inputResult.ToStepResult();
+
+        // Assert
+        Assert.Equal(retriable, Assert.IsType<StepResult<string>.BusinessFailure>(result).Retriable);
+    }
+
+    [Fact]
+    public void Failure_IsRetriableUnlessSaidOtherwise()
+    {
+        // Consuming an item destroys it, so the safe reading of an unclassified failure is that the
+        // item should be tried again.
+        Assert.True(new BusinessStepResult<string>.Failure(Incident).Retriable);
+        Assert.True(new StepResult<string>.BusinessFailure(Incident).Retriable);
+    }
+
     [Fact]
     public void GetResultType_ShouldThrow_WhenInputIsNotValid()
     {

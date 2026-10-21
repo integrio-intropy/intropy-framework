@@ -82,7 +82,7 @@ public class LoaderTests
     }
 
     [Fact]
-    public async Task SingleRoute_WithoutIdempotency_RoutesBusinessIncidentsAndAcksSuccess()
+    public async Task SingleRoute_WithoutIdempotency_RoutesTerminalBusinessIncidentsAndAcksSuccess()
     {
         await using var host = await LoaderHost.StartSingleAsync(reject: _ => true, idempotent: false);
 
@@ -190,14 +190,30 @@ public class LoaderTests
     }
 
     [Fact]
-    public async Task BusinessFailure_RoutesAnIncidentAndAcksSuccess()
+    public async Task TerminalBusinessFailure_RoutesAnIncidentAndAcksSuccess()
     {
         await using var host = await LoaderHost.StartSingleAsync(reject: order => order.OrderId == "ORD-BAD");
 
         var ack = await host.DeliverAsync(Event("any.type", "ORD-BAD", Created("ORD-BAD")));
 
-        // Redelivering a rejected message would loop forever.
+        // The rejection is a verdict on the data, so routing the incident is the whole handling:
+        // redelivering the same message would only re-raise the same incident.
         Assert.Equal(DeliveryAck.Success, ack);
+        Assert.Single(host.Incidents.Incidents);
+        Assert.Empty(host.CreatedSender.Sent);
+    }
+
+    [Fact]
+    public async Task RetriableBusinessFailure_RoutesAnIncidentAndLeavesTheMessageForRedelivery()
+    {
+        // The step judged the circumstances, not the data — a destination in a maintenance window,
+        // say. The incident tells a process owner, and the message survives to be tried again.
+        await using var host = await LoaderHost.StartSingleAsync(reject: order => order.OrderId == "ORD-BAD",
+            rejectRetriable: true);
+
+        var ack = await host.DeliverAsync(Event("any.type", "ORD-BAD", Created("ORD-BAD")));
+
+        Assert.Equal(DeliveryAck.Retry, ack);
         Assert.Single(host.Incidents.Incidents);
         Assert.Empty(host.CreatedSender.Sent);
     }

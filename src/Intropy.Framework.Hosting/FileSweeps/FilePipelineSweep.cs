@@ -99,6 +99,11 @@ internal abstract class FilePipelineSweep<TPipeline, TResult, TCtx>(
             case StepResult<TResult>.Success:
                 _logger.LogInformation("Handled source file {FileName}", file.Name);
                 return FileOutcome.Consumed;
+            case StepResult<TResult>.BusinessFailure businessFailure:
+                _logger.LogInformation(
+                    "Source file {FileName} raised a business incident ({Description}); it was routed, so the file is completed",
+                    file.Name, businessFailure.Value.Description);
+                return FileOutcome.Consumed;
             case StepResult<TResult>.Cancelled:
                 _logger.LogInformation("Skipping {FileName} as a duplicate (idempotency check)", file.Name);
                 return FileOutcome.Duplicate;

@@ -24,7 +24,7 @@ public abstract record StepResult<T>
 {
     public sealed record Success(T Value) : StepResult<T>;
     public sealed record Cancelled : StepResult<T>;
-    public sealed record BusinessFailure(BusinessIncident Value) : StepResult<T>;
+    public sealed record BusinessFailure(BusinessIncident Value, bool Retriable = true) : StepResult<T>;
     public sealed record TechnicalFailure(Failures.TechnicalFailure Value) : StepResult<T>;
 }
 ```
@@ -33,8 +33,35 @@ public abstract record StepResult<T>
 |---------|---------|-------------------|
 | `Success` | Step completed with a value | Next step executes |
 | `Cancelled` | Already processed (idempotency) | Remaining steps are skipped |
-| `BusinessFailure` | Domain-level problem (bad data, validation failure) | Remaining steps are skipped |
+| `BusinessFailure` | Domain-level problem (bad data, an unreachable destination) | Remaining steps are skipped |
 | `TechnicalFailure` | Infrastructure problem (network, database, timeout) | Remaining steps are skipped |
+
+### Retriable business failures
+
+A business failure says what went wrong; `Retriable` says whether trying the same item again could
+help. Both kinds raise an incident — the difference is what happens to the item afterwards.
+
+| `Retriable` | The step is saying | After the incident is routed |
+|---|---|---|
+| `true` (default) | The *circumstances* failed — the destination is in a maintenance window, a dependency is down. The data is fine. | The message is left for redelivery, and dead-letters if it never recovers |
+| `false` | The *data* is wrong — a rejected record, an unknown reference. No attempt will change that. | The message is acknowledged: routing the incident was the whole handling |
+
+```csharp
+// A validator's verdict on the data: retrying cannot help.
+return (new BusinessStepResult<Order>.Failure(incident, Retriable: false), context);
+
+// A sender that could not reach its destination: the same message would succeed later.
+return (new BusinessStepResult<Order>.Failure(incident), context);
+```
+
+It defaults to `true` because the failure modes are not symmetrical: acknowledging a message
+destroys it, while leaving it for redelivery is recoverable and still ends in the broker's
+dead-letter queue.
+
+!!! note "Source files are different"
+    `Retriable` governs redelivery, so it has no effect on a file swept from a source port. A sweep
+    has no redelivery budget and no dead-letter queue, so "try again" would mean re-reading the same
+    file on every run, for ever. A file whose incident was routed is always completed.
 
 ## BusinessStepResult\<T\>
 
@@ -45,7 +72,7 @@ public abstract record BusinessStepResult<T>
 {
     public sealed record Success(T Value) : BusinessStepResult<T>;
     public sealed record Cancelled : BusinessStepResult<T>;
-    public sealed record Failure(BusinessIncident Value) : BusinessStepResult<T>;
+    public sealed record Failure(BusinessIncident Value, bool Retriable = true) : BusinessStepResult<T>;
 }
 ```
 
@@ -65,6 +92,17 @@ public abstract record TechnicalStepResult<T>
 ```
 
 Uncaught exceptions in a `TechnicalStep` become `TechnicalFailure`.
+
+An uncaught exception in a `BusinessStep` becomes a business failure that is retriable, because an
+exception nobody classified is not evidence that the data is wrong. A step whose throws really are
+verdicts on the data overrides `ExceptionsAreRetriable`:
+
+```csharp
+public class OrderValidator : ValidateStep<Order, Context>
+{
+    protected override bool ExceptionsAreRetriable => false;
+}
+```
 
 ## TechnicalFailure
 

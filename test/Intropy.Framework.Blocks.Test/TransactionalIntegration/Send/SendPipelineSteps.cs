@@ -45,6 +45,8 @@ public sealed class PassThroughExtractor : ExtractStep<MyInput, MyContext>
     }
 }
 
+/// <summary>A validator whose rejections are terminal: malformed data has to be fixed in the
+/// source system, so retrying the same item would only re-raise the same incident.</summary>
 public sealed class SchemaValidator : ValidateStep<MyInput, MyContext>
 {
     public override Task<(BusinessStepResult<MyInput> Result, MyContext Context)> ExecuteAsync(MyInput input,
@@ -58,7 +60,7 @@ public sealed class SchemaValidator : ValidateStep<MyInput, MyContext>
                 Context = new Dictionary<string, string>()
             };
             return Task.FromResult<(BusinessStepResult<MyInput> Result, MyContext Context)>((
-                new BusinessStepResult<MyInput>.Failure(bi), context));
+                new BusinessStepResult<MyInput>.Failure(bi, Retriable: false), context));
         }
 
         return Task.FromResult<(BusinessStepResult<MyInput> Result, MyContext Context)>((
@@ -102,5 +104,31 @@ public sealed class HttpSender : SendStep<MyContext>
     {
         return Task.FromResult<(BusinessStepResult<byte[]> Result, MyContext Context)>((
             new BusinessStepResult<byte[]>.Success(input), context));
+    }
+}
+
+/// <summary>A sender that cannot reach its destination — a maintenance window, a dropped
+/// connection — the way a real adapter reports it: by throwing.</summary>
+public sealed class UnreachableDestinationSender : SendStep<MyContext>
+{
+    public override Task<(BusinessStepResult<byte[]> Result, MyContext Context)> ExecuteAsync(byte[] input,
+        MyContext context, CancellationToken ct) =>
+        throw new IOException("The destination refused the connection");
+}
+
+/// <summary>A sender whose destination took the message and rejected it on business grounds. The
+/// data is wrong, so the step says the rejection is terminal.</summary>
+public sealed class RejectingSender : SendStep<MyContext>
+{
+    public override Task<(BusinessStepResult<byte[]> Result, MyContext Context)> ExecuteAsync(byte[] input,
+        MyContext context, CancellationToken ct)
+    {
+        var incident = new BusinessIncidentData
+        {
+            Description = "The destination rejected the order: unknown customer reference",
+            Context = new Dictionary<string, string>()
+        };
+        return Task.FromResult<(BusinessStepResult<byte[]> Result, MyContext Context)>((
+            new BusinessStepResult<byte[]>.Failure(incident, Retriable: false), context));
     }
 }

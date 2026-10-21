@@ -83,8 +83,11 @@ public class CustomerValidator : ValidateStep<CustomerRecord, Context>
                 "Customer name is required",
                 DateTimeOffset.UtcNow,
                 new Dictionary<string, string> { ["customerId"] = input.Id });
+            // Retriable: false — a missing name is a verdict on the data, which no further
+            // attempt changes. It makes no difference to a swept file, but it is the honest
+            // classification and it matters if this step is ever reused on a queued message.
             return Task.FromResult<(BusinessStepResult<CustomerRecord>, Context)>(
-                (new BusinessStepResult<CustomerRecord>.Failure(incident), context));
+                (new BusinessStepResult<CustomerRecord>.Failure(incident, Retriable: false), context));
         }
 
         return Task.FromResult<(BusinessStepResult<CustomerRecord>, Context)>(

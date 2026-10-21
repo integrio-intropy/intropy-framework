@@ -48,7 +48,7 @@ public static class Pipeline
         {
             StepResult<TIn>.Success s => await ExecuteStep(step, s.Value, context, ct),
             StepResult<TIn>.Cancelled => (new StepResult<TOut>.Cancelled(), context, ct),
-            StepResult<TIn>.BusinessFailure bf => (new StepResult<TOut>.BusinessFailure(bf.Value), context, ct),
+            StepResult<TIn>.BusinessFailure bf => (new StepResult<TOut>.BusinessFailure(bf.Value, bf.Retriable), context, ct),
             StepResult<TIn>.TechnicalFailure tf => (new StepResult<TOut>.TechnicalFailure(tf.Value), context, ct),
             StepResult<TIn>.Aborted => (new StepResult<TOut>.Aborted(), context, ct),
             _ => throw new InvalidOperationException("Unknown result type")
@@ -85,7 +85,7 @@ public static class Pipeline
         {
             StepResult<TIn>.Success s => await ExecuteStep(step, s.Value, context, ct),
             StepResult<TIn>.Cancelled => (new StepResult<TOut>.Cancelled(), context, ct),
-            StepResult<TIn>.BusinessFailure bf => (new StepResult<TOut>.BusinessFailure(bf.Value), context, ct),
+            StepResult<TIn>.BusinessFailure bf => (new StepResult<TOut>.BusinessFailure(bf.Value, bf.Retriable), context, ct),
             StepResult<TIn>.TechnicalFailure tf => (new StepResult<TOut>.TechnicalFailure(tf.Value), context, ct),
             StepResult<TIn>.Aborted => (new StepResult<TOut>.Aborted(), context, ct),
             _ => throw new InvalidOperationException("Unknown result type")
@@ -122,7 +122,7 @@ public static class Pipeline
         {
             StepResult<TIn>.Success s => await ExecuteStep(step, s.Value, context, ct),
             StepResult<TIn>.Cancelled => (new StepResult<TOut>.Cancelled(), context, ct),
-            StepResult<TIn>.BusinessFailure bf => (new StepResult<TOut>.BusinessFailure(bf.Value), context, ct),
+            StepResult<TIn>.BusinessFailure bf => (new StepResult<TOut>.BusinessFailure(bf.Value, bf.Retriable), context, ct),
             StepResult<TIn>.TechnicalFailure tf => (new StepResult<TOut>.TechnicalFailure(tf.Value), context, ct),
             StepResult<TIn>.Aborted => (new StepResult<TOut>.Aborted(), context, ct),
             _ => throw new InvalidOperationException("Unknown result type")

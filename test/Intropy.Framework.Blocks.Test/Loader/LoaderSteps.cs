@@ -34,7 +34,7 @@ public sealed class CustomerDeserializer : DeserializeStep<LoaderCustomerIn, Con
                 Description = "The message carried no payload", Context = new Dictionary<string, string>()
             };
             return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(
-                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi), context));
+                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi, Retriable: false), context));
         }
 
         var jsonString = Encoding.UTF8.GetString(input.Span);
@@ -46,7 +46,7 @@ public sealed class CustomerDeserializer : DeserializeStep<LoaderCustomerIn, Con
                 Context = new Dictionary<string, string> { { "data", jsonString } }
             };
             return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(
-                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi), context));
+                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi, Retriable: false), context));
         }
 
         return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(
@@ -54,6 +54,8 @@ public sealed class CustomerDeserializer : DeserializeStep<LoaderCustomerIn, Con
     }
 }
 
+/// <summary>A validator whose rejections are terminal: malformed data has to be fixed in the
+/// source system, so retrying the same item would only re-raise the same incident.</summary>
 public sealed class CustomerValidator : ValidateStep<LoaderCustomerIn, Context>
 {
     public override Task<(BusinessStepResult<LoaderCustomerIn> Result, Context Context)> ExecuteAsync(
@@ -68,7 +70,7 @@ public sealed class CustomerValidator : ValidateStep<LoaderCustomerIn, Context>
                 Context = new Dictionary<string, string> { { "customerId", input.CustomerId } }
             };
             return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(
-                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi), context));
+                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi, Retriable: false), context));
         }
 
         if (string.IsNullOrEmpty(input.Name))
@@ -79,7 +81,7 @@ public sealed class CustomerValidator : ValidateStep<LoaderCustomerIn, Context>
                 Context = new Dictionary<string, string> { { "customerId", input.CustomerId } }
             };
             return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(
-                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi), context));
+                (new BusinessStepResult<LoaderCustomerIn>.Failure(bi, Retriable: false), context));
         }
 
         return Task.FromResult<(BusinessStepResult<LoaderCustomerIn>, Context)>(

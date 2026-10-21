@@ -66,7 +66,7 @@ public sealed class CustomerValidator : ValidateStep<CustomerIn, Context>
                 Context = new Dictionary<string, string> { { "customerId", input.CustomerId } }
             };
             return Task.FromResult<(BusinessStepResult<CustomerIn>, Context)>(
-                (new BusinessStepResult<CustomerIn>.Failure(bi), context));
+                (new BusinessStepResult<CustomerIn>.Failure(bi, Retriable: false), context));
         }
 
         return Task.FromResult<(BusinessStepResult<CustomerIn>, Context)>(

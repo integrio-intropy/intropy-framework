@@ -14,7 +14,7 @@ public abstract record StepResult<T>
 {
     public sealed record Success(T Value) : StepResult<T>;
     public sealed record Cancelled : StepResult<T>;
-    public sealed record BusinessFailure(BusinessIncident Value) : StepResult<T>;
+    public sealed record BusinessFailure(BusinessIncident Value, bool Retriable = true) : StepResult<T>;
     public sealed record TechnicalFailure(Failures.TechnicalFailure Value) : StepResult<T>;
 }
 ```
@@ -23,7 +23,7 @@ public abstract record StepResult<T>
 |---------|---------|-------------------|
 | `Success(T Value)` | The step's output value | Next step executes |
 | `Cancelled` | None | Remaining steps skipped |
-| `BusinessFailure(BusinessIncident Value)` | Business incident details | Remaining steps skipped |
+| `BusinessFailure(BusinessIncident Value, bool Retriable = true)` | Business incident details, and whether the item should be tried again once the incident is routed | Remaining steps skipped |
 | `TechnicalFailure(TechnicalFailure Value)` | Technical failure details | Remaining steps skipped |
 
 **Creating results:**
@@ -32,7 +32,8 @@ public abstract record StepResult<T>
 // In a Step<TIn, TOut, TCtx>
 return (new StepResult<Order>.Success(order), context);
 return (new StepResult<Order>.Cancelled(), context);
-return (new StepResult<Order>.BusinessFailure(incident), context);
+return (new StepResult<Order>.BusinessFailure(incident), context);                    // try again later
+return (new StepResult<Order>.BusinessFailure(incident, Retriable: false), context); // the data is wrong
 return (new StepResult<Order>.TechnicalFailure(failure), context);
 ```
 

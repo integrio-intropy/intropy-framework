@@ -28,7 +28,8 @@ public abstract record BusinessStepResult<T>
     /// Represents a failed result from a <see cref="BusinessStep{TIn,TOut,TCtx}"/>, where the failure domain is 'Business'.
     /// </summary>
     /// <param name="Value">A BusinessIncident to be handled by a later step</param>
-    public sealed record Failure(BusinessIncidentData Value) : BusinessStepResult<T>;
+    /// <param name="Retriable">Whether the item should be tried again once the incident is routed</param>
+    public sealed record Failure(BusinessIncidentData Value, bool Retriable = true) : BusinessStepResult<T>;
 
     /// <summary>
     /// Represents an aborted result from a <see cref="BusinessStep{TIn,TOut,TCtx}"/>, caused by cancellation token signalling.
@@ -46,7 +47,7 @@ public abstract record BusinessStepResult<T>
         {
             Success s => new StepResult<T>.Success(s.Value),
             Cancelled => new StepResult<T>.Cancelled(),
-            Failure bf => new StepResult<T>.BusinessFailure(bf.Value),
+            Failure bf => new StepResult<T>.BusinessFailure(bf.Value, bf.Retriable),
             Aborted => new StepResult<T>.Aborted(),
             _ => throw new InvalidOperationException("Unknown business result type")
         };

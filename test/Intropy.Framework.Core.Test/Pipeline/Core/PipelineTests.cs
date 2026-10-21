@@ -1,3 +1,4 @@
+using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Framework.Core.Pipeline.Abstractions.Enums;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Core.Pipeline.Abstractions.Steps;
@@ -20,6 +21,45 @@ public class PipelineTests
 
         // Assert
         Assert.IsType<StepResult<string>.BusinessFailure>(result);
+    }
+
+    [Fact]
+    public async Task BusinessStep_WithUncaughtException_IsRetriableByDefault()
+    {
+        // An exception nobody classified is not evidence that the data is wrong, and consuming the
+        // item on that basis destroys it.
+        var (result, _, _) = await Intropy.Framework.Core.Pipeline.Core.Pipeline.Start("", "")
+            .AddStep(new ThrowingBusinessStep());
+
+        Assert.True(Assert.IsType<StepResult<string>.BusinessFailure>(result).Retriable);
+    }
+
+    [Fact]
+    public async Task BusinessStep_WithUncaughtException_IsTerminal_WhenTheStepSaysItsThrowsAre()
+    {
+        // A step whose throws really are verdicts on the data opts out.
+        var (result, _, _) = await Intropy.Framework.Core.Pipeline.Core.Pipeline.Start("", "")
+            .AddStep(new ThrowingTerminalBusinessStep());
+
+        Assert.False(Assert.IsType<StepResult<string>.BusinessFailure>(result).Retriable);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task BusinessFailure_KeepsItsRetriability_WhileLaterStepsAreSkipped(bool retriable)
+    {
+        // The failure is rebuilt for each skipped step's result type; the classification has to
+        // survive that, or the host sees the wrong verdict at the end of a long pipeline.
+        var (result, _, _) = await Intropy.Framework.Core.Pipeline.Core.Pipeline.Start("", "")
+            .AddStep(new RejectingBusinessStep(retriable))
+            .AddStep(new AppendStep("skipped"))
+            .AddStep(new ThrowingTechnicalStep())
+            .AddStep(new AppendStep("also skipped"));
+
+        var failure = Assert.IsType<StepResult<string>.BusinessFailure>(result);
+        Assert.Equal(retriable, failure.Retriable);
+        Assert.Equal("rejected", failure.Value.Description);
     }
 
     [Fact]
@@ -269,6 +309,34 @@ internal sealed class ThrowingBusinessStep : BusinessStep<string, string, string
     public override Task<(BusinessStepResult<string> Result, string Context)> ExecuteAsync(string input, string context, CancellationToken ct)
     {
         throw new InvalidOperationException("ThrowingBusinessStep");
+    }
+}
+
+/// <summary>A business step whose uncaught exceptions are verdicts on the data.</summary>
+internal sealed class ThrowingTerminalBusinessStep : BusinessStep<string, string, string>
+{
+    public override string StepName => "ThrowingTerminalBusinessStep";
+
+    protected override bool ExceptionsAreRetriable => false;
+
+    public override Task<(BusinessStepResult<string> Result, string Context)> ExecuteAsync(string input,
+        string context, CancellationToken ct)
+    {
+        throw new InvalidOperationException("ThrowingTerminalBusinessStep");
+    }
+}
+
+/// <summary>A business step that returns a failure it has classified itself.</summary>
+internal sealed class RejectingBusinessStep(bool retriable) : BusinessStep<string, string, string>
+{
+    public override string StepName => "RejectingBusinessStep";
+
+    public override Task<(BusinessStepResult<string> Result, string Context)> ExecuteAsync(string input,
+        string context, CancellationToken ct)
+    {
+        var incident = new BusinessIncidentData { Description = "rejected", Context = [] };
+        return Task.FromResult<(BusinessStepResult<string>, string)>(
+            (new BusinessStepResult<string>.Failure(incident, retriable), context));
     }
 }
 

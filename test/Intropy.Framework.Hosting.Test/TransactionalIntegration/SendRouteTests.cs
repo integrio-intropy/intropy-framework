@@ -93,8 +93,14 @@ public class SendRouteTests
         { new StepResult<byte[]>.Success([]), nameof(MessageOutcome.Processed), null },
         { new StepResult<byte[]>.Cancelled(), nameof(MessageOutcome.Skipped), null },
         { new StepResult<byte[]>.TechnicalFailure(new TechnicalFailure("send failed")), nameof(MessageOutcome.Failed), "technical_failure" },
-        // A Transactional Integration leaves a business failure for redelivery too.
-        { new StepResult<byte[]>.BusinessFailure(new BusinessIncidentData { Description = "rejected", Context = [] }), nameof(MessageOutcome.Failed), "business_failure" },
+        // A retriable business failure — the default, and what an unreachable destination produces
+        // — is left for redelivery: its incident has been routed, but the payload is intact and a
+        // later attempt may deliver it.
+        { new StepResult<byte[]>.BusinessFailure(new BusinessIncidentData { Description = "unreachable", Context = [] }), nameof(MessageOutcome.Failed), "business_failure" },
+        // A terminal one only reaches this method when no incident router is configured: nothing
+        // reported the problem, so acknowledging it would lose it silently. With a router it has
+        // already been turned into a success, and never arrives here as a failure.
+        { new StepResult<byte[]>.BusinessFailure(new BusinessIncidentData { Description = "rejected", Context = [] }, Retriable: false), nameof(MessageOutcome.Failed), "business_failure" },
         // Aborted without being interrupted: for example the processing time limit.
         { new StepResult<byte[]>.Aborted(), nameof(MessageOutcome.Failed), "aborted" }
     };
