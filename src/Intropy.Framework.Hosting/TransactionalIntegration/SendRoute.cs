@@ -17,8 +17,30 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// outcome (<see cref="PipelineOutcome.From"/>).
 /// </summary>
 /// <remarks>
-/// A Transactional Integration leaves a business failure for redelivery too: the message was not
-/// delivered, and the broker dead-letters it once redelivery gives up.
+/// <para>
+/// A technical failure is always left for redelivery and never routed as an incident. What a
+/// business failure does to the message depends on how the pipeline classified it and on whether
+/// an incident router is configured:
+/// </para>
+/// <list type="bullet">
+///   <item>
+///     Without <c>WithBusinessIncidents(...)</c>, every business failure reaches this method
+///     unhandled and the message is left for redelivery, whichever kind it is: nothing has reported
+///     the problem, so acknowledging it would lose it silently. The broker dead-letters the message
+///     once redelivery gives up.
+///   </item>
+///   <item>
+///     With an incident router, a <em>retriable</em> business failure — the default: the
+///     destination was unreachable, a maintenance window — is routed as an incident and still left
+///     for redelivery, because the payload is intact and a later attempt may well deliver it.
+///   </item>
+///   <item>
+///     A <em>terminal</em> business failure (<c>Retriable: false</c>) — a rejected record, data the
+///     destination will never accept — has been routed as an incident, and the router reports
+///     success: the message is acknowledged, because redelivering it would only re-raise the same
+///     incident.
+///   </item>
+/// </list>
 /// </remarks>
 /// <param name="contextFactory">Creates the context for each message, from the metadata propagated
 /// with it.</param>

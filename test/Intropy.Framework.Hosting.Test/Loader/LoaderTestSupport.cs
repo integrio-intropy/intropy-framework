@@ -27,14 +27,37 @@ public sealed class JsonDeserializer<T> : DeserializeStep<T, Context>
         Context context, CancellationToken ct)
     {
         LastInput = input.ToArray();
-        var value = JsonSerializer.Deserialize<T>(input.Span, s_options)!;
-        return Task.FromResult<(BusinessStepResult<T>, Context)>((new BusinessStepResult<T>.Success(value), context));
+
+        // A payload that will not parse is a verdict on the data, not on the circumstances: the same
+        // bytes fail identically on every attempt. Saying so explicitly (rather than throwing and
+        // taking the retriable default) keeps such a message acknowledged once its incident is
+        // routed, so tests that publish unparseable payloads leave no redelivery traffic behind for
+        // later tests in the same fixture to trip over.
+        T? value;
+        try
+        {
+            value = JsonSerializer.Deserialize<T>(input.Span, s_options);
+        }
+        catch (JsonException e)
+        {
+            var incident = new BusinessIncidentData
+            {
+                Description = "The payload is not valid JSON for this pipeline",
+                Context = new Dictionary<string, string> { ["error"] = e.Message }
+            };
+            return Task.FromResult<(BusinessStepResult<T>, Context)>(
+                (new BusinessStepResult<T>.Failure(incident, Retriable: false), context));
+        }
+
+        return Task.FromResult<(BusinessStepResult<T>, Context)>((new BusinessStepResult<T>.Success(value!), context));
     }
 }
 
 /// <summary>Accepts every input, or rejects the ones <paramref name="reject"/> matches as a
-/// business failure.</summary>
-public sealed class TestValidator<T>(Func<T, bool>? reject = null) : ValidateStep<T, Context>
+/// business failure — terminal by default, as a validator's verdict on the data is, or retriable
+/// when <paramref name="retriable"/> is set.</summary>
+public sealed class TestValidator<T>(Func<T, bool>? reject = null, bool retriable = false)
+    : ValidateStep<T, Context>
 {
     public override Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(T input, Context context,
         CancellationToken ct)
@@ -43,7 +66,7 @@ public sealed class TestValidator<T>(Func<T, bool>? reject = null) : ValidateSte
             ? new BusinessStepResult<T>.Failure(new BusinessIncidentData
             {
                 Description = "Rejected by the test validator", Context = new Dictionary<string, string>()
-            })
+            }, retriable)
             : new BusinessStepResult<T>.Success(input);
         return Task.FromResult<(BusinessStepResult<T>, Context)>((result, context));
     }

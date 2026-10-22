@@ -63,6 +63,40 @@ public class ExternalBusinessIncidentRouterTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithTerminalBusinessFailure_RoutesThenReportsSuccess()
+    {
+        // Routing the incident is the whole handling of a verdict on the data, so the host consumes
+        // the item: redelivering it would only re-raise the same incident.
+        var router = CreateRouter();
+        var businessIncident = new BusinessIncidentData { Description = "rejected", Context = [] };
+        var result = new StepResult<string>.BusinessFailure(businessIncident, Retriable: false);
+
+        var (finalResult, _) = await router.ExecuteAsync(result, GetContext("123"), CancellationToken.None);
+
+        await _mockClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+        Assert.IsType<StepResult<string>.Success>(finalResult);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithRetriableBusinessFailure_RoutesAndKeepsTheFailure()
+    {
+        // The incident tells a process owner about the circumstances, but the item is intact and
+        // must survive for another attempt — so the failure has to reach the host unchanged.
+        var router = CreateRouter();
+        var businessIncident = new BusinessIncidentData { Description = "destination unreachable", Context = [] };
+        var result = new StepResult<string>.BusinessFailure(businessIncident);
+
+        var (finalResult, _) = await router.ExecuteAsync(result, GetContext("123"), CancellationToken.None);
+
+        await _mockClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+        var preserved = Assert.IsType<StepResult<string>.BusinessFailure>(finalResult);
+        Assert.True(preserved.Retriable);
+        Assert.Equal("destination unreachable", preserved.Value.Description);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithSuccessNotRetry_DoesNothing()
     {
         // Arrange

@@ -274,9 +274,24 @@ The SendPipeline processes messages in this order:
 | **Validate** | `ValidateStep<TInput, TCtx>` | Business validation (BusinessStep) |
 | **Transform** | `TransformStep<TInput, TOutput, TCtx>` | Convert input to output (TechnicalStep) |
 | **Serialize** | `SerializeStep<TOutput, TCtx>` | Convert output to bytes (TechnicalStep) |
-| **Send** | `SendStep<TCtx>` | Send to destination (BusinessStep) |
+| **Send** | `SendStep<TCtx>` | Send to destination (BusinessStep; see below) |
 | **Idempotency Record** | `IdempotencyRecordStep<byte[], TCtx>` | Mark as processed |
 | **Route Incidents** | Finalizer | Routes any business failures to incident service |
+
+### What a send failure does to the message
+
+The send step is a `BusinessStep`, so a destination that will not take the data raises an incident.
+Whether the message survives is a second, separate decision:
+
+| The step | Incident | Message |
+|---|---|---|
+| Throws, or returns a failure (the default) | Raised | Left for redelivery; dead-lettered if it never recovers |
+| Returns `Failure(incident, Retriable: false)` | Raised | Acknowledged — the data is wrong and no attempt changes that |
+| Returns a `TechnicalFailure` via another step | None | Left for redelivery |
+
+The default is what an unreachable destination needs: an SFTP maintenance window raises the incident
+a process owner acts on, and the message is still there when the window closes. Reserve
+`Retriable: false` for a destination that took the message and rejected its content.
 
 ## Source Sweep
 

@@ -65,7 +65,9 @@ public class ExternalBusinessIncidentRouter<T, TCtx>(
             return (new StepResult<T>.TechnicalFailure(tf), context);
         }
 
-        return (new StepResult<T>.Success(defaultValueFactory()), context);
+        return businessFailure.Retriable
+            ? (businessFailure, context)
+            : (new StepResult<T>.Success(defaultValueFactory()), context);
     }
 
     private async Task<(StepResult<T> Result, TCtx context)> ResolveBusinessIncident(StepResult<T> result, TCtx context)

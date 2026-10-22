@@ -60,6 +60,8 @@ public sealed class LoaderHost : IAsyncDisposable
 
     /// <summary>A loader without routes: one pipeline for every event type.</summary>
     /// <param name="reject">Inputs the validator fails as a business incident.</param>
+    /// <param name="rejectRetriable">Whether those rejections ask for the message to be tried again
+    /// (routed and left for redelivery) instead of being terminal (routed and acknowledged).</param>
     /// <param name="configure">Further loader options, applied over <see cref="Defaults"/>.</param>
     /// <param name="extraServices">Registrations the loader resolves at run time — a claim store,
     /// for instance. Applied before the loader is added.</param>
@@ -67,12 +69,13 @@ public sealed class LoaderHost : IAsyncDisposable
     /// <see cref="IIdempotencyServiceClient"/> is registered either.</param>
     public static Task<LoaderHost> StartSingleAsync(Func<OrderCreated, bool>? reject = null,
         Action<LoaderOptions>? configure = null, Action<IServiceCollection>? extraServices = null,
-        bool idempotent = true) =>
+        bool idempotent = true, bool rejectRetriable = false) =>
         StartAsync((services, fixture) =>
         {
             extraServices?.Invoke(services);
             services.AddLoader<OrderCreated, OrderCreated, Context>(
-                (builder, _) => Pipeline(builder, fixture.CreatedSender, reject, idempotent: idempotent),
+                (builder, _) => Pipeline(builder, fixture.CreatedSender, reject, idempotent: idempotent,
+                    rejectRetriable: rejectRetriable),
                 (metadata, isRetry) => new Context(metadata, isRetry),
                 options =>
                 {
@@ -133,11 +136,11 @@ public sealed class LoaderHost : IAsyncDisposable
 
     private static LoaderBuilder<T, T, Context> Pipeline<T>(LoaderBuilder<T, T, Context> builder,
         RecordingSender<T> sender, Func<T, bool>? reject = null, JsonDeserializer<T>? deserializer = null,
-        bool idempotent = true)
+        bool idempotent = true, bool rejectRetriable = false)
     {
         builder
             .WithDeserializer(deserializer ?? new JsonDeserializer<T>())
-            .WithValidator(new TestValidator<T>(reject));
+            .WithValidator(new TestValidator<T>(reject, rejectRetriable));
         if (idempotent)
             builder.WithIdempotency();
         return builder

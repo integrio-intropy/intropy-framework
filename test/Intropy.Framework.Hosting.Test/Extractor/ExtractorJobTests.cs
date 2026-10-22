@@ -407,8 +407,8 @@ public class ExtractorJobTests
     [Fact]
     public async Task ExecuteAsync_LogsHandledFilesWithoutClaimingPublication()
     {
-        // Success covers publication OR a routed incident; the sweep must not log every
-        // success as "Published". This test pins the incident-routed file's log line.
+        // The sweep must not log every completed file as "Published": a file whose incident was
+        // routed is completed too, and says so in its own words. This test pins that log line.
         var fakes = new ExtractorSweepTestProcess.SweepFakes();
         fakes.Files.AddFile("order-1.json", InvalidInput);
         var provider = fakes.CreateServices().BuildServiceProvider();
@@ -421,9 +421,15 @@ public class ExtractorJobTests
         Assert.Equal(1, summary.Processed);
         Assert.Single(fakes.Incidents.Incidents);
         Assert.Empty(fakes.Topic.Events);
+        // Completed, not left behind: a sweep has no redelivery budget, so re-reading the file
+        // every run would re-raise the same incident for ever.
+        Assert.Empty(fakes.Files.Files);
         Assert.All(logger.Messages, m => Assert.DoesNotContain("Published", m.Text));
-        var handled = Assert.Single(logger.Messages, m => m.Text.Contains("Handled source file"));
+        var handled = Assert.Single(logger.Messages, m => m.Text.Contains("raised a business incident"));
         Assert.Contains("order-1.json", handled.Text);
+        // The file is still completed: a sweep has no redelivery to leave it for, so routing the
+        // incident is its terminal handling.
+        Assert.Contains("the file is completed", handled.Text);
     }
 
     private static ExtractorJob<ExtractorTestProcess.TestContext>

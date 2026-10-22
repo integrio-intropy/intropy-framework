@@ -150,7 +150,9 @@ public class InvoiceSerializer : SerializeStep<Invoice, Context>
 
 ### Sender
 
-`SendStep<TCtx>` extends `BusinessStep<byte[], byte[], TCtx>`:
+`SendStep<TCtx>` extends `BusinessStep<byte[], byte[], TCtx>`. An exception out of it — the API is
+down, the connection drops — raises a business incident *and* leaves the message for redelivery, so
+a destination that is merely unavailable never costs you the message:
 
 ```csharp
 public class InvoiceApiSender(HttpClient httpClient) : SendStep<Context>
@@ -161,6 +163,20 @@ public class InvoiceApiSender(HttpClient httpClient) : SendStep<Context>
         using var content = new ByteArrayContent(input);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         var response = await httpClient.PostAsync("/invoices", content);
+
+        // The API took the invoice and refused it: the data is wrong, so retrying the same bytes
+        // cannot help. Say so, and the message is acknowledged once the incident is routed.
+        if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
+        {
+            var incident = new BusinessIncidentData
+            {
+                Description = $"The invoice API rejected the invoice: {await response.Content.ReadAsStringAsync()}",
+                Context = new Dictionary<string, string>()
+            };
+            return (new BusinessStepResult<byte[]>.Failure(incident, Retriable: false), context);
+        }
+
+        // Anything else throws, which raises an incident and keeps the message for another attempt.
         response.EnsureSuccessStatusCode();
 
         return (new BusinessStepResult<byte[]>.Success(input), context);

@@ -186,6 +186,46 @@ public class SendPipelineTests
         Assert.Equal(latin1, sender.Received);
     }
 
+    [Fact]
+    public async Task Pipeline_WhenTheDestinationCannotBeReached_RoutesAnIncidentAndKeepsTheFailure()
+    {
+        // The reported bug: an exception out of the adapter used to be acknowledged, consuming a
+        // message whose payload was intact. It must now survive for redelivery — with the incident
+        // still raised, because an unreachable destination is a business problem — and must not be
+        // recorded as processed.
+        var pipeline = GetPreparedPipelineBuilder().WithSender(new UnreachableDestinationSender()).Build();
+        var context = MyContext.Create();
+        context.Metadata.Add("MessageId", "ORD-1");
+
+        var (result, _) = await pipeline.Execute(Input("123"), context);
+
+        var failure = Assert.IsType<StepResult<byte[]>.BusinessFailure>(result);
+        Assert.True(failure.Retriable);
+        await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+        // Nothing was delivered, so nothing may be recorded: the redelivery has to run the pipeline.
+        await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().CommitAsync(Arg.Any<MessageInfo>());
+    }
+
+    [Fact]
+    public async Task Pipeline_WhenTheDestinationRejectsTheData_RoutesAnIncidentAndSucceeds()
+    {
+        // The other half of the same boundary: the destination was reached and refused the content.
+        // Retrying cannot change that, so the incident is the handling and the message is consumed.
+        var pipeline = GetPreparedPipelineBuilder().WithSender(new RejectingSender()).Build();
+        var context = MyContext.Create();
+        context.Metadata.Add("MessageId", "ORD-1");
+
+        var (result, _) = await pipeline.Execute(Input("123"), context);
+
+        Assert.IsType<StepResult<byte[]>.Success>(result);
+        await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+    }
+
+    private static ReadOnlyMemory<byte> Input(string orderId) => new(Encoding.UTF8.GetBytes(
+        $"{{\"orderId\": \"{orderId}\", \"eventDateTime\": \"2025-01-01T00:00:01\"}}"));
+
     private sealed class FixedBytesSerializer(byte[] bytes) : SerializeStep<MyOutput, MyContext>
     {
         public override Task<(TechnicalStepResult<byte[]> Result, MyContext Context)> ExecuteAsync(MyOutput input,

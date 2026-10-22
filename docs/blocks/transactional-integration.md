@@ -36,6 +36,13 @@ In practice, this means the TI has two pipelines connected by Dapr pub/sub:
 
 If the send pipeline fails for a message, the message remains on the topic for automatic retry. The source system is not involved in retries.
 
+That covers a business failure too. The send step is a `BusinessStep`, so an unreachable destination
+raises an incident a process owner can act on — and because business failures are retriable unless
+the step says otherwise, the message is still on the topic when the destination comes back. A step
+that returns `Failure(incident, Retriable: false)` says the destination rejected the *data*, which
+no retry changes, and that message is acknowledged once its incident is routed. See
+[Result Types](../concepts/result-types.md).
+
 ## Lifecycle
 
 The lifecycle is a run-to-completion job, hosted by the same `JobRunner` as the extractor:

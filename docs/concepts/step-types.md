@@ -184,6 +184,33 @@ The Blocks package provides pre-named step abstractions for common integration p
 | `Step` | You need full control over the result type (rare — prefer BusinessStep or TechnicalStep) |
 | `Finalizer` | Your logic should run regardless of the pipeline result (cleanup, notifications, incident routing) |
 
+### Classifying a business failure
+
+Choosing `BusinessStep` says the failure is worth an incident. It does not say whether the item
+should be tried again — that is a second decision, and the step makes it per failure:
+
+```csharp
+// The data is wrong. Routing the incident is the handling; the message is acknowledged.
+return (new BusinessStepResult<Order>.Failure(incident, Retriable: false), context);
+
+// The circumstances are wrong. The incident is routed and the message is left for redelivery.
+return (new BusinessStepResult<Order>.Failure(incident), context);
+```
+
+An uncaught exception takes the step class's answer, `ExceptionsAreRetriable`, which defaults to
+`true`: an exception nobody classified is not evidence that the data is wrong, and acknowledging a
+message destroys it, while leaving it for redelivery still ends in the broker's dead-letter queue.
+Override it to `false` on a step whose throws are verdicts on the data.
+
+A Transactional Integration's `SendStep` relies on that default: failing to *reach* a destination
+says nothing about the payload, so the incident is raised and the message survives for another
+attempt.
+
+!!! note "Source files are different"
+    `Retriable` governs redelivery, so it has no effect on a file swept from a source port — a sweep
+    has no redelivery budget and no dead-letter queue to end in. A file whose incident was routed is
+    always completed. See [Result Types](result-types.md).
+
 ## Related
 
 - [Result Types](result-types.md) — the result types each step produces

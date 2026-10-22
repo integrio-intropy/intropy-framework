@@ -19,6 +19,16 @@ public abstract class BusinessStep<TIn, TOut, TCtx>
     public abstract string StepName { get; }
 
     /// <summary>
+    /// Whether an exception this step does not catch itself leaves the item to be tried again.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The default is <see langword="true"/>
+    /// </para>
+    /// </remarks>
+    protected virtual bool ExceptionsAreRetriable => true;
+
+    /// <summary>
     /// The method that will be executed once the step is run.
     /// </summary>
     /// <param name="input">The value from the previous step, if that step succeeded.</param>
@@ -62,10 +72,11 @@ public abstract class BusinessStep<TIn, TOut, TCtx>
         }
         catch (Exception ex)
         {
-            activity?.SetStatus(ActivityStatusCode.Ok);
             activity?.AddException(ex);
             var businessIncident = CreateBusinessIncident(ex);
-            return (new BusinessStepResult<TOut>.Failure(businessIncident), context);
+            var failure = new BusinessStepResult<TOut>.Failure(businessIncident, ExceptionsAreRetriable);
+            SetFinalActivityStatus(activity, failure);
+            return (failure, context);
         }
     }
 
@@ -94,6 +105,7 @@ public abstract class BusinessStep<TIn, TOut, TCtx>
         if (result is BusinessStepResult<TOut>.Failure bf)
         {
             activity.SetTag("step.business_failure_message", bf.Value.Description);
+            activity.SetTag("step.business_failure_retriable", bf.Retriable);
         }
     }
 
