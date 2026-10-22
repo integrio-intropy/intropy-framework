@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="JunitXml.TestLogger" />
+    <PackageReference Include="coverlet.msbuild" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Intropy.Framework.Components\Intropy.Framework.Components.csproj" />
+    <!-- The generator, as this project's analyzer: NuGet consumers of Intropy.Framework.Components
+         get it from the package; a project referencing the framework by project needs it spelled
+         out. It checks the samples' identities at compile time. -->
+    <ProjectReference Include="..\..\src\Intropy.Framework.Components.Generators\Intropy.Framework.Components.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- And as the plain reference the generator tests use to run the driver on. -->
+    <ProjectReference Include="..\..\src\Intropy.Framework.Components.Generators\Intropy.Framework.Components.Generators.csproj" />
+    <ProjectReference Include="..\..\src\Intropy.Framework.Testing\Intropy.Framework.Testing.csproj" />
+  </ItemGroup>
+
+  <!-- The components' generator runs on this project too — it checks the samples' identities at
+       compile time. The samples never assemble a system, so it writes no record here, and the
+       property export makes the flag visible to the generator. -->
+  <PropertyGroup>
+    <IntropyGenerateScaffold>false</IntropyGenerateScaffold>
+  </PropertyGroup>
+  <ItemGroup>
+    <CompilerVisibleProperty Include="IntropyGenerateScaffold" />
+  </ItemGroup>
+</Project>

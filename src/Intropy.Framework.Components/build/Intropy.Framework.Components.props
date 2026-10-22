@@ -1,0 +1,12 @@
+<Project>
+
+  <!-- The generator reads two MSBuild properties through the analyzer config:
+       MSBuildProjectDirectory, where it writes .intropy/scaffold.json, and IntropyGenerateScaffold,
+       which turns the writing off. Exporting them makes both visible to the generator; projects
+       that only carry components (a test project, say) set IntropyGenerateScaffold=false. -->
+  <ItemGroup>
+    <CompilerVisibleProperty Include="MSBuildProjectDirectory" />
+    <CompilerVisibleProperty Include="IntropyGenerateScaffold" />
+  </ItemGroup>
+
+</Project>

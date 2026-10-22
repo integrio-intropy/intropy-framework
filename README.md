@@ -19,6 +19,7 @@ Intropy.Framework packages the structure: declare your steps, compose them with 
 | [Intropy.Framework.Adapters](https://www.nuget.org/packages/Intropy.Framework.Adapters) | File adapters (SFTP, local, Azure Blob) via Dapr bindings |
 | [Intropy.Framework.Hosting](https://www.nuget.org/packages/Intropy.Framework.Hosting) | Runtime orchestration (Dapr sidecar lifecycle, message subscription, idle timeout) |
 | [Intropy.Framework.EventDispatcher](https://www.nuget.org/packages/Intropy.Framework.EventDispatcher) | Attribute-based CloudEvent routing to typed handlers |
+| [Intropy.Framework.Components](https://www.nuget.org/packages/Intropy.Framework.Components) | Declarative components: a class declares its rules and steps, the framework wires the rest (Gateway) |
 
 For a full Transactional Integration worker, install **Blocks** and **Hosting**.
 

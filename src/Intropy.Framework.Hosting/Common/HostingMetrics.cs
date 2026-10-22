@@ -46,6 +46,14 @@ internal static class HostingMetrics
         "Duration of processing one message through a Transactional Integration's send pipeline or a loader route.",
         advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = MessageDurationBuckets });
 
+    private static readonly Counter<long> GatewayRequests = Meter.CreateCounter<long>(
+        "intropy.gateway.requests", "{request}", "Requests a gateway received, by outcome.");
+
+    private static readonly Histogram<double> GatewayDuration = Meter.CreateHistogram(
+        "intropy.gateway.duration", "s",
+        "Duration of handling one gateway request, from the first byte read to the outcome.",
+        advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = MessageDurationBuckets });
+
     private static readonly ConcurrentDictionary<InFlightRegistration, byte> InFlightRegistrations = new();
 
     static HostingMetrics() =>
@@ -61,6 +69,19 @@ internal static class HostingMetrics
         };
         JobRuns.Add(1, tags);
         JobDuration.Record(duration.TotalSeconds, tags);
+    }
+
+    internal static void RecordGatewayRequest(string componentName, string sourcePort, string outcome,
+        TimeSpan duration)
+    {
+        var tags = new TagList
+        {
+            { "intropy.component.name", componentName },
+            { "intropy.source.port", sourcePort },
+            { "intropy.gateway.outcome", outcome }
+        };
+        GatewayRequests.Add(1, tags);
+        GatewayDuration.Record(duration.TotalSeconds, tags);
     }
 
     internal static void RecordSweptFile(string componentName, string sourcePort, FileOutcome outcome) =>

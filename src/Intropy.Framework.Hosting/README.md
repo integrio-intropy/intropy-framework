@@ -265,6 +265,74 @@ without the host stopping (for example by `MaxMessageProcessingTime`), it counts
 its span is an error. Messages still in flight when the grace period ends count as failed only
 when the run ended on its idle timeout, not when the host stopped it.
 
+## Gateways
+
+`AddGateway` registers an extractor whose items are pushed to it over HTTP instead of swept from a
+source, and `MapGateway` maps it. Its endpoints take the place of an extractor's source ports: each
+endpoint is declared as one unit — its port, its path, and the pipeline its items go through — and
+each request body runs through that pipeline as one item, and the pipeline's result is the caller's
+answer. The caller is the only retry mechanism: nothing stays behind for a next run.
+
+```csharp
+builder.Services.AddGateway(new GatewayDefinition
+{
+    Endpoints = endpoints => endpoints
+        .Endpoint<WebshopOrder, OrderPlaced>("order-gateway-webshop", "/orders/webshop", (pipeline, services) => pipeline...)
+        .Endpoint<EdiOrder, OrderPlaced>("order-gateway-edi", "/orders/edi", (pipeline, services) => pipeline...),
+});
+
+var app = builder.Build();
+app.MapGateway();
+```
+
+An endpoint is a port, as the system's topology names it, and the path callers `POST` to. The port
+is stamped on every event the endpoint's items publish and scopes their idempotency records, exactly
+as for a swept port. Registration requires at least one endpoint and rejects a path that does not
+start with `/` and a duplicate port or path (ASP.NET Core matches paths case-insensitively). A body
+reaches its pipeline's deserializer as undecoded bytes, as a swept file does.
+
+`Intropy.Framework.Components` wraps this in a declarative `GatewayComponent`; use this registration
+when you compose the web host yourself.
+
+### Outcomes
+
+| Outcome | Default response | Resend? |
+|---|---|---|
+| Published | `202`, `{ requestId, eventId }` | No |
+| Duplicate (idempotency check) | `200`, `{ requestId, duplicate: true }` | Safe; nothing is published again |
+| Rejected (business incident routed) | `422` problem details | No — it fails again |
+| Too large (`MaxRequestBodyBytes`) | `413` problem details | No |
+| Unavailable (not ready, technical failure, sidecar or platform service down) | `503` + `Retry-After` | Yes |
+
+`GatewayDefinition.Respond` replaces the mapping; `GatewayResponses.Default` is the default to
+delegate to. `ConfigureEndpoints` applies conventions — authorization, rate limiting — to the
+endpoints as one group. Every response carries `X-Request-Id`: the caller's, or one the gateway assigned. It is
+also `SourceContextKeys.RequestId` on the context, set before any step runs.
+
+A routed business incident ends the pipeline as a success; the gateway tells it apart from a publish
+by the successful result's subtype, `StepResult<T>.RoutedIncident`, which the incident router
+returns — a discriminator the result's other consumers deliberately do not read: to a file sweep or
+a send pipeline the routed item is the handled success it ends the pipeline as.
+
+### Startup and probes
+
+Startup composes every endpoint's pipeline once, so a misconfigured gateway fails to start instead
+of failing its first request. The gateway then waits for its sidecar in the background and never gives up: until
+the sidecar answers, requests get `503` and `/readyz` answers `503`. `/healthz` answers `200` while
+the process serves requests.
+
+### Options
+
+| `GatewayOptions` | Default |
+|---|---|
+| `MaxRequestBodyBytes` | 1 MiB |
+| `RetryAfter` | 5 seconds |
+| `WaitForSidecar` | `true` |
+| `SidecarTimeout` | 60 seconds per wait; the gateway waits again after it |
+
+Requests are counted by `intropy.gateway.requests` and timed by `intropy.gateway.duration`, tagged
+with the component, the endpoint's port and `intropy.gateway.outcome`.
+
 ## License
 
 MIT. See the [repository](https://github.com/integrio-intropy/intropy-framework) for source and documentation.

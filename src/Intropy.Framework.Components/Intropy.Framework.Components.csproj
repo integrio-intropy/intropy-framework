@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Declarative Intropy components: a component class declares its identity, its rules and its steps, and the framework wires configuration, telemetry, Dapr, the platform-service clients, the endpoint and the publisher from the component's IntropyComponent attribute.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;component;gateway;dapr</PackageTags>
+  </PropertyGroup>
+
+  <!-- A gateway is an ASP.NET Core application. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
+    <!-- The generator runs on the components themselves, too: it checks a component's identity at
+         compile time, and this project carries the block base classes it looks at. It ships with
+         the package as an analyzer; PackGenerator below adds its DLL to the package. -->
+    <ProjectReference Include="..\Intropy.Framework.Components.Generators\Intropy.Framework.Components.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.Client" />
+    <PackageReference Include="Intropy.BusinessIncidentService.Client" />
+    <PackageReference Include="Intropy.IdempotencyService.Client" />
+    <PackageReference Include="Intropy.Telemetry.AspNetCore" />
+  </ItemGroup>
+
+  <!-- The generator ships inside this package as an analyzer: a consumer of the package runs it
+       against its own components, and the scaffold record it writes is the consumer project's —
+       so no reference, only the DLL, packed under analyzers/dotnet/cs. -->
+  <!-- Exports the two MSBuild properties the generator reads, and packs the generator DLL (see
+       PackGenerator below). -->
+  <ItemGroup>
+    <None Include="build\Intropy.Framework.Components.props" Pack="true" PackagePath="build\" />
+  </ItemGroup>
+
+  <Target Name="PackGenerator" BeforeTargets="_GetPackageFiles">
+    <PropertyGroup>
+      <_GeneratorAssembly>$(MSBuildThisFileDirectory)..\Intropy.Framework.Components.Generators\bin\$(Configuration)\netstandard2.0\Intropy.Framework.Components.Generators.dll</_GeneratorAssembly>
+    </PropertyGroup>
+    <ItemGroup>
+      <None Include="$(_GeneratorAssembly)" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    </ItemGroup>
+  </Target>
+
+</Project>
