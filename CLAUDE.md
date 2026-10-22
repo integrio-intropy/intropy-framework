@@ -34,6 +34,7 @@ This is a type-safe, observable pipeline framework for building system integrati
 | **Intropy.Framework.Blocks** | Reusable pipeline blocks (Extractor, Loader, TransactionalIntegration) |
 | **Intropy.Framework.Hosting** | Runtime orchestration with Dapr sidecar lifecycle, idle timeout, message subscription |
 | **Intropy.Framework.EventDispatcher** | CloudEvent routing to typed handlers via DI |
+| **Intropy.Framework.Components** | Declarative components (Gateway): rules and steps in a class, identity declared in code with the `IntropyComponent` attribute; the generator turns it into the scaffold record for the system tooling |
 
 ### Key Concepts
 

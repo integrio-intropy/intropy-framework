@@ -98,7 +98,7 @@ public class SendPipelineTests
         var (result, _) = await pipeline.Execute(input, context);
 
         // Assert
-        Assert.IsType<StepResult<byte[]>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.RoutedIncident>(result);
         await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
@@ -218,7 +218,8 @@ public class SendPipelineTests
 
         var (result, _) = await pipeline.Execute(Input("123"), context);
 
-        Assert.IsType<StepResult<byte[]>.Success>(result);
+        // A success, as a routed incident: the subtype carries the incident for a host that answers a caller.
+        Assert.IsAssignableFrom<StepResult<byte[]>.Success>(result);
         await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }

@@ -109,7 +109,7 @@ public class LoaderTests
                 Arg.Is<string>(x => x.Equals("customer-invalid-id", StringComparison.Ordinal)),
                 Arg.Any<BusinessIncidentData>(),
                 Arg.Any<string?>());
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
     }
 
     [Fact]
@@ -262,7 +262,7 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
         Assert.Empty(receiptSender.SentReceipts);
     }
 
@@ -398,7 +398,7 @@ public class LoaderTests
         await _businessIncidentServiceClient.ReceivedWithAnyArgs(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
         Assert.Empty(receiptSender.SentReceipts);
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
     }
 
     [Fact]
