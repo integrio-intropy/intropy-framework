@@ -151,6 +151,20 @@ public class GatewayComponentTests
     }
 
     [Fact]
+    public async Task Post_WhenThePublisherFailsPermanently_AnswersServerErrorWithoutRetry()
+    {
+        await using var host = new GatewayTestHost<OrderGateway>();
+        host.Topic.SendException = new InvalidOperationException("a fault resending cannot cure");
+
+        using var response = await host.PostAsync(Order);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.Null(response.Headers.RetryAfter);
+        Assert.Equal(0, host.Topic.Count);
+        Assert.Empty(host.Idempotency.Committed);
+    }
+
+    [Fact]
     public async Task Post_WhenTheIdempotencyServiceIsDown_AsksTheCallerToRetry()
     {
         await using var host = new GatewayTestHost<OrderGateway>();

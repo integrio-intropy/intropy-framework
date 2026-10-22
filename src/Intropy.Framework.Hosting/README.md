@@ -304,7 +304,15 @@ when you compose the web host yourself.
 | Duplicate (idempotency check) | `200`, `{ requestId, duplicate: true }` | Safe; nothing is published again |
 | Rejected (business incident routed) | `422` problem details | No — it fails again |
 | Too large (`MaxRequestBodyBytes`) | `413` problem details | No |
-| Unavailable (not ready, technical failure, sidecar or platform service down) | `503` + `Retry-After` | Yes |
+| Unavailable (not ready, sidecar, pub/sub or platform service down) | `503` + `Retry-After` | Yes |
+| Failed (a technical failure a resend cannot cure) | `500` problem details | No — fix the gateway |
+
+A technical failure is transient only when its exception says so: a gRPC `Unavailable`,
+`DeadlineExceeded`, `ResourceExhausted`, `Aborted`, `Internal` or `Unknown`; an HTTP failure
+without a status or with a `5xx`, `408` or `429`; a timeout, socket or IO error; a Dapr or platform
+service client failure. Anything else — a step that throws on the item, a technical failure without
+an exception, an output event without a subject — answers `500`, so the caller does not resend an
+item that fails the same way every time.
 
 `GatewayDefinition.Respond` replaces the mapping; `GatewayResponses.Default` is the default to
 delegate to. `ConfigureEndpoints` applies conventions — authorization, rate limiting — to the

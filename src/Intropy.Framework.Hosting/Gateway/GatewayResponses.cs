@@ -15,6 +15,7 @@ namespace Intropy.Framework.Hosting.Gateway;
 /// <item><term><see cref="GatewayOutcome.Rejected"/></term><description><c>422</c> problem details.</description></item>
 /// <item><term><see cref="GatewayOutcome.TooLarge"/></term><description><c>413</c> problem details.</description></item>
 /// <item><term><see cref="GatewayOutcome.Unavailable"/></term><description><c>503</c> problem details with <c>Retry-After</c>.</description></item>
+/// <item><term><see cref="GatewayOutcome.Failed"/></term><description><c>500</c> problem details.</description></item>
 /// </list>
 /// Only <c>503</c> asks the caller to resend. The gateway sets <c>X-Request-Id</c> on every
 /// response itself, whatever the mapping.
@@ -42,6 +43,8 @@ public static class GatewayResponses
                 Problem(StatusCodes.Status503ServiceUnavailable, "The gateway cannot take the item now",
                     unavailable.Description, unavailable.RequestId),
                 unavailable.RetryAfter),
+            GatewayOutcome.Failed failed => Problem(StatusCodes.Status500InternalServerError,
+                "The gateway failed to process the item", failed.Description, failed.RequestId),
             _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome.GetType().Name,
                 "Unknown gateway outcome."),
         };

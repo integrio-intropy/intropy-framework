@@ -29,12 +29,19 @@ public abstract record GatewayOutcome(string RequestId)
     /// <param name="Limit">The largest body the gateway accepts, in bytes.</param>
     public sealed record TooLarge(string RequestId, long Limit) : GatewayOutcome(RequestId);
 
-    /// <summary>The gateway could not take the item now — its sidecar, the pub/sub or a platform
-    /// service is unavailable, or a step failed technically. Nothing was published; resend after
+    /// <summary>The gateway could not take the item now — it is not ready, or its sidecar, the
+    /// pub/sub or a platform service is unavailable. Nothing was published; resend after
     /// <paramref name="RetryAfter"/>.</summary>
     /// <param name="RequestId">The request's identity.</param>
     /// <param name="Description">What failed.</param>
     /// <param name="RetryAfter">How long the caller should wait before resending.</param>
     public sealed record Unavailable(string RequestId, string Description, TimeSpan RetryAfter)
         : GatewayOutcome(RequestId);
+
+    /// <summary>A step failed technically in a way a resend cannot cure — a fault in the
+    /// component's code or configuration, such as an output event without a subject. Nothing was
+    /// published. Do not resend unchanged: the failure needs a fix in the gateway.</summary>
+    /// <param name="RequestId">The request's identity.</param>
+    /// <param name="Description">What failed.</param>
+    public sealed record Failed(string RequestId, string Description) : GatewayOutcome(RequestId);
 }
