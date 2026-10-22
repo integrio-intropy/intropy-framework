@@ -80,6 +80,8 @@ internal sealed class GatewayEndpointHandler
         activity?.SetTag("intropy.gateway.outcome", OutcomeName(outcome));
         if (outcome is GatewayOutcome.Unavailable unavailable)
             activity?.SetStatus(ActivityStatusCode.Error, unavailable.Description);
+        else if (outcome is GatewayOutcome.Failed failed)
+            activity?.SetStatus(ActivityStatusCode.Error, failed.Description);
         HostingMetrics.RecordGatewayRequest(ComponentName, Port, OutcomeName(outcome),
             Stopwatch.GetElapsedTime(start));
 
@@ -139,10 +141,15 @@ internal sealed class GatewayEndpointHandler
                 return new GatewayOutcome.Duplicate(requestId);
             case StepResult<CloudEvent>.BusinessFailure failure:
                 return new GatewayOutcome.Rejected(requestId, failure.Value.Description);
-            case StepResult<CloudEvent>.TechnicalFailure failure:
+            case StepResult<CloudEvent>.TechnicalFailure failure when GatewayFailures.IsTransient(failure.Value):
                 _logger.LogWarning(failure.Value.Exception, "Request {RequestId} failed: {Description}", requestId,
                     failure.Value.Description);
                 return new GatewayOutcome.Unavailable(requestId, failure.Value.Description, _options.RetryAfter);
+            case StepResult<CloudEvent>.TechnicalFailure failure:
+                // Resending would fail the same way: answer 500, so the caller does not loop.
+                _logger.LogError(failure.Value.Exception, "Request {RequestId} failed permanently: {Description}",
+                    requestId, failure.Value.Description);
+                return new GatewayOutcome.Failed(requestId, failure.Value.Description);
             default:
                 _logger.LogWarning("Request {RequestId} was interrupted ({ResultType})", requestId,
                     result.GetType().Name);
@@ -200,6 +207,7 @@ internal sealed class GatewayEndpointHandler
         GatewayOutcome.Rejected => "rejected",
         GatewayOutcome.TooLarge => "too_large",
         GatewayOutcome.Unavailable => "unavailable",
+        GatewayOutcome.Failed => "failed",
         _ => "unknown",
     };
 }
