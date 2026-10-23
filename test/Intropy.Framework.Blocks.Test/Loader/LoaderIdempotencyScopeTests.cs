@@ -5,6 +5,7 @@ using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.Loader;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
+using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -70,6 +71,50 @@ public class LoaderIdempotencyScopeTests
         await AssertIdAsync("customer-1337");
     }
 
+    [Fact]
+    public async Task Execute_WithIdExtractor_KeysOnTheExtractedId()
+    {
+        var builder = CreateBuilder(routeEventType: null)
+            .WithIdempotency(idExtractor: (input, _) => $"customer-id-{input.CustomerId}");
+
+        await Execute(builder);
+
+        await AssertIdAsync("customer-id-1337");
+    }
+
+    [Fact]
+    public async Task Execute_WithIdExtractorOnRouteWithDefaultScope_KeysOnEventTypeAndExtractedId()
+    {
+        var builder = CreateBuilder(EventType)
+            .WithIdempotency(idExtractor: (input, _) => $"customer-id-{input.CustomerId}");
+
+        await Execute(builder);
+
+        await AssertIdAsync($"{EventType}:customer-id-1337");
+    }
+
+    [Fact]
+    public async Task Execute_WithIdExtractor_CanReadTheContext()
+    {
+        var builder = CreateBuilder(routeEventType: null)
+            .WithIdempotency(idExtractor: (_, context) => context.Metadata[CloudEventContextKeys.Source]);
+
+        await Execute(builder);
+
+        await AssertIdAsync("urn:test:source");
+    }
+
+    [Fact]
+    public async Task Execute_WithIdExtractorReturningEmpty_FailsTechnically()
+    {
+        var builder = CreateBuilder(routeEventType: null).WithIdempotency(idExtractor: (_, _) => "");
+
+        var result = await Execute(builder);
+
+        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        await _idempotency.DidNotReceiveWithAnyArgs().GetStatusAsync(default!);
+    }
+
     private LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> CreateBuilder(string? routeEventType)
     {
         var builder = routeEventType is null
@@ -83,7 +128,7 @@ public class LoaderIdempotencyScopeTests
             .WithBusinessIncidents(_ => "unknown", _ => "unknown");
     }
 
-    private static async Task Execute(LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> builder)
+    private static async Task<StepResult<LoaderCustomerOut>> Execute(LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> builder)
     {
         var cloudEvent = new CloudEvent
         {
@@ -95,7 +140,8 @@ public class LoaderIdempotencyScopeTests
             Data = new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" },
             DataContentType = "application/json"
         };
-        await builder.Build().Execute(cloudEvent, new Context(new Dictionary<string, string>()));
+        var (result, _) = await builder.Build().Execute(cloudEvent, new Context(new Dictionary<string, string>()));
+        return result;
     }
 
     private async Task AssertIdAsync(string expectedId)

@@ -29,9 +29,9 @@ namespace Intropy.Framework.Blocks.Loader;
 /// <see cref="CloudEventContextKeys"/>). A host projects them from the delivery it received; a
 /// standalone caller gets the same projection from the
 /// <see cref="Execute(CloudEvent,TCtx,bool,CancellationToken)"/> overload. Idempotency, when
-/// configured, reads <see cref="CloudEventContextKeys.Subject"/> and
-/// <see cref="CloudEventContextKeys.Time"/> from there, so a context without them fails the
-/// pipeline.
+/// configured, reads <see cref="CloudEventContextKeys.Subject"/> (unless the builder was given its
+/// own ID extractor) and <see cref="CloudEventContextKeys.Time"/> from there, so a context without
+/// them fails the pipeline.
 /// </remarks>
 /// <param name="pipelineName">The name of the pipeline</param>
 /// <param name="logger">Logger for tracing</param>

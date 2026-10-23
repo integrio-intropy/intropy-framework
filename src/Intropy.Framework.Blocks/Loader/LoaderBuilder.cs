@@ -101,7 +101,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// </summary>
     /// <remarks>
     /// The route's event type scopes its idempotency records (see
-    /// <see cref="WithIdempotency(Func{TInput, string}?, IdempotencyScope)"/>). The hosting layer
+    /// <see cref="WithIdempotency(Func{TInput, string}?, IdempotencyScope, Func{TInput, TCtx, string}?)"/>). The hosting layer
     /// creates route builders; components configure them.
     /// </remarks>
     /// <param name="pipelineName">The name of the pipeline.</param>
@@ -336,7 +336,8 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
     /// <summary>
     /// Configures automatic idempotency handling using CloudEvent metadata from context.
-    /// Uses CloudEvent.Subject as the ID and CloudEvent.Time as the date.
+    /// Uses CloudEvent.Subject as the ID, unless <paramref name="idExtractor"/> is given, and
+    /// CloudEvent.Time as the date.
     /// The hash is generated from the TInput payload. Optional: without it, the check and record
     /// steps are skipped, no <see cref="IIdempotencyServiceClient"/> needs to be registered, and the
     /// framework reads no subject or time from the message.
@@ -344,29 +345,49 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <remarks>
     /// In a loader that routes several event types, <paramref name="scope"/> decides whether this
     /// route's idempotency records are its own (<see cref="IdempotencyScope.Route"/>, the default:
-    /// the id is <c>{event type}:{subject}</c>) or shared with every route over the same subject
-    /// (<see cref="IdempotencyScope.Entity"/>: the id is the subject, so an event older than one
+    /// the id is <c>{event type}:{id}</c>) or shared with every route over the same id
+    /// (<see cref="IdempotencyScope.Entity"/>: the id alone, so an event older than one
     /// already processed for the entity, of any type, is ignored). A loader without routes is
-    /// always keyed on the subject alone.
+    /// always keyed on the id alone.
     /// </remarks>
     /// <param name="hashGenerator">Optional function to generate a hash of the payload. If not provided, the payload's
     /// <see cref="Intropy.Framework.Core.Pipeline.Abstractions.IHashable.GetHashString"/> when it implements
     /// <see cref="Intropy.Framework.Core.Pipeline.Abstractions.IHashable"/>, otherwise its JSON serialization,
     /// is hashed with SHA-256.</param>
     /// <param name="scope">Which records this route's idempotency is checked against.</param>
+    /// <param name="idExtractor">Optional function that returns the idempotency ID from the deserialized
+    /// payload and the context (which carries the CloudEvent attributes, see <see cref="CloudEventContextKeys"/>).
+    /// If not provided, CloudEvent.Subject is used. The scope prefix applies either way.</param>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when <see cref="IIdempotencyServiceClient"/> is not registered in the service provider.</exception>
     public LoaderBuilder<TInput, TOutput, TCtx> WithIdempotency(
-        Func<TInput, string>? hashGenerator = null, IdempotencyScope scope = IdempotencyScope.Route)
+        Func<TInput, string>? hashGenerator = null, IdempotencyScope scope = IdempotencyScope.Route,
+        Func<TInput, TCtx, string>? idExtractor = null)
     {
-        var idPrefix = scope == IdempotencyScope.Route && _routeEventType is not null ? $"{_routeEventType}:" : "";
+        // Guard the caller's id before it is prefixed: "{event type}:" alone would pass the checker's own empty check
+        if (idExtractor is { } customId)
+        {
+            idExtractor = (input, context) => customId(input, context) is { Length: > 0 } id
+                ? id
+                : throw new InvalidOperationException("The idempotency ID extractor passed to WithIdempotency returned an empty ID.");
+        }
+        else
+        {
+            idExtractor = SubjectExtractor;
+        }
+
+        if (scope == IdempotencyScope.Route && _routeEventType is { } eventType)
+        {
+            var recordId = idExtractor;
+            idExtractor = (input, context) => $"{eventType}:{recordId(input, context)}";
+        }
 
         var client = _serviceProvider.GetService<IIdempotencyServiceClient>()
                      ?? throw new InvalidOperationException(
                          $"{nameof(IIdempotencyServiceClient)} is not registered in the service provider. Please register it using services.AddPipelineIdempotencyService() or register your own implementation.");
 
         var checker = new ExternalIdempotencyChecker<TInput, TCtx>(
-            client, _frameworkOptions, IdExtractor, DateExtractor, hashGenerator);
+            client, _frameworkOptions, idExtractor, DateExtractor, hashGenerator);
         var recorder = new ExternalIdempotencyRecorder<TOutput, TCtx>(client, _frameworkOptions);
 
         _idempotencyChecker = checker;
@@ -382,11 +403,11 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
             return eventDate;
         }
 
-        // Define extractors that read CloudEvent metadata from context
-        string IdExtractor(TInput _, TCtx context)
+        // Define the default id extractor, which reads CloudEvent metadata from context
+        string SubjectExtractor(TInput _, TCtx context)
         {
             if (!context.Metadata.TryGetValue(CloudEventContextKeys.Subject, out var id) || string.IsNullOrEmpty(id)) throw new InvalidOperationException($"Missing required CloudEvent.Subject in context (key: '{CloudEventContextKeys.Subject}'). " + "The host stamps it from the message before any step runs, so the message it delivered carried no subject; a standalone caller gets it from the CloudEvent overload of Loader.Execute.");
-            return idPrefix + id;
+            return id;
         }
     }
 
