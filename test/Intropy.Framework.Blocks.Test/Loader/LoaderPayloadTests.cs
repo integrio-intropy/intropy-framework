@@ -90,6 +90,20 @@ public class LoaderPayloadTests
     }
 
     [Fact]
+    public async Task TheCloudEventOverload_ProjectsEveryExtensionAttributeOntoTheContext()
+    {
+        var (pipeline, context) = Build(new CapturingDeserializer());
+        var cloudEvent = EventWith(new LoaderCustomerIn { CustomerId = "1337", Name = "John Doe" });
+        cloudEvent[CloudEventAttribute.CreateExtension("tenantid", CloudEventAttributeType.String)] = "acme";
+        cloudEvent[CloudEventAttribute.CreateExtension("priority", CloudEventAttributeType.Integer)] = 5;
+
+        var (_, finalContext) = await pipeline.Execute(cloudEvent, context);
+
+        Assert.Equal("acme", finalContext.Metadata[CloudEventContextKeys.Extension("tenantid")]);
+        Assert.Equal("5", finalContext.Metadata[CloudEventContextKeys.Extension("priority")]);
+    }
+
+    [Fact]
     public async Task TheBytesOverload_ProjectsNothing_SoACallerThatDidNotProjectFails()
     {
         // The contract this whole shape rests on: the pipeline consumes the context, it does not

@@ -264,6 +264,20 @@ public class LoaderTests
     }
 
     [Fact]
+    public async Task EveryExtensionAttribute_IsOnTheContextBeforeThePipelineRuns()
+    {
+        // A publisher's own attributes reach the steps without a trip back through the payload.
+        await using var host = await LoaderHost.StartRoutingAsync();
+        var cloudEvent = Event(LoaderHost.Created, "ORD-1", Created("ORD-1"));
+        cloudEvent[CloudEventAttribute.CreateExtension("tenantid", CloudEventAttributeType.String)] = "acme";
+
+        await host.DeliverAsync(cloudEvent);
+
+        var metadata = Assert.IsType<Context>(host.CreatedSender.LastContext).Metadata;
+        Assert.Equal("acme", metadata[CloudEventContextKeys.Extension("tenantid")]);
+    }
+
+    [Fact]
     public async Task PayloadPublishedAsAJsonString_ArrivesVerbatim()
     {
         // A publisher that sends pre-serialized JSON text puts a JSON *string* inside the CloudEvent,
