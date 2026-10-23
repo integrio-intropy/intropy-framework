@@ -38,7 +38,7 @@ public class GatewayComponentTests
     }
 
     [Fact]
-    public async Task Endpoints_DefaultToTheOneTheAttributeNames()
+    public async Task Endpoints_DefaultToTheOneTheManifestNames()
     {
         await using var host = new GatewayTestHost<RecordedEndpointGateway>();
 
@@ -51,10 +51,7 @@ public class GatewayComponentTests
     [Fact]
     public void Endpoints_WithoutAnEndpointPath_DefaultToTheMessage()
     {
-        var host = new GatewayTestHost<RecordedEndpointGateway>(new ComponentManifest
-        {
-            ComponentName = "c", Organization = "o", Publishes = "order-placed", Port = "c-endpoint",
-        });
+        var host = new GatewayTestHost<DefaultPathGateway>();
 
         Assert.Equal("/order-placed", host.Path);
     }
@@ -107,6 +104,60 @@ public class GatewayComponentTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(0, host.Topic.Count);
+    }
+
+    [Fact]
+    public async Task Post_WithoutIdempotency_PublishesEveryResendWithoutCallingTheService()
+    {
+        await using var host = new GatewayTestHost<NoIdempotencyGateway>();
+        // What a deduplicating gateway would answer 200 for: no check runs, so it is never asked.
+        host.Idempotency.NextStatus = new StatusResponse(Action.Ignore, Reason.SameData);
+
+        using var first = await host.PostAsync(Order);
+        using var resend = await host.PostAsync(Order);
+
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, resend.StatusCode);
+        Assert.Equal(2, host.Topic.Count);
+        Assert.Empty(host.Idempotency.StatusChecks);
+        Assert.Empty(host.Idempotency.Committed);
+    }
+
+    [Fact]
+    public void Pipeline_DeclaringARuleAndNoIdempotency_Fails()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<BothIdempotencyGateway>());
+
+        Assert.Contains("not both", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Post_WithExtractSteps_RunsThemInOrderBeforeTheIdempotencyCheck()
+    {
+        await using var host = new GatewayTestHost<EnrichingGateway>();
+
+        using var response = await host.PostAsync(Order);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        // Each extract step enriched the item, in declaration order, before the transformer.
+        Assert.Equal("ORD-1:first:second", Assert.Single(host.Topic.Events).Subject);
+        // The idempotency check ran after them: its key reads the enriched item.
+        Assert.EndsWith("ORD-1:first:second", Assert.Single(host.Idempotency.Committed).Id, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Post_WithTheComponentsContext_RunsTheStepsAndRulesOnIt()
+    {
+        await using var host = new GatewayTestHost<TenantGateway>();
+
+        using var response = await host.PostAsync(Order, requestId: "req-9");
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        // The extract step read the component's context, and the gateway's metadata on it, though
+        // the factory started from an empty dictionary.
+        Assert.Equal("ORD-1:acme:req-9", Assert.Single(host.Topic.Events).Subject);
+        // The idempotency rule read the component's context too.
+        Assert.EndsWith("acme/ORD-1:acme:req-9", Assert.Single(host.Idempotency.Committed).Id, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -224,7 +275,7 @@ public class GatewayComponentTests
     }
 
     [Fact]
-    public void Attribute_WithTheEndpointAtAnotherPath_Fails()
+    public void Manifest_WithTheEndpointAtAnotherPath_Fails()
     {
         var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<MovedPathGateway>());
 
@@ -233,7 +284,7 @@ public class GatewayComponentTests
     }
 
     [Fact]
-    public void Attribute_WithoutTheAttributedEndpoint_Fails()
+    public void Manifest_WithoutTheManifestsEndpoint_Fails()
     {
         var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<RenamedEndpointGateway>());
 
@@ -254,8 +305,25 @@ public class GatewayComponentTests
     {
         var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<AcceptingTwiceGateway>());
 
-        Assert.Contains("Endpoint 'order-gateway-endpoint' already accepts SourceOrder", error.Message,
+        Assert.Contains("Endpoint 'order-gateway-endpoint' already accepts OrderRequest", error.Message,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Input_PublishingNothing_NamesIt()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<PublishingNothingGateway>());
+
+        Assert.Contains("Endpoint 'order-gateway-endpoint' accepts OrderRequest but publishes nothing", error.Message,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Endpoints_PublishingDifferentTypes_NameThem()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<MixedPayloadGateway>());
+
+        Assert.Contains("publish OrderPlaced, OrderReceived", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -276,7 +344,7 @@ public class GatewayComponentTests
         var error = await Assert.ThrowsAsync<InvalidOperationException>(host.StartAsync);
 
         Assert.Contains("has no steps", error.Message, StringComparison.Ordinal);
-        Assert.Contains("Steps<", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Steps(steps => steps.Deserialize<", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -294,38 +362,21 @@ public class GatewayComponentTests
     }
 
     [Fact]
-    public async Task ConfigureServices_WhenItRegistersASlot_WinsOverTheRoute()
+    public async Task ConfigureServices_ProvidesTheStepsDependencies()
     {
         await using var host = new GatewayTestHost<AuthorStepsGateway>();
 
         using var response = await host.PostAsync(Order);
 
-        // The route names OrderDeserializer; the slot the component registered resolved instead, and
-        // it took its Greeting from DI — the subject names whose deserializer ran.
+        // The pipeline's deserializer took its Greeting from ConfigureServices: the subject carries it.
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         Assert.Equal("author:ORD-1", Assert.Single(host.Topic.Events).Subject);
     }
 
     [Fact]
-    public async Task Start_WithAPayloadThatIsNotTheMessagesProjection_Fails()
+    public void Endpoint_WithoutAPortInTheManifest_NamesThePort()
     {
-        await using var host = new GatewayTestHost<WrongPayloadGateway>();
-
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(host.StartAsync);
-
-        Assert.Contains("projects to OrderPlaced", error.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Start_WithoutAPortInTheIdentity_NamesTheAttribute()
-    {
-        var manifest = new ComponentManifest
-        {
-            ComponentName = "c", Organization = "o", Publishes = "order-placed",
-            EventSource = "urn:o:c",
-        };
-
-        var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<RecordedEndpointGateway>(manifest));
+        var error = Assert.Throws<InvalidOperationException>(() => new GatewayTestHost<PortlessGateway>());
 
         Assert.Contains("names no Port", error.Message, StringComparison.Ordinal);
     }

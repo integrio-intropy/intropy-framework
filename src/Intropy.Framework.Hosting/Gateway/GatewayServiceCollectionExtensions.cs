@@ -55,7 +55,7 @@ public static class GatewayServiceCollectionExtensions
         services.AddSingleton<GatewayReadiness>();
         services.AddSingleton(provider => new GatewayEndpointSet(
             declared.Select(e => new GatewayEndpointHandler(
-                e.Route,
+                e.Pipeline,
                 e.Declaration.Port,
                 e.Declaration.Path,
                 respond,

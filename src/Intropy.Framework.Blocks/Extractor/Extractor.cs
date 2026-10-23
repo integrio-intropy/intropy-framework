@@ -12,8 +12,8 @@ namespace Intropy.Framework.Blocks.Extractor;
 /// A pipeline template used for extractor components. It follows these steps:
 /// <list type="number">
 ///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
-///   <item>Extractor(s): Extract additional information from external sources</item>     
 ///   <item>Validate: validates the POCO</item>
+///   <item>Extractor(s): Extract additional information from external sources</item>
 ///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
 ///   <item>Serialize: serializes the output POCO into string</item>

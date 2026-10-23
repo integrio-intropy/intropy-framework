@@ -35,18 +35,18 @@ internal sealed class GatewayEndpointHandler
 
     private const int MaxRequestIdLength = 128;
 
-    private readonly ExtractorRoute<Context> _route;
+    private readonly GatewayPipeline _pipeline;
     private readonly Func<GatewayOutcome, IResult> _respond;
     private readonly GatewayOptions _options;
     private readonly GatewayReadiness _readiness;
     private readonly TimeProvider _time;
     private readonly ILogger<GatewayEndpointHandler> _logger;
 
-    public GatewayEndpointHandler(ExtractorRoute<Context> route, string port, string path,
+    public GatewayEndpointHandler(GatewayPipeline pipeline, string port, string path,
         Func<GatewayOutcome, IResult> respond, GatewayOptions options, GatewayReadiness readiness,
         FrameworkOptions frameworkOptions, TimeProvider time, ILogger<GatewayEndpointHandler> logger)
     {
-        _route = route;
+        _pipeline = pipeline;
         Port = port;
         Path = path;
         _respond = respond;
@@ -65,7 +65,7 @@ internal sealed class GatewayEndpointHandler
 
     /// <summary>Composes the pipeline once in <paramref name="scope"/>; throws what composition
     /// would throw on the first request.</summary>
-    public void Validate(IServiceProvider scope) => _ = _route.Resolve(scope, ComponentName, Port);
+    public void Validate(IServiceProvider scope) => _pipeline.Validate(scope, ComponentName, Port);
 
     /// <summary>Handles the request and writes the response.</summary>
     public async Task HandleAsync(HttpContext http)
@@ -102,20 +102,18 @@ internal sealed class GatewayEndpointHandler
             return new GatewayOutcome.TooLarge(requestId, _options.MaxRequestBodyBytes);
         }
 
-        var context = ContextCreation.Create<Context>(static (metadata, isRetry) => new Context(metadata, isRetry),
-            new Dictionary<string, string>
-            {
-                [SourceContextKeys.SourcePort] = Port,
-                [SourceContextKeys.ReceivedAt] = _time.GetUtcNow().ToString("O"),
-                [SourceContextKeys.RequestId] = requestId,
-            },
-            isRetry: false, ComponentName, requestId);
+        var metadata = new Dictionary<string, string>
+        {
+            [SourceContextKeys.SourcePort] = Port,
+            [SourceContextKeys.ReceivedAt] = _time.GetUtcNow().ToString("O"),
+            [SourceContextKeys.RequestId] = requestId,
+        };
 
         StepResult<CloudEvent> result;
         try
         {
-            var run = _route.Resolve(http.RequestServices, ComponentName, Port);
-            result = await run(body.Value, context, http.RequestAborted);
+            result = await _pipeline.RunAsync(http.RequestServices, ComponentName, Port, body.Value, metadata,
+                requestId, http.RequestAborted);
         }
         catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested)
         {

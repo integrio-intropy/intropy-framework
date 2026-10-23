@@ -18,39 +18,44 @@ internal interface IGatewayRoute
     /// <summary>The route's deserialized request body.</summary>
     Type Input { get; }
 
-    /// <summary>Checks the route's payload and registers the steps it declared.</summary>
-    void Register(IServiceCollection services, ComponentManifest manifest);
+    /// <summary>The route's published payload.</summary>
+    Type Payload { get; }
+
+    /// <summary>Registers the steps the route declared.</summary>
+    void Register(IServiceCollection services);
 
     /// <summary>Declares the route as the hosting layer's endpoint it belongs to.</summary>
     void AddTo(GatewayEndpointDeclarations endpoints, IncidentRule defaultIncidents);
 }
 
-internal sealed class GatewayRoute<TInput, TOutput>(string port, string path, PublishingRoute<TInput, TOutput> route)
-    : IGatewayRoute
+internal sealed class GatewayRoute<TInput, TPayload, TCtx>(string port, string path,
+    GatewayPipelineDeclaration<TInput, TPayload, TCtx> pipeline, ContextFactory<TCtx> contextFactory)
+    : IGatewayRoute where TCtx : Context
 {
     public Type Input => typeof(TInput);
+
+    public Type Payload => typeof(TPayload);
 
     public string Port => port;
 
     public string Path => path;
 
-    private string Name => $"The route of {port} ({typeof(TInput).Name} → {typeof(TOutput).Name})";
+    private string Name => $"The pipeline of {port} ({typeof(TInput).Name} → {typeof(TPayload).Name})";
 
-    public void Register(IServiceCollection services, ComponentManifest manifest)
+    public void Register(IServiceCollection services)
     {
-        ComponentPublishing.EnsurePayload(typeof(TOutput), manifest, Name);
-        if (route.DeclaredSteps is not { } steps)
+        if (pipeline.DeclaredSteps is not { } steps)
             throw new InvalidOperationException(
-                $"{Name} has no steps: call Steps<TDeserializer, TValidator, TTransformer>() on the route.");
+                $"{Name} has no steps: call Steps(steps => steps.Deserialize<...>().Validate<...>().Transform<...>()) " +
+                "on the pipeline.");
         // The classes themselves, transiently resolved from the request's scope, so a step keeps
         // its constructor injection. A class registered first — in ConfigureServices — stays the
-        // component's; the slot (the step base type) is the component's to register, not a route's:
-        // two endpoints accepting the same input type may name different classes.
-        services.TryAddTransient(steps.Deserializer);
-        services.TryAddTransient(steps.Validator);
-        services.TryAddTransient(steps.Transformer);
+        // component's.
+        foreach (var step in steps.All)
+            services.TryAddTransient(step);
+        ComponentPublishing.AddPublisherOn<TCtx>(services);
     }
 
     public void AddTo(GatewayEndpointDeclarations endpoints, IncidentRule defaultIncidents) =>
-        endpoints.Endpoint(port, path, route.Pipeline(Name, defaultIncidents));
+        endpoints.Endpoint(port, path, contextFactory, pipeline.Pipeline(Name, defaultIncidents));
 }

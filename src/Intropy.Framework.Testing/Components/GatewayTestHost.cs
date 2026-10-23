@@ -37,25 +37,18 @@ public sealed class GatewayTestHost<TComponent> : IAsyncDisposable
     private HttpClient? _client;
 
     /// <summary>Composes the gateway with its externals faked.</summary>
-    /// <param name="manifest">The component's identity. Default: the one the component's
-    /// <see cref="IntropyComponentAttribute"/> declares.</param>
     /// <param name="environment">The environment whose appsettings overlay applies.</param>
     /// <param name="configureServices">Adjusts the services after the fakes are in place — to swap
     /// one more dependency.</param>
-    public GatewayTestHost(ComponentManifest? manifest = null, string environment = "Development",
-        Action<IServiceCollection>? configureServices = null)
+    public GatewayTestHost(string environment = "Development", Action<IServiceCollection>? configureServices = null)
     {
-        Manifest = manifest ?? ComponentManifest.From(typeof(TComponent));
-        Endpoints = new TComponent().DeclareEndpoints(Manifest);
+        Endpoints = new TComponent().DeclareEndpoints();
         _environment = environment;
         _configureServices = configureServices;
     }
 
-    /// <summary>The component's identity.</summary>
-    public ComponentManifest Manifest { get; }
-
     /// <summary>The endpoints the gateway declares, checked against the endpoint the component's
-    /// <see cref="IntropyComponentAttribute"/> names.</summary>
+    /// manifest names.</summary>
     public IReadOnlyList<GatewayEndpointDeclaration> Endpoints { get; }
 
     /// <summary>The path of the gateway's one endpoint.</summary>
@@ -108,7 +101,7 @@ public sealed class GatewayTestHost<TComponent> : IAsyncDisposable
         });
         builder.WebHost.UseTestServer();
 
-        _app = new TComponent().Build(builder, Manifest, ReplaceExternals, options => options.WaitForSidecar = false);
+        _app = new TComponent().Build(builder, ReplaceExternals, options => options.WaitForSidecar = false);
         await _app.StartAsync();
         _client = _app.GetTestClient();
         return _client;
