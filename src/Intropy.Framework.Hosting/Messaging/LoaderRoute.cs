@@ -1,4 +1,6 @@
 using System.Globalization;
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using Intropy.Framework.Blocks.Loader;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Common;
@@ -59,10 +61,19 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
     /// business, not the message's, which is why this lives here and not on
     /// <see cref="IncomingMessage"/>: a Transactional Integration's send route projects a different
     /// set from the same shape.
+    /// <para>
+    /// Every extension the sidecar delivered goes on under
+    /// <see cref="CloudEventContextKeys.Extension"/> first, and the attributes above after it, so
+    /// subject and time — which the sidecar delivers as extensions — end up in the form those keys
+    /// promise (time normalised) rather than as they arrived.
+    /// </para>
     /// </remarks>
-    private static Dictionary<string, string> ProjectAttributes(IncomingMessage message)
+    internal static Dictionary<string, string> ProjectAttributes(IncomingMessage message)
     {
         var metadata = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, value) in message.Extensions)
+            Set(CloudEventContextKeys.Extension(name), ExtensionValue(value));
+
         Set(CloudEventContextKeys.Id, message.MessageId);
         Set(CloudEventContextKeys.Subject, message.Subject);
         Set(CloudEventContextKeys.Time, Time(message));
@@ -71,12 +82,28 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
         Set(CloudEventContextKeys.DataContentType, message.DataContentType);
         return metadata;
 
+        // Removes as well as sets, so a time the framework could not read does not survive as the
+        // raw extension under the key that promises a normalised one.
         void Set(string key, string? value)
         {
             if (!string.IsNullOrEmpty(value))
                 metadata[key] = value;
+            else
+                metadata.Remove(key);
         }
     }
+
+    /// <summary>An extension's value as the string the context holds: a string as is, a number or
+    /// boolean in its invariant JSON form (how a publisher's integer or boolean extension arrives),
+    /// anything structured as its JSON, and null for a null value.</summary>
+    private static string? ExtensionValue(Value value) => value.KindCase switch
+    {
+        Value.KindOneofCase.StringValue => value.StringValue,
+        Value.KindOneofCase.NumberValue => value.NumberValue.ToString(CultureInfo.InvariantCulture),
+        Value.KindOneofCase.BoolValue => value.BoolValue ? "true" : "false",
+        Value.KindOneofCase.StructValue or Value.KindOneofCase.ListValue => JsonFormatter.Default.Format(value),
+        _ => null
+    };
 
     /// <summary>The message's time as a UTC ISO 8601 round-trip timestamp, or null when it carries
     /// none the framework can read. Normalised rather than passed through, because idempotency reads

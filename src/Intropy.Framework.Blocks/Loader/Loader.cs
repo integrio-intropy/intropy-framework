@@ -130,9 +130,14 @@ public class Loader<TInput, TOutput, TCtx>(
 
     /// <summary>Stamps <paramref name="input"/>'s attributes onto <paramref name="context"/>, the
     /// way a host does before it runs the pipeline. An attribute the event does not carry is left
-    /// off, so a missing one surfaces where it is required rather than as an empty string.</summary>
+    /// off, so a missing one surfaces where it is required rather than as an empty string. Extension
+    /// attributes go on under <see cref="CloudEventContextKeys.Extension"/>, in their string form.</summary>
     internal static void Project(CloudEvent input, TCtx context)
     {
+        foreach (var (attribute, value) in input.GetPopulatedAttributes())
+            if (attribute.IsExtension)
+                Set(CloudEventContextKeys.Extension(attribute.Name), attribute.Format(value));
+
         Set(CloudEventContextKeys.Id, input.Id);
         Set(CloudEventContextKeys.Subject, input.Subject);
         Set(CloudEventContextKeys.Time, input.Time?.ToString("O"));
