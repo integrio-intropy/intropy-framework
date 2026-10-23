@@ -212,11 +212,25 @@ The Loader's idempotency strategy is based on the message's metadata on the cont
 
 The idempotency checker extracts:
 
-- **ID** from `cloudevent.subject` (stamped on the context before any step runs)
+- **ID** from `cloudevent.subject` (stamped on the context before any step runs), or from your own ID extractor
 - **Date** from `cloudevent.time` (stamped on the context before any step runs)
 - **Hash** from the deserialized `TInput` payload
 
-If either is missing from the context, the pipeline fails with a `TechnicalFailure`.
+If either is missing from the context, or your ID extractor returns an empty ID, the pipeline fails with a `TechnicalFailure`.
+
+### Custom idempotency ID
+
+When the subject isn't the right key, pass an `idExtractor` to `WithIdempotency()`. It gets the deserialized `TInput` and the context, so it can read the payload or any CloudEvent attribute or extension on the context:
+
+```csharp
+// Key on a field in the payload
+.WithIdempotency(idExtractor: (record, _) => record.CustomerId)
+
+// Key on a CloudEvent extension attribute
+.WithIdempotency(idExtractor: (_, ctx) => ctx.Metadata[CloudEventContextKeys.Extension("orderid")])
+```
+
+The route scope still applies: on a routed loader with the default `IdempotencyScope.Route`, the ID becomes `{event type}:{your id}`.
 
 ### Hash generation
 
