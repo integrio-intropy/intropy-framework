@@ -37,4 +37,12 @@ public static class SourceContextKeys
     /// </para>
     /// </remarks>
     public const string ReceivedAt = "received_at";
+
+    /// <summary>
+    /// The identity of the HTTP request a gateway received the item in: the caller's
+    /// <c>X-Request-Id</c> header, else one the gateway generated. Set next to
+    /// <see cref="SourcePort"/> and <see cref="ReceivedAt"/>, before any step runs, and echoed in
+    /// the response, so the caller and an incident name the same request.
+    /// </summary>
+    public const string RequestId = "request_id";
 }
