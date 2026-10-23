@@ -12,5 +12,5 @@ public static class ComponentHost
     /// <param name="args">The program's arguments, passed to the host's configuration.</param>
     /// <returns>The exit code.</returns>
     public static Task<int> RunAsync<TComponent>(string[]? args = null) where TComponent : IntropyComponent, new() =>
-        new TComponent().RunAsync(args ?? [], ComponentManifest.From(typeof(TComponent)));
+        new TComponent().RunAsync(args ?? []);
 }

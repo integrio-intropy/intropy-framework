@@ -36,7 +36,29 @@ public sealed class GatewayEndpointDeclarations
     /// <exception cref="ArgumentException">The port or path is missing, the path does not start
     /// with <c>/</c>, the port or path is already declared, or the pipeline is missing.</exception>
     public GatewayEndpointDeclarations Endpoint<TInput, TOutput>(string port, string path,
-        Func<ExtractorBuilder<TInput, TOutput, Context>, IServiceProvider, ExtractorBuilder<TInput, TOutput, Context>> configurePipeline)
+        Func<ExtractorBuilder<TInput, TOutput, Context>, IServiceProvider, ExtractorBuilder<TInput, TOutput, Context>> configurePipeline) =>
+        Endpoint(port, path, static (metadata, isRetry) => new Context(metadata, isRetry), configurePipeline);
+
+    /// <summary>Declares an endpoint, the pipeline its items go through, and the context each
+    /// request's item runs on.</summary>
+    /// <param name="port">The port name, as declared in the system's topology.</param>
+    /// <param name="path">The path callers <c>POST</c> items to, starting with <c>/</c>.</param>
+    /// <param name="contextFactory">Creates each request's context. The gateway's own metadata —
+    /// the port, the request id, the time received — is on the context whatever the factory
+    /// does.</param>
+    /// <param name="configurePipeline">Configures the endpoint's pipeline builder, given the
+    /// request's scope.</param>
+    /// <typeparam name="TInput">The pipeline's deserialized input.</typeparam>
+    /// <typeparam name="TOutput">The pipeline's published payload.</typeparam>
+    /// <typeparam name="TCtx">The pipeline's context type.</typeparam>
+    /// <returns>The endpoints, for chaining.</returns>
+    /// <exception cref="ArgumentException">The port or path is missing, the path does not start
+    /// with <c>/</c>, the port or path is already declared, or the factory or pipeline is
+    /// missing.</exception>
+    public GatewayEndpointDeclarations Endpoint<TInput, TOutput, TCtx>(string port, string path,
+        ContextFactory<TCtx> contextFactory,
+        Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline)
+        where TCtx : Context
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(port);
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -47,9 +69,12 @@ public sealed class GatewayEndpointDeclarations
         // ASP.NET Core matches paths case-insensitively, so two paths differing in case collide.
         if (_endpoints.FirstOrDefault(e => string.Equals(e.Declaration.Path, path, StringComparison.OrdinalIgnoreCase)) is { } taken)
             throw new ArgumentException($"Path '{path}' is already the path of endpoint '{taken.Declaration.Port}'.", nameof(path));
+        ArgumentNullException.ThrowIfNull(contextFactory);
         ArgumentNullException.ThrowIfNull(configurePipeline);
         _endpoints.Add(new GatewayEndpoint(new GatewayEndpointDeclaration(port, path),
-            new DeclaredExtractorRoute<TInput, TOutput, Context>(new FileMatch([port]), configurePipeline)));
+            new GatewayPipeline<TCtx>(
+                new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new FileMatch([port]), configurePipeline),
+                contextFactory)));
         return this;
     }
 
@@ -69,5 +94,5 @@ public sealed record GatewayEndpointDeclaration(string Port, string Path);
 
 /// <summary>One declared endpoint, with the pipeline its items go through.</summary>
 /// <param name="Declaration">The endpoint's port and path.</param>
-/// <param name="Route">The pipeline the endpoint's items go through.</param>
-internal sealed record GatewayEndpoint(GatewayEndpointDeclaration Declaration, ExtractorRoute<Context> Route);
+/// <param name="Pipeline">The pipeline the endpoint's items go through, on their context.</param>
+internal sealed record GatewayEndpoint(GatewayEndpointDeclaration Declaration, GatewayPipeline Pipeline);

@@ -1,10 +1,10 @@
 # Intropy.Framework.Components
 
 Declarative components for [Intropy.Framework](https://github.com/integrio-intropy/intropy-framework).
-A component class declares what only it knows — its rules and its steps — and the framework wires
-everything else: the host, configuration, logging, telemetry, the Dapr client, the platform-service
-clients, the framework identity, the endpoint, the publisher and the pipeline. Every default is a
-member the component may override.
+A component class declares what only it knows — its identity, its rules and its steps — and the
+framework wires everything else: the host, configuration, logging, telemetry, the Dapr client, the
+platform-service clients, the framework identity, the endpoint, the publisher and the pipeline.
+Every default is a member the component may override.
 
 ## Install
 
@@ -12,79 +12,44 @@ member the component may override.
 dotnet add package Intropy.Framework.Components
 ```
 
-The package ships the identity generator as an analyzer; reference it from the component project
-itself, so the generator checks the component's identity where it is declared.
+## Identity: the manifest
 
-## Identity: the `IntropyComponent` attribute and the scaffold record
-
-A component declares its identity in code, on its class:
+A component declares its identity in code, as its `Manifest`:
 
 ```csharp
-[IntropyComponent("order-gateway", Organization = "Acme", Publishes = "order-placed",
-    Payload = typeof(OrderPlaced), Port = "order-gateway-endpoint", EndpointPath = "/orders",
-    EventSource = "urn:Acme:order-gateway")]
-public sealed class OrderGateway : GatewayComponent { ... }
+public sealed class OrderGateway : GatewayComponent
+{
+    protected override ComponentManifest Manifest { get; } = new()
+    {
+        ComponentName = "order-gateway", Organization = "Acme", Publishes = "order-placed",
+        EventSource = "urn:Acme:order-gateway", Port = "order-gateway-endpoint", EndpointPath = "/orders",
+    };
+    ...
+}
 ```
 
-The framework reads the attribute at startup and names the component from it — the telemetry
-service, the endpoint the system declares, the message and its payload. The package's generator
-also turns the same attribute into the scaffold record (`.intropy/scaffold.json`, schema
-version 1) at the component root: the build artifact `intropy sys create` assembles the system
-from. The record is looked up next to the project first, then one level up — a CLI-scaffolded
-component keeps its project in `src/` under the root and its record at the root, next to the
-Dockerfile, and the first build merges the identity into that record, so the two never split
-into two files. When neither place carries a record — a component whose project sits at its own
-root — one is created next to the project. Nothing hand-writes the component's identity — the
-record is generated from the code, in the same format the system tooling already reads. The
-record is committed to the component's
-repository: `sys create` reads it from the checkout, and an identity change in the attribute shows
-up as a working-tree diff of the record after the next build — commit the two together.
+The framework names the component from it — the telemetry service, the endpoint the system
+declares, the message.
 
-The record also carries the CLI's provenance, which `intropy int create` writes: the top-level
-fields (`template`, `owner`, `repo`, `version`, `role`, `dataFlow`, `dependsOn` — and any field a
-future schema adds) and the keys inside `values` that the attribute cannot know — `appId` (the
-Dapr/deployment id `sys create`'s Assemble strictly requires), `channel` (the topic the system
-host declares; without it the host falls back to the message name), and the render echoes the
-workspace tooling reads (`componentClass`, `projectName`, `contracts`). The ownership contract
-runs two levels deep: the generator owns `schemaVersion`, `blockKind` and, within `values`, the
-identity keys (`componentName`, `organization`, `publishes`, `payloadType`, `port`,
-`endpointPath`, `eventSourceValue`); every other field and every other `values` key — the CLI's
-`appId`, `channel`, template provenance — is preserved byte-for-byte, in the order it was found.
-Owning the identity keys includes owning their absence: an attribute that leaves `Port` or
-`EndpointPath` unset drops the key from the merged values, even when the record still carries
-it. A record that is valid JSON but carries no usable `values` object is not malformed: the
-other top-level fields are preserved and the identity-only values is written as usual. The two
-owners share the one file, and neither clobbers the other; when the merged content is already
-what is on disk, the file is left untouched, so an unchanged identity makes no mtime noise and no
-git churn.
-
-| Manifest member | Attribute member | Used for |
+| Member | Required | Used for |
 |---|---|---|
-| `ComponentName` | `componentName` (first argument) | Telemetry service name, idempotency and incident records |
-| `Organization` | `Organization` | Telemetry service namespace |
-| `Publishes` | `Publishes` | The CloudEvents type of every published event |
-| `Payload` | `Payload` | Checked, as a type, against each route's output at startup |
-| `Port` | `Port` | The port the component reaches the outside world through |
-| `EndpointPath` | `EndpointPath` | The path of the endpoint the attribute names; default `/<publishes>` |
-| `EventSource` | `EventSource` | The CloudEvent `source`, an absolute URI |
+| `ComponentName` | yes | Telemetry service name, idempotency and incident records |
+| `Organization` | yes | Telemetry service namespace |
+| `Publishes` | yes | The CloudEvents type of every published event |
+| `EventSource` | yes | The CloudEvent `source`, an absolute URI |
+| `Port` | no | The port the component reaches the outside world through |
+| `EndpointPath` | no | The path of the endpoint the manifest names; default `/<publishes>` |
 
-The generator checks the identity at compile time: the build fails when a concrete
-`IntropyComponent` subclass carries no attribute (INTROPY1001), a required member is missing
-(INTROPY1002), the event source is not an absolute URI (INTROPY1003), or a project declares
-several components while recording is on (INTROPY1004). The same checks run again at startup, so
-a host that assembles a manifest by hand cannot sneak an incomplete identity past launch.
+The compiler holds the component to the identity: `Manifest` is abstract, and the required members
+are `required`. A blank member or a relative event source fails as the manifest is created. The
+payload is not a member: each input names it where it is declared (`.Publishes<OrderPlaced>(...)`),
+and startup fails unless every endpoint publishes the same type.
 
-The scaffold record's `values.payloadType` is the payload type's fully qualified name, and the
-record's `blockKind` is inferred from the component's base class (`GatewayComponent` →
-`gateway`). The CLI seeds `values.payloadType` as the payload's short type name, and the first
-build rewrites it to the fully qualified name — commit that diff; nothing in the system tooling
-reads the field. A component scaffolded outside the CLI gets an identity-only record — its
-`values` carries none of the CLI-owned keys — and `sys create` will then name the missing keys
-(`values.appId` being the first): scaffold with `int create`, or add them to the record yourself.
-A project that only carries components and never assembles
-a system — a test project, say — sets
-`<IntropyGenerateScaffold>false</IntropyGenerateScaffold>` and writes no record; the checks
-stay on.
+The system tooling does not read the manifest. `intropy int create` renders it and writes the same
+values into the component's scaffold record (`.intropy/scaffold.json`), which `intropy sys create`
+assembles the system from. An identity change — rare — edits both: the manifest and the matching
+`values` keys in the record (`componentName`, `organization`, `publishes`, `port`, `endpointPath`,
+`eventSourceValue`).
 
 The channel is not part of the identity. A component runs on the pub/sub and topic the topology
 settles, which the system host and the deployment pass in `INTROPY_PUBSUB_NAME` and
@@ -94,68 +59,161 @@ settles, which the system host and the deployment pass in `INTROPY_PUBSUB_NAME` 
 
 A gateway is a resident HTTP service that accepts items pushed to its endpoints and publishes each
 as a CloudEvent through the extractor pipeline: an extractor whose sources are its callers. Its
-endpoints take the place of source ports, and each endpoint says what it accepts: the kind of data
-callers post to it and the rules of the pipeline that data goes through.
+endpoints take the place of source ports. The component's `Inputs` says, for each endpoint, what it
+accepts (the request body callers post), what it publishes (the projection of the component's
+message), and the pipeline in between — one sentence per endpoint: *accept this, publish that,
+through these steps*.
 
 ```csharp
-[IntropyComponent("order-gateway", Organization = "Acme", Publishes = "order-placed",
-    Payload = typeof(OrderPlaced), Port = "order-gateway-endpoint", EndpointPath = "/orders",
-    EventSource = "urn:Acme:order-gateway")]
 public sealed class OrderGateway : GatewayComponent
 {
-    protected override void Endpoints(GatewayEndpoints endpoints) =>
-        endpoints.Endpoint(endpoint => endpoint
-            .Accepts<SourceOrder, OrderPlaced>(route => route
-                .Steps<OrderDeserializer, OrderValidator, OrderTransformer>()
-                .Idempotency(key: (order, _) => order.OrderId, at: (order, _) => order.OrderDate)
-                .OutputEvent(subject: order => order.OrderId, at: order => order.OrderDate)));
+    protected override ComponentManifest Manifest { get; } = new()
+    {
+        ComponentName = "order-gateway", Organization = "Acme", Publishes = "order-placed",
+        EventSource = "urn:Acme:order-gateway", Port = "order-gateway-endpoint", EndpointPath = "/orders",
+    };
+
+    protected override void Inputs(GatewayInputs inputs) => inputs
+        .Accepts<OrderRequest>()
+        .Publishes<OrderPlaced>(pipeline => pipeline
+            .Steps(steps => steps
+                .Deserialize<OrderDeserializer>()
+                .Validate<OrderValidator>()
+                .Transform<OrderTransformer>())
+            .Idempotency(key: (order, _) => order.OrderId, at: (order, _) => order.OrderDate)
+            .OutputEvent(subject: order => order.OrderId, at: order => order.OrderDate));
 }
 ```
+
+The idempotency rule reads the accepted request (`OrderRequest`); the output event rule reads the
+published payload (`OrderPlaced`).
 
 ```csharp
 // Program.cs
 return await ComponentHost.RunAsync<OrderGateway>(args);
 ```
 
-Each route names its steps: the class that deserializes its input, the one that validates it, and
-the one that transforms it to the payload (`route.Steps<TDeserializer, TValidator, TTransformer>()`).
-They resolve from DI in the item's own scope, so a constructor may take services; each is registered
-as a transient service of itself, unless the component already registered that class. A component
-that registers a step slot — the step base type — in `ConfigureServices` overrides the route's
-declared class. Two endpoints accepting the same input type may name the same classes, or each its
-own. A route that names no steps fails at startup, like a route missing a rule. Every route
-publishes the component's one message, so each route's `TOutput` is its payload type.
+Each endpoint's pipeline names its steps — the classes the component writes — by their role, in
+the order they run: the class that deserializes its input, the one that validates it, any that
+enrich it, and the one that transforms it to the payload.
 
-`Endpoint(...)` without a port and path is the endpoint the component's identity names. A second
-endpoint carrying other data is a second `Endpoint(port, path, ...)` with its own `Accepts<TIn, TOut>`
-and steps. An endpoint accepts one kind of data; two endpoints accepting the same input type may
-share the steps by naming the same classes, or each name its own.
+```csharp
+.Steps(steps => steps
+    .Deserialize<OrderDeserializer>()
+    .Validate<OrderValidator>()
+    .Extract<CustomerLookup>()     // optional, repeatable: ExtractStep<TIn, Context>
+    .Extract<PriceLookup>()
+    .Transform<OrderTransformer>())
+```
+
+Each call offers only the steps that may come next, so a declaration that compiles is complete and
+in order. Extract steps enrich the validated input and run in the order declared, after the
+validator and before the idempotency check: the idempotency key may read what they add, and they
+run for duplicates too. The pipeline's rules — `Idempotency`, `OutputEvent`, `Incidents` —
+configure the steps the framework owns, which are not declared here.
+
+The steps resolve from DI in the item's own scope, so a constructor may take services; each is
+registered as a transient service of itself, unless the component already registered that class.
+Two endpoints accepting the same input type may name the same classes, or each its own. A pipeline
+that names no steps fails at startup, like a pipeline missing a rule. Every pipeline publishes the
+component's one message, as the same payload type.
+
+`inputs.Accepts<TIn>()` accepts on the endpoint the component's manifest names. A second endpoint
+carrying other data is named with `On(port, path)`, followed by its own `Accepts<TIn>()`,
+`Publishes<TPayload>(...)` and steps:
+
+```csharp
+protected override void Inputs(GatewayInputs inputs) => inputs
+    .Accepts<OrderRequest>()
+    .Publishes<OrderPlaced>(pipeline => pipeline.Steps(...).Idempotency(...).OutputEvent(...))
+    .On("order-gateway-edi", "/orders/edi")
+    .Accepts<EdiOrder>()
+    .Publishes<OrderPlaced>(pipeline => pipeline.Steps(...).Idempotency(...).OutputEvent(...));
+```
+
+An endpoint accepts one kind of data; two endpoints accepting the same input type may share the
+steps by naming the same classes, or each name its own. An endpoint that accepts nothing, or
+accepts without publishing, fails at startup and names the endpoint.
 
 ### The identity check
 
-The attribute names the endpoint the system declares: `Port` at `EndpointPath`. Startup fails
+The manifest names the endpoint the system declares: `Port` at `EndpointPath`. Startup fails
 unless the component declares that endpoint at that path, so the identity and the declared
-endpoints cannot drift apart; the message names both values. `Endpoint(...)` without a port and
-path declares exactly the attributed endpoint (at `/<publishes>` when the attribute has no
-`EndpointPath`). Every route publishes the component's one message, so each route's `TOutput`
-is the attribute's `Payload` — checked as a type, naming the route that publishes the wrong one.
+endpoints cannot drift apart; the message names both values. `inputs.Accepts<TIn>()` declares
+exactly the manifest's endpoint (at `/<publishes>` when the manifest has no `EndpointPath`).
+
+### The context
+
+Each item runs on a `Context`: the metadata the gateway records (`SourceContextKeys.SourcePort`,
+`RequestId`, `ReceivedAt`) and whatever the steps add. To give the steps a context of the
+component's own — a record deriving from `Context`, carrying what they share — create it with
+`WithContext` between `Accepts` and `Publishes`:
+
+```csharp
+public sealed record OrderContext(Dictionary<string, string> Metadata, bool IsRetry, string? CustomerSegment = null)
+    : Context(Metadata, IsRetry);
+
+protected override void Inputs(GatewayInputs inputs) => inputs
+    .Accepts<OrderRequest>()
+    .WithContext((metadata, isRetry) => new OrderContext(metadata, isRetry))
+    .Publishes<OrderPlaced>(pipeline => pipeline
+        .Steps(steps => steps
+            .Deserialize<OrderDeserializer>()      // DeserializeStep<OrderRequest, OrderContext>
+            .Validate<OrderValidator>()
+            .Extract<CustomerLookup>()
+            .Transform<OrderTransformer>())
+        .Idempotency(key: (order, context) => order.OrderId, at: (order, _) => order.OrderDate)
+        .OutputEvent(subject: order => order.OrderId, at: order => order.OrderDate));
+```
+
+The pipeline is then typed on the component's context: every step derives from its step class on
+`OrderContext`, and the idempotency rule reads it. The gateway's metadata is on the context
+whatever the factory does. Without `WithContext` the pipeline runs on `Context`. The context is
+per endpoint, like the rest of the pipeline.
+
+### Without idempotency
+
+A pipeline declares its idempotency rule, or explicitly none: `.NoIdempotency()` publishes every
+item it accepts and never calls the Idempotency Service. A pipeline that declares neither fails at
+startup, so leaving the check out is a decision in the code, not an omission.
+
+```csharp
+protected override void Inputs(GatewayInputs inputs) => inputs
+    .Accepts<OrderRequest>()
+    .Publishes<OrderPlaced>(pipeline => pipeline
+        .Steps(steps => steps
+            .Deserialize<OrderDeserializer>()
+            .Validate<OrderValidator>()
+            .Transform<OrderTransformer>())
+        .NoIdempotency()
+        .OutputEvent(subject: order => order.OrderId, at: order => order.OrderDate));
+```
+
+The caller is the gateway's retry mechanism, so a resend publishes the item again, and the gateway
+never answers `200` for a duplicate. Declare it only when the consumers deduplicate (a loader's
+idempotency check) or duplicates are harmless, and leave `Calls(Services.Idempotency)` out of the
+component's declaration in the system host. The rule is per endpoint: one endpoint may deduplicate
+while another does not.
 
 ### Overriding the defaults
 
 | Member | Required | Default |
 |---|---|---|
-| `Endpoints(endpoints)` | yes | — |
-| endpoint `.Accepts<TIn, TOut>(route => …)` | yes, once per endpoint | — |
-| route `.Steps<TDeserializer, TValidator, TTransformer>()` | yes | — |
-| route `.Idempotency(key, at)` | yes | — |
-| route `.OutputEvent(subject, at)` | yes | — |
-| route `.Incidents(rule)` | no | `IncidentRule.ByBusinessIdOrRequest`: the business id once a step sets `BusinessIncidentContextKeys.BusinessId` (identity and subject), else the request id (subject `request:<id>`) |
-| route `.Extend((pipeline, services) => …)` | no | The framework's pipeline, unextended |
+| `Manifest` | yes | — |
+| `Inputs(inputs)` | yes | — |
+| `.Accepts<TIn>()` | yes, once per endpoint | — |
+| `.WithContext(factory)`, between `Accepts` and `Publishes` | no | The pipeline runs on `Context` |
+| `.Publishes<TPayload>(pipeline => …)` | yes, the same type on every endpoint | — |
+| pipeline `.Steps(steps => steps.Deserialize<…>().Validate<…>().Transform<…>())` | yes | — |
+| steps `.Extract<TStep>()`, between `Validate` and `Transform` | no, repeatable | No extract steps |
+| pipeline `.Idempotency(key, at)` or `.NoIdempotency()` | yes, one of the two | — |
+| pipeline `.OutputEvent(subject, at)` | yes | — |
+| pipeline `.Incidents(rule)` | no | `IncidentRule.ByBusinessIdOrRequest`: the business id once a step sets `BusinessIncidentContextKeys.BusinessId` (identity and subject), else the request id (subject `request:<id>`) |
 | `Respond(outcome)` | no | `GatewayResponses.Default` |
 | `ConfigureEndpoints(endpoints)` | no | Nothing: the environment's ingress owns authentication. Add `RequireAuthorization()`, rate limiting, OpenAPI metadata here |
 | `ConfigureApplication(app)` | no | No middleware. Add `UseAuthentication()` and the like here |
 | `ConfigureOptions(options)` | no | The `Gateway` configuration section |
-| `ConfigureServices(services, configuration)` | no | Registers nothing; a step slot registered here overrides the routes' declared step classes |
+| `ConfigureServices(services, configuration)` | no | Registers nothing. Register the services the steps take in their constructors here |
 
 ### Configuration
 
