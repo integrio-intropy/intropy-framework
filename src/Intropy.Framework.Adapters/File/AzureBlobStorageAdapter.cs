@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Dapr.Client;
+using Intropy.Framework.Adapters.Common;
 
 namespace Intropy.Framework.Adapters.File;
 
@@ -42,7 +43,7 @@ public class AzureBlobStorageAdapter(DaprClient daprClient, FileAdapterOptions o
         };
     }
 
-    internal override List<string> ParseListResponse(BindingResponse response)
+    internal override List<FileEntry> ParseListResponse(BindingResponse response)
     {
         var root = JsonSerializer.Deserialize<JsonElement>(response.Data.Span);
 
@@ -50,7 +51,7 @@ public class AzureBlobStorageAdapter(DaprClient daprClient, FileAdapterOptions o
             return [];
 
         var prefix = ListPrefix;
-        var fileNames = new List<string>();
+        var files = new List<FileEntry>();
 
         foreach (var item in root.EnumerateArray())
         {
@@ -62,10 +63,10 @@ public class AzureBlobStorageAdapter(DaprClient daprClient, FileAdapterOptions o
                 name = name[prefix.Length..];
 
             if (name.Length > 0)
-                fileNames.Add(name);
+                files.Add(new FileEntry(name));
         }
 
-        return fileNames;
+        return files;
     }
 
     internal override void AddDeleteMetadata(Dictionary<string, string> metadata)

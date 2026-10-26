@@ -2,7 +2,7 @@
 
 File adapters for the [Intropy.Framework](https://github.com/integrio-intropy/intropy-framework) pipeline framework, built on [Dapr](https://dapr.io/) bindings.
 
-Supports SFTP, local filesystem, and Azure Blob Storage through a uniform abstraction, so pipeline steps don't have to care which transport they're reading from or writing to.
+Supports SFTP, SMB file shares, local filesystem, and Azure Blob Storage through a uniform abstraction, so pipeline steps don't have to care which transport they're reading from or writing to.
 
 ## Install
 
@@ -68,8 +68,10 @@ Import `Intropy.Framework.Adapters.File` and `Microsoft.Extensions.DependencyInj
 The port name is the one name for the port everywhere: the adapter's key, its configuration
 section, and the Dapr binding it talks to (`DaprBindingName` overrides the binding only when a
 binding is named differently). `Kind` selects the binding the port is deployed with — `Local`
-(`bindings.localstorage`), `Sftp` (`bindings.sftp`), or `AzureBlob`
-(`bindings.azure.blobstorage`). The caller must register `DaprClient`. Registration and
+(`bindings.localstorage`), `Sftp` (`bindings.sftp`), `Smb` (`bindings.smb`, the Intropy SMB binding), or `AzureBlob`
+(`bindings.azure.blobstorage`). Name the binding the port is really deployed with: an SMB share
+behind `Kind: Sftp` works, but loses exclusive reads, idempotent retried writes and archiving by
+rename, and its spans say `sftp`. The caller must register `DaprClient`. Registration and
 resolution make no Dapr calls. Adapters are lazy keyed singletons; no unkeyed adapter or shared
 options are registered.
 

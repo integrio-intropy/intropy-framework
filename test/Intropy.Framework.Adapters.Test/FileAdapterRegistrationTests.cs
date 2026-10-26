@@ -15,6 +15,7 @@ public class FileAdapterRegistrationTests
     [Theory]
     [InlineData(FileAdapterKind.Local, typeof(LocalFileAdapter))]
     [InlineData(FileAdapterKind.Sftp, typeof(SftpAdapter))]
+    [InlineData(FileAdapterKind.Smb, typeof(SmbAdapter))]
     [InlineData(FileAdapterKind.AzureBlob, typeof(AzureBlobStorageAdapter))]
     public async Task KindSelectsAdapter_WithoutChangingBinding_AndResolutionIsLazy(FileAdapterKind kind, Type expected)
     {

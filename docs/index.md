@@ -6,7 +6,7 @@
 
 Intropy Framework provides a structured way to build integration pipelines that move data between systems. Every pipeline is a chain of typed steps — deserialize, validate, transform, serialize, send — with built-in OpenTelemetry tracing and a result type system that enforces separation between business and technical failures.
 
-The framework ships as five packages. **Core** provides the pipeline engine and step abstractions you can use to build any pipeline from scratch. **Blocks** provides pre-composed pipeline templates for common integration patterns like Transactional Integration and Extractor. **Adapters** provides file adapters for SFTP, local file systems, and Azure Blob Storage via Dapr bindings. **Hosting** provides runtime orchestration for the Transactional Integration lifecycle (sidecar lifecycle, message subscription, idle timeout). **EventDispatcher** provides attribute-based routing of CloudEvents to typed handler classes.
+The framework ships as five packages. **Core** provides the pipeline engine and step abstractions you can use to build any pipeline from scratch. **Blocks** provides pre-composed pipeline templates for common integration patterns like Transactional Integration and Extractor. **Adapters** provides file adapters for SFTP, SMB file shares, local file systems, and Azure Blob Storage via Dapr bindings. **Hosting** provides runtime orchestration for the Transactional Integration lifecycle (sidecar lifecycle, message subscription, idle timeout). **EventDispatcher** provides attribute-based routing of CloudEvents to typed handler classes.
 
 ## Installation
 
@@ -17,7 +17,7 @@ dotnet add package Intropy.Framework.Core
 # Blocks (Transactional Integration, Extractor, Loader — includes Core)
 dotnet add package Intropy.Framework.Blocks
 
-# File adapters (SFTP, local, Azure Blob Storage — via Dapr bindings)
+# File adapters (SFTP, SMB, local, Azure Blob Storage — via Dapr bindings)
 dotnet add package Intropy.Framework.Adapters
 
 # Hosting (JobRunner, Dapr sidecar lifecycle — includes Blocks)
@@ -68,7 +68,7 @@ Each step is a class you implement by overriding a single `ExecuteAsync` method.
 - **Built-in OpenTelemetry tracing** — every step and pipeline gets an Activity span with result tags. [Learn more](concepts/observability.md)
 - **Block pipelines** — pre-composed Transactional Integration and Extractor patterns with DI registration. [Learn more](blocks/transactional-integration.md)
 - **Idempotency and business incident routing** — built-in cross-cutting concerns via builder configuration. [Learn more](core/builders.md)
-- **File adapters** — SFTP, local file, and Azure Blob Storage access through Dapr bindings. [Learn more](adapters/file-adapters.md)
+- **File adapters** — SFTP, SMB, local file, and Azure Blob Storage access through Dapr bindings. [Learn more](adapters/file-adapters.md)
 - **Event dispatcher** — attribute-based routing of CloudEvents to typed handler classes. [Learn more](event-dispatcher/event-dispatcher.md)
 
 ## Documentation
@@ -79,7 +79,7 @@ Each step is a class you implement by overriding a single `ExecuteAsync` method.
 | [Concepts](concepts/pipeline-execution.md) | How the pipeline engine, result types, and step types work |
 | [Core](core/pipeline.md) | Pipeline engine, builders, step types, and result types |
 | [Blocks](blocks/transactional-integration.md) | Pre-composed pipeline blocks (Transactional Integration, Extractor, Loader) |
-| [Adapters](adapters/file-adapters.md) | File adapters (SFTP, local, Azure Blob) via Dapr bindings |
+| [Adapters](adapters/file-adapters.md) | File adapters (SFTP, SMB, local, Azure Blob) via Dapr bindings |
 | [Event Dispatcher](event-dispatcher/event-dispatcher.md) | Attribute-based routing of CloudEvents to typed handlers |
 
 ## Requirements

@@ -24,7 +24,7 @@ public static class FileAdapterServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(section);
         var location = $"{section.Path} (key '{key}')";
         if (!section.Exists() || section.Value is not null)
-            throw Invalid(location, "Not configured. Set Kind to Local, Sftp or AzureBlob (for example the environment variable " +
+            throw Invalid(location, "Not configured. Set Kind to Local, Sftp, Smb or AzureBlob (for example the environment variable " +
                 $"{section.Path.Replace(":", "__", StringComparison.Ordinal)}__Kind).");
 
         // Bind only the documented scalar settings. Never include configuration values or
@@ -41,7 +41,7 @@ public static class FileAdapterServiceCollectionExtensions
         if (string.IsNullOrWhiteSpace(text) ||
             !Enum.TryParse<FileAdapterKind>(text, true, out var kind) || !Enum.IsDefined(kind) ||
             !string.Equals(text.Trim(), kind.ToString(), StringComparison.OrdinalIgnoreCase))
-            throw Invalid(location, "Kind must explicitly select Local, Sftp or AzureBlob.");
+            throw Invalid(location, "Kind must explicitly select Local, Sftp, Smb or AzureBlob.");
 
         return Register(services, key, new FileTransportOptions
         {
@@ -68,7 +68,7 @@ public static class FileAdapterServiceCollectionExtensions
         if (services.Any(d => d.ServiceType == typeof(Registration) && Equals(d.ServiceKey, key)))
             throw Invalid(location, "A framework file adapter is already registered for this key. Use keyed DI removal/replacement to override it.");
         if (options.Kind is not { } kind || !Enum.IsDefined(kind))
-            throw Invalid(location, "Kind must explicitly select Local, Sftp or AzureBlob.");
+            throw Invalid(location, "Kind must explicitly select Local, Sftp, Smb or AzureBlob.");
         // The key is the port name, and the binding is named after the port unless set explicitly.
         var bindingName = string.IsNullOrEmpty(options.DaprBindingName) ? key : options.DaprBindingName;
         if (string.IsNullOrWhiteSpace(bindingName))
@@ -100,6 +100,7 @@ public static class FileAdapterServiceCollectionExtensions
                 FileAdapterKind.Local => new LocalFileAdapter(client, snapshot),
                 FileAdapterKind.Sftp => new SftpAdapter(client, snapshot),
                 FileAdapterKind.AzureBlob => new AzureBlobStorageAdapter(client, snapshot),
+                FileAdapterKind.Smb => new SmbAdapter(client, snapshot),
                 _ => throw Invalid(location, "Unsupported Kind.")
             };
         });

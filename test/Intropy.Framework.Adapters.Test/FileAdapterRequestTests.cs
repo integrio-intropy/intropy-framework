@@ -12,6 +12,7 @@ public class FileAdapterRequestTests
     [Theory]
     [InlineData("Local")]
     [InlineData("Sftp")]
+    [InlineData("Smb")]
     [InlineData("AzureBlob")]
     public async Task ManualAdapters_PreserveProtocolPathsEncodingAndEmptyContent(string kind)
     {
@@ -25,7 +26,7 @@ public class FileAdapterRequestTests
                 var json = kind switch
                 {
                     "Local" => "[\"/inbound/order.json\",\"/inbound/skip.txt\"]",
-                    "Sftp" => "[{\"fileName\":\"order.json\",\"isDirectory\":false},{\"fileName\":\"skip.json\",\"isDirectory\":true}]",
+                    "Sftp" or "Smb" => "[{\"fileName\":\"order.json\",\"isDirectory\":false},{\"fileName\":\"skip.json\",\"isDirectory\":true}]",
                     _ => "[\"inbound/order.json\",{\"Name\":\"inbound/skip.txt\"}]"
                 };
                 return new BindingResponse(request, request.Operation == "list" ? Encoding.UTF8.GetBytes(json) : [], new Dictionary<string, string>());
@@ -135,6 +136,7 @@ public class FileAdapterRequestTests
     [Theory]
     [InlineData("Local")]
     [InlineData("Sftp")]
+    [InlineData("Smb")]
     [InlineData("AzureBlob")]
     public async Task BindingExceptions_PropagateUnchanged(string kind)
     {
@@ -153,6 +155,7 @@ public class FileAdapterRequestTests
     {
         "Local" => new LocalFileAdapter(client, options),
         "Sftp" => new SftpAdapter(client, options),
+        "Smb" => new SmbAdapter(client, options),
         "AzureBlob" => new AzureBlobStorageAdapter(client, options),
         _ => throw new ArgumentException("Unsupported test kind", nameof(kind))
     };

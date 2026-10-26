@@ -16,7 +16,7 @@ Intropy.Framework packages the structure: declare your steps, compose them with 
 |---------|-------------|
 | [Intropy.Framework.Core](https://www.nuget.org/packages/Intropy.Framework.Core) | Pipeline engine, step abstractions, result types |
 | [Intropy.Framework.Blocks](https://www.nuget.org/packages/Intropy.Framework.Blocks) | Reusable pipeline blocks (Extractor, Loader, Transactional Integration) |
-| [Intropy.Framework.Adapters](https://www.nuget.org/packages/Intropy.Framework.Adapters) | File adapters (SFTP, local, Azure Blob) via Dapr bindings |
+| [Intropy.Framework.Adapters](https://www.nuget.org/packages/Intropy.Framework.Adapters) | File adapters (SFTP, SMB, local, Azure Blob) via Dapr bindings |
 | [Intropy.Framework.Hosting](https://www.nuget.org/packages/Intropy.Framework.Hosting) | Runtime orchestration (Dapr sidecar lifecycle, message subscription, idle timeout) |
 | [Intropy.Framework.EventDispatcher](https://www.nuget.org/packages/Intropy.Framework.EventDispatcher) | Attribute-based CloudEvent routing to typed handlers |
 

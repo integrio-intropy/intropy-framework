@@ -11,5 +11,7 @@ public enum FileAdapterKind
     /// <summary>The Dapr <c>bindings.sftp</c> binding.</summary>
     Sftp,
     /// <summary>Azure Blob Storage: the Dapr <c>bindings.azure.blobstorage</c> binding.</summary>
-    AzureBlob
+    AzureBlob,
+    /// <summary>A Windows file share: the Intropy <c>bindings.smb</c> pluggable component.</summary>
+    Smb
 }

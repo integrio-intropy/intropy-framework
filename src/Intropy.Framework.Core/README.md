@@ -19,7 +19,7 @@ dotnet add package Intropy.Framework.Core
 ## Companion packages
 
 - `Intropy.Framework.Blocks` — pipeline blocks (Extractor, Loader, TransactionalIntegration)
-- `Intropy.Framework.Adapters` — file adapters (SFTP, local, Azure Blob)
+- `Intropy.Framework.Adapters` — file adapters (SFTP, SMB, local, Azure Blob)
 - `Intropy.Framework.Hosting` — runtime orchestration with Dapr
 - `Intropy.Framework.EventDispatcher` — CloudEvent routing to typed handlers
 
