@@ -364,4 +364,4 @@ The TI automatically propagates `Context.Metadata` and W3C trace context through
 
 - [Getting Started](../getting-started.md) — complete working example
 - [Builders API Reference](../core/builders.md) — exact builder method signatures
-- [File Adapters](../adapters/file-adapters.md) — SFTP, local, and Azure Blob Storage adapters
+- [File Adapters](../adapters/file-adapters.md) — SFTP, SMB, local, and Azure Blob Storage adapters

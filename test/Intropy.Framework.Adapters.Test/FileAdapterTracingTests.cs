@@ -14,6 +14,7 @@ public class FileAdapterTracingTests
     [Theory]
     [InlineData("Local")]
     [InlineData("Sftp")]
+    [InlineData("Smb")]
     [InlineData("AzureBlob")]
     public async Task FailedOperations_MarkTheirSpansAsErrorsWithTheException(string kind)
     {
@@ -44,6 +45,7 @@ public class FileAdapterTracingTests
     [Theory]
     [InlineData("Local", "local", "/inbound/order.json", "/archive/order.json")]
     [InlineData("Sftp", "sftp", "/inbound/order.json", "/archive/order.json")]
+    [InlineData("Smb", "smb", "/inbound/order.json", "/archive/order.json")]
     [InlineData("AzureBlob", "azure_blob", "inbound/order.json", "archive/order.json")]
     public async Task Operations_NameTheirSpansAfterTheOperationAndBinding_AndDescribeTheFile(string kind,
         string adapterKind, string path, string archivePath)
@@ -104,7 +106,7 @@ public class FileAdapterTracingTests
     private static string ListResponse(string kind) => kind switch
     {
         "Local" => "[\"/inbound/order.json\",\"/inbound/skip.txt\"]",
-        "Sftp" => "[{\"fileName\":\"order.json\",\"isDirectory\":false},{\"fileName\":\"skip.txt\",\"isDirectory\":false}]",
+        "Sftp" or "Smb" => "[{\"fileName\":\"order.json\",\"isDirectory\":false},{\"fileName\":\"skip.txt\",\"isDirectory\":false}]",
         _ => "[\"inbound/order.json\",{\"Name\":\"inbound/skip.txt\"}]"
     };
 

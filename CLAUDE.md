@@ -30,7 +30,7 @@ This is a type-safe, observable pipeline framework for building system integrati
 | Package | Purpose |
 |---------|---------|
 | **Intropy.Framework.Core** | Pipeline engine, step abstractions, result types |
-| **Intropy.Framework.Adapters** | File adapters (SFTP, local, Azure Blob) via Dapr bindings |
+| **Intropy.Framework.Adapters** | File adapters (SFTP, SMB, local, Azure Blob) via Dapr bindings |
 | **Intropy.Framework.Blocks** | Reusable pipeline blocks (Extractor, Loader, TransactionalIntegration) |
 | **Intropy.Framework.Hosting** | Runtime orchestration with Dapr sidecar lifecycle, idle timeout, message subscription |
 | **Intropy.Framework.EventDispatcher** | CloudEvent routing to typed handlers via DI |

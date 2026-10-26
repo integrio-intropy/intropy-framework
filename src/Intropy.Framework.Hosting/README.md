@@ -208,7 +208,7 @@ component that uses it: it lists the source, hands each file to a handler inside
 scope, and completes the file — `FileCompletion.Delete` or `FileCompletion.Archive(basePath)` —
 only after the handler reports it `Consumed` or a `Duplicate`. A `Failed` or throwing file stays
 for the next run and is counted; delivery is at-least-once. The sweep is in the
-`Intropy.Framework.Hosting.FileSweeps` namespace; the adapters behind the ports (SFTP, local, Azure
+`Intropy.Framework.Hosting.FileSweeps` namespace; the adapters behind the ports (SFTP, SMB, local, Azure
 Blob) come from `Intropy.Framework.Adapters`:
 
 ```csharp
@@ -227,7 +227,9 @@ and files left in place as `Failed`.
 
 ### Completion modes
 
-`FileCompletion.Delete` and `FileCompletion.Archive(basePath)` are built in. For anything else,
+`FileCompletion.Delete` and `FileCompletion.Archive(basePath)` are built in. On an SMB source,
+`Archive` moves the file with the binding's rename instead of copying it; the archive never
+overwrites, so a name it already holds is archived as `order_20261026T101500123Z.xml`. For anything else,
 derive from `FileCompletion`. The completion receives the source adapter, the file (its content
 is read once and kept, and `file.Services` is the file's scope), and whether the file was
 `Consumed` or a `Duplicate`:

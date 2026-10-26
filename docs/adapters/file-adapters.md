@@ -1,6 +1,6 @@
 # File Adapters
 
-> File system access through Dapr bindings for SFTP, local files, and Azure Blob Storage.
+> File system access through Dapr bindings for SFTP, SMB file shares, local files, and Azure Blob Storage.
 
 **Namespace:** `Intropy.Framework.Adapters.File`
 **Assembly:** `Intropy.Framework.Adapters`
@@ -65,10 +65,12 @@ public class FileAdapterOptions
 **Namespace:** `Intropy.Framework.Adapters.Common`
 
 ```csharp
-public record FileEntry(string Name);
+public record FileEntry(string Name, long? Size = null, DateTimeOffset? ModifiedAt = null);
 ```
 
-Returned by `IFileAdapter.ListAsync()`. Contains the file name relative to the configured `BasePath`.
+Returned by `IFileAdapter.ListAsync()`. Contains the file name relative to the configured `BasePath`,
+and the file's size and last modification time when the binding's listing reports them (the SMB
+binding does; the SFTP, local and blob listings leave them `null`).
 
 ---
 
@@ -87,9 +89,33 @@ var adapter = new SftpAdapter(daprClient, new FileAdapterOptions(
 
 Filters the listing response to exclude directories (`isDirectory: false`).
 
+### SmbAdapter
+
+Connects to Windows file shares via the Intropy SMB binding (`bindings.smb`), a pluggable
+component that follows the SFTP binding's operations and metadata. Select it with `Kind: Smb`.
+
+```csharp
+var adapter = new SmbAdapter(daprClient, new FileAdapterOptions(
+    daprBindingName: "partner-share",
+    basePath: "xmlout"));
+```
+
+On top of the SFTP shape it uses what SMB can guarantee:
+
+- **Exclusive reads.** `GetContentAsync` asks the binding for an exclusive open. A file someone
+  else still has open is refused instead of read half written; a sweep counts it as failed and
+  handles it on the next run.
+- **Idempotent retried writes.** The binding never overwrites. When a write is refused and the file
+  is there with exactly the same content, an earlier attempt landed, and the write succeeds
+  (the span is tagged `intropy.file.already_written`). Different content is still an error.
+- **Moves.** `MoveAsync(fileName, destinationBasePath, newFileName)` uses the binding's atomic
+  `rename`, without reading or rewriting the content. It never overwrites.
+  `FileCompletion.Archive` uses it on an SMB source.
+- **Size and modification time** in listings.
+
 ### LocalFileAdapter
 
-Reads from local or mounted file systems (e.g., SMB shares) via a Dapr local storage binding.
+Reads from local or mounted file systems via a Dapr local storage binding.
 
 ```csharp
 var adapter = new LocalFileAdapter(daprClient, new FileAdapterOptions(
@@ -123,16 +149,18 @@ rather than dropped.
 
 Every operation of the built-in adapters is a span on the `Intropy.Framework.Adapters` source,
 named `{operation} {binding}` (for example `get orders-source`). The operation is the Dapr binding
-operation: `list`, `get`, `create` or `delete`.
+operation: `list`, `get`, `create` or `delete`, and `rename` for an SMB move.
 
 | Attribute | On | Value |
 |-----------|----|-------|
-| `intropy.file.adapter` | all | `local`, `sftp` or `azure_blob` |
+| `intropy.file.adapter` | all | `local`, `sftp`, `smb` or `azure_blob` |
 | `intropy.file.binding` | all | The Dapr binding name |
-| `intropy.file.operation` | all | `list`, `get`, `create` or `delete` |
+| `intropy.file.operation` | all | `list`, `get`, `create`, `delete` or `rename` |
 | `file.directory` | `list` | The base path listed |
 | `intropy.file.listed` / `intropy.file.matched` | `list` | Files the binding returned / files left after `FileNameRegex` |
-| `file.name`, `file.path` | `get`, `create`, `delete` | The file name, and the path sent to the binding |
+| `file.name`, `file.path` | `get`, `create`, `delete`, `rename` | The file name, and the path sent to the binding |
+| `intropy.file.new_path` | `rename` | The path the file was moved to |
+| `intropy.file.already_written` | `create` (SMB) | `true` when a refused write found the same content already there |
 | `file.size` | `get`, `create` | Bytes read or written |
 | `error.type` | failures | The exception type; the span status is `Error` |
 

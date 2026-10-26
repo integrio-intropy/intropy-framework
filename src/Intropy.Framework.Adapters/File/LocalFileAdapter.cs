@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Dapr.Client;
+using Intropy.Framework.Adapters.Common;
 
 namespace Intropy.Framework.Adapters.File;
 
@@ -22,7 +23,7 @@ public class LocalFileAdapter(DaprClient daprClient, FileAdapterOptions options)
     internal override string CombinePath(string basePath, string fileName) =>
         string.IsNullOrEmpty(basePath) ? fileName : $"{basePath}/{fileName}";
 
-    internal override List<string> ParseListResponse(BindingResponse response)
+    internal override List<FileEntry> ParseListResponse(BindingResponse response)
     {
         var fullPaths = JsonSerializer.Deserialize<List<string>>(response.Data.Span) ?? [];
 
@@ -30,6 +31,7 @@ public class LocalFileAdapter(DaprClient daprClient, FileAdapterOptions options)
         return fullPaths
             .Select(path => path.Split('/').Last())
             .Where(fileName => !string.IsNullOrEmpty(fileName))
+            .Select(fileName => new FileEntry(fileName))
             .ToList();
     }
 }

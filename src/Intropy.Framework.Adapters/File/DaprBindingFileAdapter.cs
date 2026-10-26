@@ -7,7 +7,7 @@ namespace Intropy.Framework.Adapters.File;
 
 /// <summary>
 /// The shared Dapr-binding implementation behind <see cref="LocalFileAdapter"/>,
-/// <see cref="SftpAdapter"/>, and <see cref="AzureBlobStorageAdapter"/>: the binding operation
+/// <see cref="SftpAdapter"/>, <see cref="SmbAdapter"/>, and <see cref="AzureBlobStorageAdapter"/>: the binding operation
 /// constants, the span around each Dapr call (named <c>{operation} {binding}</c>, with the
 /// binding, path and size as attributes), regex filtering, and the shared
 /// request/response flow. Each adapter supplies only what genuinely varies: the file-name
@@ -44,11 +44,11 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
     internal FileAdapterOptions Options => _options;
 
     /// <summary>The adapter's kind on its spans (<c>intropy.file.adapter</c>): <c>local</c>,
-    /// <c>sftp</c> or <c>azure_blob</c>.</summary>
+    /// <c>sftp</c>, <c>smb</c> or <c>azure_blob</c>.</summary>
     internal abstract string AdapterKind { get; }
 
     /// <summary>The metadata key carrying the file path in get/create/delete requests, and the
-    /// base path in <see cref="LocalFileAdapter"/>/<see cref="SftpAdapter"/> list requests.</summary>
+    /// base path in <see cref="LocalFileAdapter"/>/<see cref="SftpAdapter"/>/<see cref="SmbAdapter"/> list requests.</summary>
     internal abstract string FileNameMetadataKey { get; }
 
     /// <summary>Joins a base path and a file name with the adapter's own semantics
@@ -63,13 +63,25 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         new(_options.DaprBindingName, ListOperation)
             { Metadata = { [FileNameMetadataKey] = _options.BasePath } };
 
-    /// <summary>Parses a list response into plain file names (no regex filtering yet).</summary>
-    internal abstract List<string> ParseListResponse(BindingResponse response);
+    /// <summary>Parses a list response into files, with what the binding reports about them (no
+    /// regex filtering yet).</summary>
+    internal abstract List<FileEntry> ParseListResponse(BindingResponse response);
+
+    /// <summary>Adds adapter-specific metadata to a get request, beyond the file path.</summary>
+    internal virtual void AddGetMetadata(Dictionary<string, string> metadata)
+    {
+    }
 
     /// <summary>Adds adapter-specific metadata to a delete request, beyond the file path.</summary>
     internal virtual void AddDeleteMetadata(Dictionary<string, string> metadata)
     {
     }
+
+    /// <summary>Whether a failed create still left <paramref name="content"/> at
+    /// <paramref name="path"/>, so the write is done. The default is no: bindings that overwrite
+    /// never refuse a write because the file is there.</summary>
+    internal virtual Task<bool> IsAlreadyWrittenAsync(string path, byte[] content, CancellationToken ct) =>
+        Task.FromResult(false);
 
     /// <inheritdoc/>
     public Task<List<FileEntry>> ListAsync(CancellationToken ct = default) =>
@@ -78,17 +90,15 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
             activity?.SetTag("file.directory", _options.BasePath);
             var response = await DaprClient.InvokeBindingAsync(BuildListRequest(), ct);
 
-            var fileNames = ParseListResponse(response);
-            activity?.SetTag("intropy.file.listed", fileNames.Count);
+            var files = ParseListResponse(response);
+            activity?.SetTag("intropy.file.listed", files.Count);
 
             if (_options.FileNameRegex is not null)
-                fileNames = FilterFiles(fileNames, _options.FileNameRegex);
+                files = FilterFiles(files, _options.FileNameRegex);
             // Listed but filtered out is the usual answer to "why wasn't my file picked up?".
-            activity?.SetTag("intropy.file.matched", fileNames.Count);
+            activity?.SetTag("intropy.file.matched", files.Count);
 
-            return fileNames
-                .Select(fileName => new FileEntry(fileName))
-                .ToList();
+            return files;
         }, ct);
 
     /// <inheritdoc/>
@@ -99,6 +109,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         return await TraceAsync(GetOperation, async activity =>
         {
             var request = BuildPathRequest(GetOperation, _options.BasePath, fileName, activity);
+            AddGetMetadata(request.Metadata);
             var response = await DaprClient.InvokeBindingAsync(request, ct);
             var content = response.Data.ToArray();
             activity?.SetTag("file.size", content.Length);
@@ -118,7 +129,17 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
             var request = BuildPathRequest(CreateOperation, basePathOverride ?? _options.BasePath, fileName, activity);
             request.Data = content;
             activity?.SetTag("file.size", content.Length);
-            await DaprClient.InvokeBindingAsync(request, ct);
+            try
+            {
+                await DaprClient.InvokeBindingAsync(request, ct);
+            }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                // A retried write whose first attempt landed: the file is there, with this content.
+                if (!await IsAlreadyWrittenAsync(request.Metadata[FileNameMetadataKey], content, ct))
+                    throw;
+                activity?.SetTag("intropy.file.already_written", true);
+            }
             return true;
         }, ct);
     }
@@ -139,7 +160,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
 
     /// <summary>Runs one binding operation inside its span, <c>{operation} {binding}</c>, and marks
     /// the span as failed when it throws.</summary>
-    private async Task<T> TraceAsync<T>(string operation, Func<Activity?, Task<T>> invoke, CancellationToken ct)
+    internal async Task<T> TraceAsync<T>(string operation, Func<Activity?, Task<T>> invoke, CancellationToken ct)
     {
         using var activity = ActivitySourceProvider.ActivitySource.StartActivity($"{operation} {_options.DaprBindingName}");
         activity?.SetTag("intropy.file.adapter", AdapterKind);
@@ -157,7 +178,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         }
     }
 
-    private BindingRequest BuildPathRequest(string operation, string basePath, string fileName, Activity? activity)
+    internal BindingRequest BuildPathRequest(string operation, string basePath, string fileName, Activity? activity)
     {
         var path = CombinePath(basePath, fileName);
         activity?.SetTag("file.name", fileName);
@@ -177,6 +198,6 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         activity.SetStatus(ActivityStatusCode.Error, e.Message);
     }
 
-    private static List<string> FilterFiles(List<string> fileNames, Regex regex) =>
-        fileNames.Where(fileName => regex.IsMatch(fileName)).ToList();
+    private static List<FileEntry> FilterFiles(List<FileEntry> files, Regex regex) =>
+        files.Where(file => regex.IsMatch(file.Name)).ToList();
 }
