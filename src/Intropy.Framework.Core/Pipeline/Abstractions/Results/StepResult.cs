@@ -17,7 +17,19 @@ public abstract record StepResult<T>
     /// Represents a successful result from a <see cref="Step{TIn,TOut,TCtx}"/>.
     /// </summary>
     /// <param name="Value">The value to return</param>
-    public sealed record Success(T Value) : StepResult<T>;
+    public record Success(T Value) : StepResult<T>;
+
+    /// <summary>
+    /// Represents a successful result whose item's business failure was handled by being delivered
+    /// to the Business Incident Service. Every consumer that treats a success as a handled item —
+    /// a file sweep that completes its file, a send pipeline that acknowledges its message — sees
+    /// this as the success it ends the pipeline as; a host that answers a caller instead matches
+    /// this subtype, to tell the routed item from one that published.
+    /// </summary>
+    /// <param name="Value">The value to return, as on any successful result.</param>
+    /// <param name="Description">The incident's description — why the item was routed — as the
+    /// failing step said it, or <c>null</c> when it did not.</param>
+    public sealed record RoutedIncident(T Value, string? Description) : Success(Value);
 
     /// <summary>
     /// Represents a cancelled result from a <see cref="Step{TIn,TOut,TCtx}"/>.

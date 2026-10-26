@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Declarative Intropy components: a component class declares its identity, its rules and its steps, and the framework wires configuration, telemetry, Dapr, the platform-service clients, the endpoint and the publisher from the component's IntropyComponent attribute.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;component;gateway;dapr</PackageTags>
+  </PropertyGroup>
+
+  <!-- A gateway is an ASP.NET Core application. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Dapr.Client" />
+    <PackageReference Include="Intropy.BusinessIncidentService.Client" />
+    <PackageReference Include="Intropy.IdempotencyService.Client" />
+    <PackageReference Include="Intropy.Telemetry.AspNetCore" />
+  </ItemGroup>
+
+</Project>

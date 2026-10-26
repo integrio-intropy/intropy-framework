@@ -124,7 +124,7 @@ public class ExtractorTests
             Arg.Is<string>(x => x.Equals(customerId, StringComparison.Ordinal)),
             Arg.Is<string>(x => x.Equals(customerId, StringComparison.Ordinal)),
             Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-        Assert.IsType<StepResult<CloudEvent>.Success>(result);
+        Assert.IsType<StepResult<CloudEvent>.RoutedIncident>(result);
     }
 
     [Fact]
@@ -260,7 +260,7 @@ public class ExtractorTests
         Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
         await _businessIncidentServiceClient.ReceivedWithAnyArgs(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-        Assert.IsType<StepResult<CloudEvent>.Success>(result);
+        Assert.IsType<StepResult<CloudEvent>.RoutedIncident>(result);
     }
 
     [Fact]

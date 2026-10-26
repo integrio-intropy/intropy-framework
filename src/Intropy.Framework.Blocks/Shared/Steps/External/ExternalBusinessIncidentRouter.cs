@@ -65,9 +65,12 @@ public class ExternalBusinessIncidentRouter<T, TCtx>(
             return (new StepResult<T>.TechnicalFailure(tf), context);
         }
 
+        // A retriable failure stays a failure, so the host redelivers the item. Otherwise the routed
+        // incident ends the pipeline as a success; the subtype carries the incident, so a host that
+        // answers a caller can tell it apart from a handled item without reading context.
         return businessFailure.Retriable
             ? (businessFailure, context)
-            : (new StepResult<T>.Success(defaultValueFactory()), context);
+            : (new StepResult<T>.RoutedIncident(defaultValueFactory(), businessFailure.Value.Description), context);
     }
 
     private async Task<(StepResult<T> Result, TCtx context)> ResolveBusinessIncident(StepResult<T> result, TCtx context)

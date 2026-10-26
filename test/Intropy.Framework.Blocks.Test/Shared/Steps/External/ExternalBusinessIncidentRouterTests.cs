@@ -75,7 +75,8 @@ public class ExternalBusinessIncidentRouterTests
 
         await _mockClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-        Assert.IsType<StepResult<string>.Success>(finalResult);
+        // A success, as a routed incident: the subtype carries the incident for a host that answers a caller.
+        Assert.IsAssignableFrom<StepResult<string>.Success>(finalResult);
     }
 
     [Fact]
@@ -174,6 +175,47 @@ public class ExternalBusinessIncidentRouterTests
             Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
 
+
+    [Fact]
+    public async Task ExecuteAsync_WithTerminalBusinessFailure_RoutesItAsARoutedIncident()
+    {
+        var router = CreateRouter();
+        var result = new StepResult<string>.BusinessFailure(new BusinessIncidentData { Description = "Order has no lines" },
+            Retriable: false);
+
+        var (finalResult, context) = await router.ExecuteAsync(result, GetContext("123"), CancellationToken.None);
+
+        // The routed incident is still a success — anything that treats a success as a handled item
+        // keeps working — but the subtype carries it, no context marker does.
+        var routed = Assert.IsType<StepResult<string>.RoutedIncident>(finalResult);
+        Assert.Equal("Order has no lines", routed.Description);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenTheIncidentCannotBeDelivered_ReturnsATechnicalFailure()
+    {
+        var router = CreateRouter();
+        _mockClient.Trigger(Arg.Any<Uri>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<BusinessIncidentData>(),
+                Arg.Any<string?>())
+            .Returns(Task.FromException(new BusinessIncidentServiceException("unavailable", new HttpRequestException())));
+
+        var (finalResult, _) = await router.ExecuteAsync(
+            new StepResult<string>.BusinessFailure(new BusinessIncidentData { Description = "x" }), GetContext("123"),
+            CancellationToken.None);
+
+        Assert.IsType<StepResult<string>.TechnicalFailure>(finalResult);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WithSuccess_IsAnOrdinarySuccess()
+    {
+        var router = CreateRouter();
+
+        var (finalResult, _) = await router.ExecuteAsync(new StepResult<string>.Success("1"), GetContext("123"),
+            CancellationToken.None);
+
+        Assert.Equal(new StepResult<string>.Success("1"), finalResult);
+    }
 
     private ExternalBusinessIncidentRouter<string, Context> CreateRouter()
     {

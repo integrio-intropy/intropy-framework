@@ -20,6 +20,8 @@
     <PackageReference Include="JunitXml.TestLogger" />
     <PackageReference Include="coverlet.msbuild" />
     <PackageReference Include="Testcontainers" />
+    <!-- The gateway tests serve the endpoint in memory. -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
   </ItemGroup>
 
   <ItemGroup>

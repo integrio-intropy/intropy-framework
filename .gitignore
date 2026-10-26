@@ -486,3 +486,5 @@ $RECYCLE.BIN/
 .claude/
 
 Makefile
+# Entire CLI session checkpoints
+.entire/
