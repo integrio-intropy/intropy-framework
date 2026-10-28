@@ -252,9 +252,11 @@ public static class ExtractorServiceCollectionExtensions
         try
         {
             var builder = ExtractorBuilder<TInput, TOutput, TCtx>.Create($"{componentName}.Process", provider);
-            // The claim check goes on after the component's own configuration: it is the
-            // deployment's decision, not the pipeline's, and a component never mentions it.
-            return ExtractorClaimCheck.Apply(configurePipeline(builder, provider), provider).Build();
+            // The claim check and the archive go on after the component's own configuration: they
+            // are the deployment's decision, not the pipeline's, and a component never mentions them.
+            return ExtractorClaimCheck.Apply(configurePipeline(builder, provider), provider)
+                .WithArchive(ArchiveStoreServiceCollectionExtensions.PolicyFor(provider))
+                .Build();
         }
         catch (InvalidOperationException error)
         {

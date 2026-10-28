@@ -385,6 +385,13 @@ Roll back in the reverse order, which is why `Never` is a mode rather than an ab
    it. A consumer resolves a pointer whenever an event carries one, whatever this extractor's mode.
 3. Remove the store.
 
+## Archive
+
+With an archive store registered (`AddArchiveStore`), the extractor copies a file's content to
+the archive before an incident on it is routed, and names the copy on the incident (`dataref`). The
+file is only deleted once the copy is written. In `OnReceipt` mode every file is archived on receipt.
+See [Archive](../concepts/archive.md).
+
 ## Executing the Extractor
 
 Call `Execute` with the raw bytes and a context:

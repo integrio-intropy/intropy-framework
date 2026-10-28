@@ -401,6 +401,13 @@ business one: the message is left for redelivery and the broker dead-letters it 
 gives up. A `dataref` that is not a well-formed claim key is refused without the store being read at
 all, because the file adapters join a key onto the store's base path without normalising it.
 
+## Archive
+
+With an archive store registered (`AddArchiveStore`), the loader copies the event's data (after a
+claim-checked payload is resolved) to the archive before an incident on it is routed, and names the
+copy on the incident (`dataref`). In `OnReceipt` mode every event is archived on receipt. See
+[Archive](../concepts/archive.md).
+
 ## Related
 
 - [Extractor](extractor.md) — the counterpart that publishes CloudEvents from a source system

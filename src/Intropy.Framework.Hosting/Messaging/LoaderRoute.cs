@@ -120,6 +120,9 @@ internal sealed class LoaderRoute<TInput, TOutput, TCtx>(
             var builder = eventType is null
                 ? LoaderBuilder<TInput, TOutput, TCtx>.Create($"{componentName}.Process", scope)
                 : LoaderBuilder<TInput, TOutput, TCtx>.Create($"{componentName}.Process.{eventType}", scope, eventType);
-            return configurePipeline(builder, scope).Build();
+            // The archive goes on after the route's own configuration: it is the deployment's decision.
+            return configurePipeline(builder, scope)
+                .WithArchive(ArchiveStoreServiceCollectionExtensions.PolicyFor(scope))
+                .Build();
         });
 }
