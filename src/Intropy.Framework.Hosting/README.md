@@ -72,6 +72,20 @@ the host is disposed.
 
 A failed sidecar shutdown is logged but never changes the exit code — the job's outcome stands.
 
+### Sidecar shutdown and the restart policy
+
+`JobOptions.SidecarShutdown` decides when the runner shuts the sidecar down. Set it to match how the
+scheduler retries a failed run. A deployment sets it with `INTROPY_JOB_SIDECAR_SHUTDOWN`; a value
+set in code wins, and any other value fails at startup.
+
+| Kubernetes Job | Setting | Why |
+|---|---|---|
+| `restartPolicy: Never` | `Always` (default) | The retry is a new pod. This pod only completes once the sidecar has stopped. |
+| `restartPolicy: OnFailure` | `OnSuccess` | The retry restarts the app in the same pod. A sidecar that exited cleanly is not restarted, so every retry would wait for a sidecar that never comes. |
+
+`OnSuccess` under `restartPolicy: Never` leaves the sidecar running after a failed run, and the pod
+never completes.
+
 ### Counting skipped items
 
 The framework cannot infer duplicate detection — component code must count `StepResult<T>.Cancelled`

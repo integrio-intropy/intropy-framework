@@ -375,6 +375,71 @@ public class JobRunnerTests
             return Assert.Single(stopped, a => a.DisplayName == _options.JobName && a.TraceId == traceId);
     }
 
+    [Fact]
+    public async Task RunAsync_OnSuccess_ShutsTheSidecarDown_WhenJobSucceeds()
+    {
+        _options.SidecarShutdown = SidecarShutdown.OnSuccess;
+        _job.ExecuteAsync(Arg.Any<CancellationToken>()).Returns(RunSummary.Empty);
+
+        await CreateRunner().RunAsync();
+
+        await _daprClient.Received(1).ShutdownSidecarAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_OnSuccess_ShutsTheSidecarDown_WhenHostCancelsTheJob()
+    {
+        // Cancellation exits 0: the pod is being torn down, not restarted.
+        _options.SidecarShutdown = SidecarShutdown.OnSuccess;
+        using var cts = new CancellationTokenSource();
+        _job.ExecuteAsync(Arg.Any<CancellationToken>())
+            .Returns<Task<RunSummary>>(async _ =>
+            {
+                await cts.CancelAsync();
+                throw new OperationCanceledException(cts.Token);
+            });
+
+        await CreateRunner().RunAsync(cts.Token);
+
+        await _daprClient.Received(1).ShutdownSidecarAsync(Arg.Any<CancellationToken>());
+    }
+
+    public static TheoryData<Exception?, int> FailedRuns => new()
+    {
+        { null, JobExitCodes.JobFailure }, // failed items
+        { new InvalidOperationException("job failed"), JobExitCodes.JobFailure },
+        { new InfrastructureUnavailableException("the internal queue delivered nothing"), JobExitCodes.InfrastructureFailure },
+    };
+
+    [Theory]
+    [MemberData(nameof(FailedRuns))]
+    public async Task RunAsync_OnSuccess_LeavesTheSidecarRunning_WhenTheRunFails(Exception? thrown, int exitCode)
+    {
+        // Arrange: the app is restarted in the same pod and must find the sidecar there.
+        _options.SidecarShutdown = SidecarShutdown.OnSuccess;
+        if (thrown is null)
+            _job.ExecuteAsync(Arg.Any<CancellationToken>()).Returns(new RunSummary(Processed: 1, Failed: 1, Skipped: 0));
+        else
+            _job.ExecuteAsync(Arg.Any<CancellationToken>()).ThrowsAsync(thrown);
+
+        // Act
+        var result = await CreateRunner().RunAsync();
+
+        // Assert
+        Assert.Equal(exitCode, result);
+        await _daprClient.DidNotReceive().ShutdownSidecarAsync(Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_ShutsTheSidecarDown_WhenItemsFail_ByDefault()
+    {
+        _job.ExecuteAsync(Arg.Any<CancellationToken>()).Returns(new RunSummary(Processed: 1, Failed: 1, Skipped: 0));
+
+        await CreateRunner().RunAsync();
+
+        await _daprClient.Received(1).ShutdownSidecarAsync(Arg.Any<CancellationToken>());
+    }
+
     private JobRunner CreateRunner() =>
         new(_daprClient, _job, _options, _loggerFactory);
 }

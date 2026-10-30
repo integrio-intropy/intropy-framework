@@ -7,7 +7,8 @@ namespace Intropy.Framework.Hosting.Jobs;
 
 /// <summary>
 /// Hosts an <see cref="IJob"/>: waits for the Dapr sidecar, executes the job
-/// inside a traced activity, shuts the sidecar down, and maps the outcome to an exit code
+/// inside a traced activity, shuts the sidecar down (see <see cref="JobOptions.SidecarShutdown"/>),
+/// and maps the outcome to an exit code
 /// (see <see cref="JobExitCodes"/>).
 /// </summary>
 public class JobRunner
@@ -74,6 +75,20 @@ public class JobRunner
             return JobExitCodes.InfrastructureFailure;
         }
 
+        var exitCode = JobExitCodes.JobFailure;
+        try
+        {
+            exitCode = await ExecuteJobAsync(ct);
+            return exitCode;
+        }
+        finally
+        {
+            await ShutdownSidecarAsync(exitCode);
+        }
+    }
+
+    private async Task<int> ExecuteJobAsync(CancellationToken ct)
+    {
         using var activity = ActivitySourceProvider.ActivitySource.StartActivity(_options.JobName);
 
         try
@@ -117,9 +132,18 @@ public class JobRunner
             activity?.SetStatus(ActivityStatusCode.Error, e.Message);
             return JobExitCodes.JobFailure;
         }
-        finally
+    }
+
+    private async Task ShutdownSidecarAsync(int exitCode)
+    {
+        if (_options.SidecarShutdown == SidecarShutdown.OnSuccess && exitCode != JobExitCodes.Success)
         {
-            await DaprSidecarManager.ShutdownAsync(_daprClient, _options.SidecarShutdownTimeout, _logger);
+            _logger.LogInformation(
+                "Leaving the Dapr sidecar running after exit code {ExitCode}, for a restart in the same pod",
+                exitCode);
+            return;
         }
+
+        await DaprSidecarManager.ShutdownAsync(_daprClient, _options.SidecarShutdownTimeout, _logger);
     }
 }

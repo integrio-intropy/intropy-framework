@@ -34,6 +34,9 @@ public static class JobServiceCollectionExtensions
         ComponentRegistration.EnsureNoOther(services, "job");
 
         var options = new JobOptions();
+        if (JobOptions.ParseSidecarShutdown(
+                Environment.GetEnvironmentVariable(JobOptions.SidecarShutdownEnvironmentVariable)) is { } shutdown)
+            options.SidecarShutdown = shutdown;
         configureOptions?.Invoke(options);
 
         // The component name is only known once the provider is built (FrameworkOptions is
@@ -49,6 +52,7 @@ public static class JobServiceCollectionExtensions
                     JobName = componentName,
                     SidecarTimeout = options.SidecarTimeout,
                     SidecarShutdownTimeout = options.SidecarShutdownTimeout,
+                    SidecarShutdown = options.SidecarShutdown,
                 }
                 : throw new InvalidOperationException(
                     "JobName is not configured and no component name is registered. Call AddIntropyFramework or set JobName.");
