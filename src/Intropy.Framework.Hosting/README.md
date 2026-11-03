@@ -265,6 +265,30 @@ handles it again. Completion is always awaited, even when the host cancels the s
 
 The source adapter must be registered as a singleton (`AddSourcePort` / `AddFileAdapter` do).
 
+## Large files and memory
+
+A Dapr binding moves a file as one gRPC message, so a file is always held whole in memory. The
+framework keeps the copies down: a read hands on the array behind the gRPC message rather than a
+copy of it, a swept file is read once and kept, and the pipeline passes the same `byte[]` from step
+to step. What remains per hop is the gRPC buffer and, on a write, the Dapr client's copy into the
+request. Neither can be avoided without streaming bindings.
+
+What a component adds is usually larger than all of that:
+
+- **Don't copy the input.** In a deserialize step, use `PayloadBytes.AsArray(input)` instead of
+  `input.ToArray()`. It returns the array behind the payload when there is one. Treat it as read-only.
+- **Don't build a DOM to read a few values.** `XDocument.Load` costs several times the file's size.
+  To pick routing values out of a document, read it with `XmlReader` (or `Utf8JsonReader`) and stop
+  at the last value you need.
+- **Don't round-trip through `string`.** A string is UTF-16, twice the size of an ASCII file. Keep
+  pass-through payloads as `byte[]`.
+
+Every array over 85 KB lands on the large object heap, which is collected only in a gen-2 GC. A
+copy that is already unreachable still counts towards the container's memory until then, so size
+the memory limit at a few times the largest file, not at the file. Files larger than 4 MB also need
+a larger gRPC `MaxReceiveMessageSize` on the `DaprClient` and `dapr.io/max-body-size` on the sidecar, and a
+claim check (`ClaimCheckMode`) to keep them off the broker.
+
 ## Cancellation contract
 
 Every `IFileAdapter` method takes an optional `CancellationToken` last, and the sweep and file
