@@ -163,7 +163,10 @@ internal sealed class GatewayEndpointHandler
         if (request.ContentLength > limit)
             return null;
 
-        using var buffer = new MemoryStream();
+        // Sized up front when the length is declared: growing by doubling leaves a trail of
+        // discarded buffers on the large object heap, and an exact buffer is one PayloadBytes can
+        // hand on without copying.
+        using var buffer = new MemoryStream(request.ContentLength is { } length ? (int)length : 0);
         var chunk = new byte[16 * 1024];
         int read;
         while ((read = await request.Body.ReadAsync(chunk, ct)) > 0)

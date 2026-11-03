@@ -151,6 +151,38 @@ public class FileAdapterRequestTests
         Assert.Same(exception, await Assert.ThrowsAsync<IOException>(() => adapter.DeleteAsync("order.json")));
     }
 
+    [Theory]
+    [InlineData("Local")]
+    [InlineData("Sftp")]
+    [InlineData("Smb")]
+    [InlineData("AzureBlob")]
+    public async Task GetContent_ReturnsTheResponseArray_WithoutCopyingIt(string kind)
+    {
+        using var client = Substitute.For<DaprClient>();
+        var content = new byte[] { 1, 2, 3 };
+        client.InvokeBindingAsync(Arg.Any<BindingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call => new BindingResponse(call.Arg<BindingRequest>(), content, new Dictionary<string, string>()));
+        var adapter = Create(kind, client, new FileAdapterOptions("source"));
+
+        Assert.Same(content, await adapter.GetContentAsync("order.json"));
+    }
+
+    [Fact]
+    public async Task GetContent_CopiesAResponseThatIsASlice()
+    {
+        using var client = Substitute.For<DaprClient>();
+        var buffer = new byte[] { 0, 1, 2, 3, 0 };
+        client.InvokeBindingAsync(Arg.Any<BindingRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call => new BindingResponse(call.Arg<BindingRequest>(), buffer.AsMemory(1, 3),
+                new Dictionary<string, string>()));
+        var adapter = Create("Local", client, new FileAdapterOptions("source"));
+
+        var content = await adapter.GetContentAsync("order.json");
+
+        Assert.Equal(new byte[] { 1, 2, 3 }, content);
+        Assert.NotSame(buffer, content);
+    }
+
     internal static IFileAdapter Create(string kind, DaprClient client, FileAdapterOptions options) => kind switch
     {
         "Local" => new LocalFileAdapter(client, options),

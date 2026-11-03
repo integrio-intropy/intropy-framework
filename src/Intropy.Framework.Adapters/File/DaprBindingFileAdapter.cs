@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using Dapr.Client;
 using Intropy.Framework.Adapters.Common;
@@ -111,7 +112,7 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
             var request = BuildPathRequest(GetOperation, _options.BasePath, fileName, activity);
             AddGetMetadata(request.Metadata);
             var response = await DaprClient.InvokeBindingAsync(request, ct);
-            var content = response.Data.ToArray();
+            var content = Unwrap(response.Data);
             activity?.SetTag("file.size", content.Length);
             return content;
         }, ct);
@@ -197,6 +198,18 @@ public abstract class DaprBindingFileAdapter : IFileAdapter
         activity.SetTag("error.type", e.GetType().FullName);
         activity.SetStatus(ActivityStatusCode.Error, e.Message);
     }
+
+    /// <summary>The array behind the response's protobuf <c>ByteString</c>, which spans exactly the
+    /// file, rather than a copy of it: for a large file that copy is the size of the file again.
+    /// Copies only when the memory is not a whole array. The same rule as
+    /// <c>Intropy.Framework.Core.Common.PayloadBytes</c>, which this package does not reference.</summary>
+    private static byte[] Unwrap(ReadOnlyMemory<byte> data) =>
+        MemoryMarshal.TryGetArray(data, out var segment)
+        && segment.Array is { } array
+        && segment.Offset == 0
+        && segment.Count == array.Length
+            ? array
+            : data.ToArray();
 
     private static List<FileEntry> FilterFiles(List<FileEntry> files, Regex regex) =>
         files.Where(file => regex.IsMatch(file.Name)).ToList();

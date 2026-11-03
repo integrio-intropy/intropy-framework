@@ -64,7 +64,7 @@ public class DaprServiceInvoker<TCtx>(
 
         // Build and send the service invocation request through the Dapr sidecar
         using var request = daprClient.CreateInvokeMethodRequest(HttpMethod.Post, appId, MethodName);
-        request.Content = new ByteArrayContent(bytes.ToArray());
+        request.Content = new ReadOnlyMemoryContent(bytes);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType.MediaType);
 
         using var response = await httpClient.SendAsync(request, ct);
