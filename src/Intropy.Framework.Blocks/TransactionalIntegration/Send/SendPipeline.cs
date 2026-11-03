@@ -10,6 +10,7 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Send;
 /// <summary>
 /// A pipeline used on the receiving end of a message based integration flow. It follows these steps:
 /// <list type="number">
+///   <item>Archive (optional, archive mode OnReceipt): copies the dequeued payload to the archive store</item>
 ///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
 ///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Extract: extracts extra data that is required during processing. E.g. ID lookups, enrich data, etc.</item>
@@ -18,8 +19,11 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Send;
 ///   <item>Serialize: serializes the output POCO into bytes</item>
 ///   <item>Send: sends the bytes to the destination</item>
 ///   <item>Record idempotency (optional): records that the data has been processed</item>
+///   <item>Archive incident (optional): makes sure an incident's payload is archived, and names the copy on the incident</item>
 ///   <item>Route business incidents (optional): routes any business incidents that occurred during the execution</item>
 /// </list>
+/// A Transactional Integration archives on this side only: it receives exactly the bytes the receive
+/// side enqueued, and the receive side cannot raise a business incident.
 /// </summary>
 /// <param name="pipelineName">The name of the pipeline. Used for tracing purposes.</param>
 /// <param name="logger">An instance of <see cref="ILogger"/></param>
@@ -32,6 +36,8 @@ namespace Intropy.Framework.Blocks.TransactionalIntegration.Send;
 /// <param name="idempotencyChecker">Optional standard or custom idempotency check step. Skipped when null.</param>
 /// <param name="idempotencyRecorder">Optional standard or custom idempotency record step. Skipped when null.</param>
 /// <param name="businessIncidentRouter">Optional standard or custom business incident route step. Skipped when null.</param>
+/// <param name="archive">Optional archive the dequeued payload is copied to: on receipt, on a
+/// business incident, or both (see <see cref="ArchiveMode"/>). Skipped when null.</param>
 /// <typeparam name="TInput">The type of the POCO that enters the pipeline.</typeparam>
 /// <typeparam name="TOutput">The type of the POCO that exists the pipeline.</typeparam>
 /// <typeparam name="TCtx">The type of the context using in the pipeline.</typeparam>
@@ -46,7 +52,8 @@ public class SendPipeline<TInput, TOutput, TCtx>(
     SendStep<TCtx> sender,
     IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
     IdempotencyRecordStep<byte[], TCtx>? idempotencyRecorder,
-    BusinessIncidentRouteStep<byte[], TCtx>? businessIncidentRouter) : ISendPipeline<TCtx> where TCtx : Context
+    BusinessIncidentRouteStep<byte[], TCtx>? businessIncidentRouter,
+    ArchivePolicy? archive = null) : ISendPipeline<TCtx> where TCtx : Context
 {
     /// <summary>
     /// Executes the pipeline
@@ -60,6 +67,7 @@ public class SendPipeline<TInput, TOutput, TCtx>(
     {
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline
                 .Start(input, context, ct)
+                .AddOptionalStep(ArchiveSteps.OnReceipt<TCtx>(archive, logger))
                 .AddStep(deserializer)
                 .AddSteps(extractors)
                 .AddOptionalStep(idempotencyChecker)
@@ -68,6 +76,7 @@ public class SendPipeline<TInput, TOutput, TCtx>(
                 .AddStep(serializer)
                 .AddStep(sender)
                 .AddOptionalStep(idempotencyRecorder)
+                .AddOptionalFinalizer(ArchiveSteps.OnIncident<byte[], TCtx>(archive, input))
                 .AddOptionalFinalizer(businessIncidentRouter),
             pipelineName: pipelineName,
             logger: logger,

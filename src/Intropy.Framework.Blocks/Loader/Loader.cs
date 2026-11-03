@@ -12,6 +12,7 @@ namespace Intropy.Framework.Blocks.Loader;
 /// <summary>
 /// A pipeline template used for loader components. It follows these steps:
 /// <list type="number">
+///   <item>Archive (optional, archive mode OnReceipt): copies the received payload to the archive store</item>
 ///   <item>Deserialize: deserializes the message's payload bytes into a POCO</item>
 ///   <item>Extract: extracts data from the input</item>
 ///   <item>Validate: validates the POCO</item>
@@ -20,6 +21,7 @@ namespace Intropy.Framework.Blocks.Loader;
 ///   <item>Send: sends the data to the external system</item>
 ///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Send receipt (optional): sends a receipt after a successful load</item>
+///   <item>Archive incident (optional): makes sure an incident's payload is archived, and names the copy on the incident</item>
 ///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
 /// </list>
 /// </summary>
@@ -44,6 +46,8 @@ namespace Intropy.Framework.Blocks.Loader;
 /// <param name="idempotencyRecorder">Optional step that records successful processing. Skipped when null.</param>
 /// <param name="businessIncidentRouter">Finalizer that routes business incidents</param>
 /// <param name="receiptSender">Optional step that sends a receipt after a successful load</param>
+/// <param name="archive">Optional archive the received payload is copied to: on receipt, on a
+/// business incident, or both (see <see cref="ArchiveMode"/>). Skipped when null.</param>
 /// <typeparam name="TInput">The input type (deserialized from the payload)</typeparam>
 /// <typeparam name="TOutput">The output type (sent to external system)</typeparam>
 /// <typeparam name="TCtx">The context type</typeparam>
@@ -58,7 +62,8 @@ public class Loader<TInput, TOutput, TCtx>(
     IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
     IdempotencyRecordStep<TOutput, TCtx>? idempotencyRecorder,
     BusinessIncidentRouteStep<TOutput, TCtx> businessIncidentRouter,
-    SendStep<TOutput, TCtx>? receiptSender = null)
+    SendStep<TOutput, TCtx>? receiptSender = null,
+    ArchivePolicy? archive = null)
     where TCtx : Context
 {
     /// <summary>
@@ -81,6 +86,7 @@ public class Loader<TInput, TOutput, TCtx>(
             {
                 var pipeline = Pipeline
                     .Start(input, context, ct)
+                    .AddOptionalStep(ArchiveSteps.OnReceipt<TCtx>(archive, logger))
                     .AddStep(deserializer)
                     .AddSteps(extractors)
                     .AddStep(validator)
@@ -92,7 +98,9 @@ public class Loader<TInput, TOutput, TCtx>(
                 if (receiptSender != null)
                     pipeline = pipeline.AddStep(receiptSender);
 
-                return await pipeline.AddFinalizer(businessIncidentRouter);
+                return await pipeline
+                    .AddOptionalFinalizer(ArchiveSteps.OnIncident<TOutput, TCtx>(archive, input))
+                    .AddFinalizer(businessIncidentRouter);
             },
             pipelineName: pipelineName,
             logger: logger,

@@ -247,6 +247,15 @@ Roll back in the reverse order, which is why `Never` is a mode rather than an ab
 Removing the store first fails the messages still carrying pointers; they redeliver, dead-letter, and
 their payloads are stranded.
 
+## Archive
+
+With an archive store registered (`AddArchiveStore`), the send side copies the dequeued message to
+the archive before an incident on it is routed, and names the copy on the incident (`dataref`). In
+`OnReceipt` mode every message is archived as the send pipeline starts. The receive side archives
+nothing: the send side receives exactly the bytes it enqueued. Only send routes archive; a send
+pipeline the caller registers with `AddSendPipeline` is built outside the framework's reach. See
+[Archive](../concepts/archive.md).
+
 ## Several source ports and send routes
 
 One integration can sweep several source ports and send each port's files through the send

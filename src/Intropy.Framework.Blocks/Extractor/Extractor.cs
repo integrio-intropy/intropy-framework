@@ -11,6 +11,7 @@ namespace Intropy.Framework.Blocks.Extractor;
 /// <summary>
 /// A pipeline template used for extractor components. It follows these steps:
 /// <list type="number">
+///   <item>Archive (optional, archive mode OnReceipt): copies the received payload to the archive store</item>
 ///   <item>Deserialize: deserializes the raw bytes into a POCO</item>
 ///   <item>Validate: validates the POCO</item>
 ///   <item>Extractor(s): Extract additional information from external sources</item>
@@ -19,6 +20,7 @@ namespace Intropy.Framework.Blocks.Extractor;
 ///   <item>Serialize: serializes the output POCO into string</item>
 ///   <item>Send: sends the string data to the destination</item>
 ///   <item>Record idempotency (optional): records that the data has been processed</item>
+///   <item>Archive incident (optional): makes sure an incident's payload is archived, and names the copy on the incident</item>
 ///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
 /// </list>
 /// </summary>
@@ -33,6 +35,8 @@ namespace Intropy.Framework.Blocks.Extractor;
 /// <param name="idempotencyChecker">Optional idempotency check step. Skipped when null.</param>
 /// <param name="idempotencyRecorder">Optional idempotency record step. Skipped when null.</param>
 /// <param name="businessIncidentRouter"></param>
+/// <param name="archive">Optional archive the received payload is copied to: on receipt, on a
+/// business incident, or both (see <see cref="ArchiveMode"/>). Skipped when null.</param>
 /// <typeparam name="TInput"></typeparam>
 /// <typeparam name="TOutput"></typeparam>
 /// <typeparam name="TCtx"></typeparam>
@@ -47,7 +51,8 @@ public class Extractor<TInput, TOutput, TCtx>(
     SendStep<TCtx> sender,
     IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
     IdempotencyRecordStep<CloudEvent, TCtx>? idempotencyRecorder,
-    BusinessIncidentRouteStep<CloudEvent, TCtx> businessIncidentRouter)
+    BusinessIncidentRouteStep<CloudEvent, TCtx> businessIncidentRouter,
+    ArchivePolicy? archive = null)
     where TCtx : Context
 {
     /// <summary>
@@ -66,6 +71,7 @@ public class Extractor<TInput, TOutput, TCtx>(
     {
         return await PipelineTracing.ExecuteWithTracing(async () => await Pipeline
                 .Start(input, context, ct)
+                .AddOptionalStep(ArchiveSteps.OnReceipt<TCtx>(archive, logger))
                 .AddStep(deserializer)
                 .AddStep(validator)
                 .AddSteps(extractors)
@@ -74,6 +80,7 @@ public class Extractor<TInput, TOutput, TCtx>(
                 .AddStep(serializer)
                 .AddStep(sender)
                 .AddOptionalStep(idempotencyRecorder)
+                .AddOptionalFinalizer(ArchiveSteps.OnIncident<CloudEvent, TCtx>(archive, input))
                 .AddFinalizer(businessIncidentRouter),
             pipelineName: pipelineName,
             logger: logger,

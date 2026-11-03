@@ -50,6 +50,7 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
     private IdempotencyRecordStep<CloudEvent, TCtx>? _idempotencyRecorder;
     private BusinessIncidentRouteStep<CloudEvent, TCtx>? _businessIncidentRouter;
+    private ArchivePolicy? _archive;
 
     /// <summary>
     /// Creates a new instance of <see>
@@ -519,6 +520,24 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures the archive: the received payload is copied to the archive store on receipt, on a
+    /// business incident, or both, as <paramref name="policy"/> says. Optional; without it nothing is
+    /// archived.
+    /// </summary>
+    /// <remarks>
+    /// Internal for the same reason as the claim check: archiving has one control surface, and it is
+    /// configuration. The hosting layer calls this from the registered archive store
+    /// (<c>AddArchiveStore</c>) and the component's <c>Archive</c> settings.
+    /// </remarks>
+    /// <param name="policy">The archive, or <see langword="null"/> for none.</param>
+    /// <returns>The builder for method chaining.</returns>
+    internal ExtractorBuilder<TInput, TOutput, TCtx> WithArchive(ArchivePolicy? policy)
+    {
+        _archive = policy;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="Extractor{TInput,TOutput,TContext}"/>.
     /// </summary>
     /// <returns>A configured instance of <see cref="Extractor{TInput,TOutput,TContext}"/></returns>
@@ -563,7 +582,8 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
             _sourcePort is null ? sender : new SourcePortStamp<TCtx>(sender, _sourcePort),
             _idempotencyChecker,
             _idempotencyRecorder,
-            _businessIncidentRouter
+            _businessIncidentRouter,
+            _archive
         );
     }
 

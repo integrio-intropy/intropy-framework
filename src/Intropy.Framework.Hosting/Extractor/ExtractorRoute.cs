@@ -2,6 +2,7 @@ using CloudNative.CloudEvents;
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
 using Intropy.Framework.Hosting.Messaging;
 using Microsoft.Extensions.DependencyInjection;
@@ -60,11 +61,13 @@ internal sealed class DeclaredExtractorRoute<TInput, TOutput, TCtx>(
     {
         var name = match?.Describe();
         return Run(RouteComposition.Build("Extractor", name, componentName, () =>
-            // The claim check goes on after the route's own configuration, the same as for an
-            // extractor without routes: every route of a component shares its claim-check settings.
+            // The claim check and the archive go on after the route's own configuration, the same as
+            // for an extractor without routes: every route of a component shares their settings.
             ExtractorClaimCheck.Apply(
                 configurePipeline(ExtractorBuilder<TInput, TOutput, TCtx>.Create(
                         name is null ? $"{componentName}.Process" : $"{componentName}.Process.{name}", scope, port),
-                    scope), scope).Build()));
+                    scope), scope)
+                .WithArchive(ArchiveStoreServiceCollectionExtensions.PolicyFor(scope))
+                .Build()));
     }
 }
