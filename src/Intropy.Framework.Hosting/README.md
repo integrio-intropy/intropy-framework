@@ -265,6 +265,18 @@ handles it again. Completion is always awaited, even when the host cancels the s
 
 The source adapter must be registered as a singleton (`AddSourcePort` / `AddFileAdapter` do).
 
+### Polled sources (StatefulSweep)
+
+A port can also be read rather than listed: register an `IPolledSource` keyed by the port name
+(`Intropy.Framework.Hosting.StatefulSweeps`) instead of an `IFileAdapter`, and the port is swept by
+`StatefulSweep`. Each run reads the source once into one message, which goes through the same
+pipeline as a file. For a source with a cursor, the sweep keeps `committed`/`pending` in an
+`ICursorStore` (by default a Dapr state store), pins the upper bound before the message is handed
+over, sets the idempotency key `{port}:{committed}:{pending}` in the context metadata
+(`SourceContextKeys.IdempotencyKey`), and commits only after the message is handled.
+`Intropy.Framework.Adapters.Sql` is the first such source; see
+[SQL Source](../../docs/adapters/sql-source.md).
+
 ## Large files and memory
 
 A Dapr binding moves a file as one gRPC message, so a file is always held whole in memory. The

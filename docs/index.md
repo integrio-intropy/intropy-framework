@@ -6,7 +6,7 @@
 
 Intropy Framework provides a structured way to build integration pipelines that move data between systems. Every pipeline is a chain of typed steps — deserialize, validate, transform, serialize, send — with built-in OpenTelemetry tracing and a result type system that enforces separation between business and technical failures.
 
-The framework ships as five packages. **Core** provides the pipeline engine and step abstractions you can use to build any pipeline from scratch. **Blocks** provides pre-composed pipeline templates for common integration patterns like Transactional Integration and Extractor. **Adapters** provides file adapters for SFTP, SMB file shares, local file systems, and Azure Blob Storage via Dapr bindings. **Hosting** provides runtime orchestration for the Transactional Integration lifecycle (sidecar lifecycle, message subscription, idle timeout). **EventDispatcher** provides attribute-based routing of CloudEvents to typed handler classes.
+The framework ships as six packages. **Core** provides the pipeline engine and step abstractions you can use to build any pipeline from scratch. **Blocks** provides pre-composed pipeline templates for common integration patterns like Transactional Integration and Extractor. **Adapters** provides file adapters for SFTP, SMB file shares, local file systems, and Azure Blob Storage via Dapr bindings, and **Adapters.Sql** reads a SQL Server query as a source port. **Hosting** provides runtime orchestration for the Transactional Integration lifecycle (sidecar lifecycle, message subscription, idle timeout). **EventDispatcher** provides attribute-based routing of CloudEvents to typed handler classes.
 
 ## Installation
 
@@ -69,6 +69,7 @@ Each step is a class you implement by overriding a single `ExecuteAsync` method.
 - **Block pipelines** — pre-composed Transactional Integration and Extractor patterns with DI registration. [Learn more](blocks/transactional-integration.md)
 - **Idempotency and business incident routing** — built-in cross-cutting concerns via builder configuration. [Learn more](core/builders.md)
 - **File adapters** — SFTP, SMB, local file, and Azure Blob Storage access through Dapr bindings. [Learn more](adapters/file-adapters.md)
+- **SQL source** — a SQL Server query as a source port, as a full export or a delta with a watermark. [Learn more](adapters/sql-source.md)
 - **Event dispatcher** — attribute-based routing of CloudEvents to typed handler classes. [Learn more](event-dispatcher/event-dispatcher.md)
 
 ## Documentation
@@ -80,6 +81,7 @@ Each step is a class you implement by overriding a single `ExecuteAsync` method.
 | [Core](core/pipeline.md) | Pipeline engine, builders, step types, and result types |
 | [Blocks](blocks/transactional-integration.md) | Pre-composed pipeline blocks (Transactional Integration, Extractor, Loader) |
 | [Adapters](adapters/file-adapters.md) | File adapters (SFTP, SMB, local, Azure Blob) via Dapr bindings |
+| [SQL Source](adapters/sql-source.md) | A SQL Server query as a source port (full export or delta) |
 | [Event Dispatcher](event-dispatcher/event-dispatcher.md) | Attribute-based routing of CloudEvents to typed handlers |
 
 ## Requirements

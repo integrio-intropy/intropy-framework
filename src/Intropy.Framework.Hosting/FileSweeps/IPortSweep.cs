@@ -14,7 +14,8 @@ internal interface IPortSweep
     string Port { get; }
 
     /// <summary>Checks, before any file is listed, that the port can be swept: its
-    /// <see cref="IFileAdapter"/> is registered and its pipeline can be composed.</summary>
+    /// <see cref="IFileAdapter"/> (or its polled source) is registered and its pipeline can be
+    /// composed.</summary>
     /// <exception cref="InvalidOperationException">The port cannot be swept.</exception>
     Task ValidateAsync();
 

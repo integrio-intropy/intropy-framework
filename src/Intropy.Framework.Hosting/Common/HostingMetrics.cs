@@ -37,6 +37,9 @@ internal static class HostingMetrics
     private static readonly Counter<long> SweptFiles = Meter.CreateCounter<long>(
         "intropy.sweep.files", "{file}", "Source files swept, by outcome.");
 
+    private static readonly Counter<long> PolledReads = Meter.CreateCounter<long>(
+        "intropy.sweep.reads", "{read}", "Messages read from polled source ports (such as a database query), by outcome.");
+
     private static readonly Counter<long> ConsumedMessages = Meter.CreateCounter<long>(
         "messaging.client.consumed.messages", "{message}",
         "Messages the sidecar delivered to a subscribing block, by outcome.");
@@ -86,6 +89,14 @@ internal static class HostingMetrics
 
     internal static void RecordSweptFile(string componentName, string sourcePort, FileOutcome outcome) =>
         SweptFiles.Add(1, new TagList
+        {
+            { "intropy.component.name", componentName },
+            { "intropy.source.port", sourcePort },
+            { "intropy.sweep.outcome", OutcomeName(outcome) }
+        });
+
+    internal static void RecordPolledRead(string componentName, string sourcePort, FileOutcome outcome) =>
+        PolledReads.Add(1, new TagList
         {
             { "intropy.component.name", componentName },
             { "intropy.source.port", sourcePort },

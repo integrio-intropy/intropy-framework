@@ -466,6 +466,27 @@ public class ExtractorBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures idempotency keyed on the range a polled source read, from the context metadata
+    /// (<see cref="SourceContextKeys.IdempotencyKey"/>) instead of the payload: use it for an extractor
+    /// whose source is a database query with a delta (or another source with a cursor). A run that
+    /// publishes the same range again after a failure is cancelled as a duplicate.
+    /// </summary>
+    /// <remarks>
+    /// The key already names the source port, so it is never prefixed with it
+    /// (<see cref="IdempotencyScope.Entity"/>). The date is when the source was read
+    /// (<see cref="SourceContextKeys.ReceivedAt"/>). The hash is constant unless
+    /// <paramref name="hashGenerator"/> is given, so the range alone decides. An item without the key
+    /// (from a full export, which needs no idempotency) fails the check.
+    /// </remarks>
+    /// <param name="hashGenerator">Optional hash of the payload, to also tell apart re-reads of the
+    /// same range whose content changed.</param>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when <see cref="IIdempotencyServiceClient"/> is not registered in the service provider.</exception>
+    public ExtractorBuilder<TInput, TOutput, TCtx> WithSourceIdempotency(Func<TInput, string>? hashGenerator = null) =>
+        WithIdempotency((_, context) => SourceIdempotency.Id(context), (_, context) => SourceIdempotency.Date(context),
+            hashGenerator ?? (_ => SourceIdempotency.RangeHash), IdempotencyScope.Entity);
+
+    /// <summary>
     /// Configures the claim check: a payload too large for the broker is written to
     /// <paramref name="store"/> before the event is published, and the event carries a pointer to it
     /// (<c>dataref</c>) instead of the payload. Optional; without it every payload rides inside its

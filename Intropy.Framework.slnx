@@ -1,4 +1,10 @@
 <Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Intropy.Framework.Adapters.Sql/Intropy.Framework.Adapters.Sql.csproj" />
+  </Folder>
+  <Folder Name="/test/">
+    <Project Path="test/Intropy.Framework.Adapters.Sql.Test/Intropy.Framework.Adapters.Sql.Test.csproj" />
+  </Folder>
   <Project Path="src\Intropy.Framework.Adapters\Intropy.Framework.Adapters.csproj" />
   <Project Path="src\Intropy.Framework.Blocks\Intropy.Framework.Blocks.csproj" />
   <Project Path="src\Intropy.Framework.Components\Intropy.Framework.Components.csproj" />
