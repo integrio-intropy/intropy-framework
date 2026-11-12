@@ -1,7 +1,9 @@
 using System.Text;
 using Intropy.Framework.Adapters.Common;
 using Intropy.Framework.Adapters.File;
+using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Intropy.Framework.Hosting.Test.FileSweeps;
@@ -24,6 +26,17 @@ public class SweptFileTests
         Assert.Equal("order-1.json", Encoding.UTF8.GetString(archived));
         Assert.Equal(text, textAgain);
         Assert.Equal(1, source.Fetches);
+    }
+
+    [Fact]
+    public void AFile_IsAnItemIdentifiedByItsName_AndRecordsItsNameAsContextMetadata()
+    {
+        var file = new SweptFile("order-1.json", "source", new CountingAdapter([]),
+            new ServiceCollection().BuildServiceProvider());
+
+        Assert.Equal("order-1.json", file.Id);
+        Assert.Equal("source", file.Port);
+        Assert.Equal(new Dictionary<string, string> { [SourceContextKeys.FileName] = "order-1.json" }, file.Metadata);
     }
 
     [Fact]

@@ -5,6 +5,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Hosting.Test.Messaging;
 using Intropy.Framework.Hosting.TransactionalIntegration;
@@ -208,7 +209,7 @@ public class SendRouteTests
     }
 
     private static DeclaredSendRoute<string, string, OrderContext> Declared(params string[] ports) =>
-        new(new FileMatch(ports), (send, _) => send,
+        new(new PortMatch(ports), (send, _) => send,
             (metadata, isRetry) => new OrderContext(metadata, isRetry));
 
     /// <summary>A route whose match is never true, so every message reaches the unrouted path.</summary>

@@ -8,7 +8,9 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Extractor;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
+using Intropy.Framework.Hosting.Test.Sweeps;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -113,9 +115,40 @@ public class ExtractorDefinitionTests
         });
 
         await using var provider = services.BuildServiceProvider();
-        var sourcePort = provider.GetRequiredService<SourcePort>();
+        var sourcePort = Assert.IsType<FileSourcePort>(provider.GetRequiredService<SourcePort>());
         Assert.Equal("orders-inbox", sourcePort.Name);
         Assert.Same(completion, sourcePort.Completion);
+    }
+
+
+    [Fact]
+    public async Task ADeclaredSourceOfAnyKind_IsRegistered()
+    {
+        var services = BaseServices();
+        var feed = new ListedSourcePort("feed", []);
+
+        services.AddExtractor(new ExtractorDefinition<int, int, Context> { Source = feed, Pipeline = (_, _) => null! });
+
+        await using var provider = services.BuildServiceProvider();
+        Assert.Same(feed, provider.GetRequiredService<SourcePort>());
+    }
+
+    [Fact]
+    public void ASourceDeclaredTwice_FailsAtRegistration()
+    {
+        var services = BaseServices();
+        var count = services.Count;
+
+        var error = Assert.Throws<InvalidOperationException>(() => services.AddExtractor(
+            new ExtractorDefinition<int, int, Context>
+            {
+                Source = new ListedSourcePort("feed", []),
+                SourcePort = "orders-inbox",
+                Pipeline = (_, _) => null!,
+            }));
+
+        Assert.Contains("Source/SourcePort", error.Message);
+        Assert.Equal(count, services.Count);
     }
 
     [Fact]

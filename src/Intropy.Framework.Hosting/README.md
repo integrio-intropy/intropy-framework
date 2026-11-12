@@ -222,22 +222,103 @@ component that uses it: it lists the source, hands each file to a handler inside
 scope, and completes the file — `FileCompletion.Delete` or `FileCompletion.Archive(basePath)` —
 only after the handler reports it `Consumed` or a `Duplicate`. A `Failed` or throwing file stays
 for the next run and is counted; delivery is at-least-once. The sweep is in the
-`Intropy.Framework.Hosting.FileSweeps` namespace; the adapters behind the ports (SFTP, SMB, local, Azure
+`Intropy.Framework.Hosting.FileSweeps` namespace and its outcome (`SweepOutcome`) in
+`Intropy.Framework.Hosting.Sweeps`; the adapters behind the ports (SFTP, SMB, local, Azure
 Blob) come from `Intropy.Framework.Adapters`:
 
 ```csharp
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 
 var sweep = new FileSweep(provider, "orders-source", "order-import", FileCompletion.Archive("archive"), loggerFactory);
 var summary = await sweep.SweepAsync(async (file, ct) =>
 {
     var content = await file.ReadAsync();
-    return await PublishAsync(content, ct) ? FileOutcome.Consumed : FileOutcome.Failed;
+    return await PublishAsync(content, ct) ? SweepOutcome.Consumed : SweepOutcome.Failed;
 }, cancellationToken);
 ```
 
 `SweepAsync` returns a `RunSummary`: consumed files as `Processed`, duplicates as `Skipped`,
 and files left in place as `Failed`.
+
+### Sources of other kinds
+
+Files are one kind of source. A component's source ports are `SourcePort`s
+(`Intropy.Framework.Hosting.Sweeps`): `FileSourcePort` is the file kind, and a package can add
+its own kind next to it. Every way of declaring a source port takes any kind, with a shorthand
+for a file port:
+
+| Declares | Any kind | File shorthand |
+|---|---|---|
+| A component's ports, with routes | `sources.Port(sourcePort)` | `sources.Port(name, completion)` |
+| A component's single port | `AddSourcePort(sourcePort)` | `AddSourcePort(name, completion)` |
+| A definition's single port | `Source = sourcePort` | `SourcePort = name, Completion = completion` |
+
+Routes match on the port name, whatever kind the port is.
+
+A kind of source supplies only what is its own: listing its entries, the item for an entry
+(how it is read, and what it records in the context), completing a handled item, and,
+optionally, validating the port. It derives from `SourcePort` and creates a
+`SourceSweep<TEntry, TItem>`, which follows every rule a framework sweep follows — the same base
+`FileSweep` is built on:
+
+- nothing is listed when the host has already cancelled; entries are handled one after another,
+  as they are listed, with the host's cancellation checked before each, and the sweep stops after
+  an interrupted item;
+- each item has its own scope and trace (a `process <port>` span linked to the job's, tagged with
+  the port, the item and its outcome, and an error when the item stays), its logging scope, and an
+  `intropy.sweep.items` count by outcome;
+- a failed or throwing item, and one cancelled without a host cancellation, fails alone and stays
+  in the source; an item is completed only after `Consumed` or `Duplicate`, completion is always
+  awaited, and a completion that throws keeps the item;
+- a listing failure is never an empty successful sweep: it propagates once the items already
+  started are recorded.
+
+```csharp
+public sealed record InboxSourcePort(string Name, Inbox Inbox) : SourcePort(Name)
+{
+    public override ISourceSweep CreateSweep(SourceSweepContext context) => new InboxSweep(this, context);
+
+    private sealed class InboxSweep(InboxSourcePort source, SourceSweepContext context)
+        : SourceSweep<InboxMessage, InboxItem>(context, source.Name)
+    {
+        protected override IAsyncEnumerable<InboxMessage> ListAsync(CancellationToken ct) => source.Inbox.ListAsync(ct);
+
+        protected override string IdOf(InboxMessage message) => message.Id;
+
+        protected override InboxItem CreateItem(InboxMessage message, IServiceProvider scope) =>
+            new(message, Port, scope); // a SweptItem: Id, ReadAsync, Metadata
+
+        protected override Task CompleteAsync(InboxItem item, SweepOutcome outcome) =>
+            source.Inbox.AcknowledgeAsync(item.Id);
+    }
+}
+```
+
+`ListAsync` may stream (pages of an API, for example): each entry is handled before the next is
+requested. `TelemetryOf` adds span tags and logging-scope entries of the source's own (a file adds
+`file.name` and `FileName`), and `OnItemSwept` sees each final outcome (a file counts it on
+`intropy.sweep.files`). The framework's own keys always win: a source's tags cannot replace
+`intropy.source.port`, `intropy.source.item` or `intropy.sweep.outcome`, nor its scope entries
+`SourcePort` or `SourceItem`.
+
+`IdOf` and `TelemetryOf` are part of creating the entry's item, so they fail the way `CreateItem`
+does: a throw, a null or blank identity, or a cancellation the host did not request fails only
+that entry, which stays in the source while the sweep goes on; a host-requested cancellation
+interrupts the sweep. An entry with no identity is traced and logged as `entry#{n}` (its 1-based
+position in the listing). That name is for diagnostics only: the entry's handler and completion
+never run.
+
+A source that does not fit "list, then handle each entry" implements `ISourceSweep` itself and
+handles each item with a `SweepItemRunner`, the per-item engine the base uses; it then owns the
+loop's rules (cancellation between items, stopping after an interrupted item, listing failures,
+and `Finish()`).
+
+The pieces also combine the other way: a custom `IJob` can sweep any source port with a handler
+of its own, `sourcePort.CreateSweep(context).SweepAsync(handler, ct)`, and keep the source's
+listing and completion. `test/Intropy.Framework.Hosting.Extensibility.Test` builds both against
+the public API only, and checks a non-file source's failures, duplicates, cancellation, listing
+failures, empty content and tracing.
 
 ### Completion modes
 
@@ -251,7 +332,7 @@ is read once and kept, and `file.Services` is the file's scope), and whether the
 ```csharp
 public sealed class ArchiveToOtherStore(string key) : FileCompletion
 {
-    public override async Task CompleteAsync(IFileAdapter source, SweptFile file, FileOutcome outcome)
+    public override async Task CompleteAsync(IFileAdapter source, SweptFile file, SweepOutcome outcome)
     {
         var archive = file.Services.GetRequiredKeyedService<IFileAdapter>(key);
         await archive.WriteAsync(file.Name, await file.ReadAsync());

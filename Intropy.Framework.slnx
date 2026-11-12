@@ -8,6 +8,7 @@
   <Project Path="src\Intropy.Framework.Testing\Intropy.Framework.Testing.csproj" />
   <Project Path="test\Intropy.Framework.Blocks.Test\Intropy.Framework.Blocks.Test.csproj" />
   <Project Path="test\Intropy.Framework.Hosting.Test\Intropy.Framework.Hosting.Test.csproj" />
+  <Project Path="test\Intropy.Framework.Hosting.Extensibility.Test\Intropy.Framework.Hosting.Extensibility.Test.csproj" />
   <Project Path="test\Intropy.Framework.Adapters.Test\Intropy.Framework.Adapters.Test.csproj" />
   <Project Path="test\Intropy.Framework.EventDispatcher.Test\Intropy.Framework.EventDispatcher.Test.csproj" />
   <Project Path="test\Intropy.Framework.Components.Test\Intropy.Framework.Components.Test.csproj" />

@@ -1,20 +1,21 @@
 using Intropy.Framework.Adapters.File;
+using Intropy.Framework.Hosting.FileSweeps;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Intropy.Framework.Hosting.FileSweeps;
+namespace Intropy.Framework.Hosting.Sweeps;
 
 /// <summary>
-/// Declares a component's source port: the file adapter behind it, keyed by the port name and
-/// configured from <c>Ports:&lt;port&gt;</c>, and which port is the component's source.
+/// Declares a component's single source port: a file port (its file adapter keyed by the port
+/// name and configured from <c>Ports:&lt;port&gt;</c>), or a source port of any kind.
 /// </summary>
 public static class SourcePortServiceCollectionExtensions
 {
     /// <summary>
     /// Registers the port the component sweeps: its file adapter, from <c>Ports:&lt;port&gt;</c>, and
-    /// the port as the component's <see cref="SourcePort"/>. This overload declares a component's
+    /// the port as the component's <see cref="FileSourcePort"/>. This overload declares a component's
     /// single source port; a component with several declares them with its sources
-    /// (<see cref="FileSources"/>, by the routes overloads of AddExtractor and
+    /// (<see cref="Sources"/>, by the routes overloads of AddExtractor and
     /// AddTransactionalIntegration).
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
@@ -31,10 +32,10 @@ public static class SourcePortServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Declares <paramref name="port"/> the component's <see cref="SourcePort"/> without registering
+    /// Declares <paramref name="port"/> the component's <see cref="FileSourcePort"/> without registering
     /// its adapter: register the <see cref="IFileAdapter"/> keyed by the port name yourself. This
     /// overload declares a component's single source port; a component with several declares them
-    /// with its sources (<see cref="FileSources"/>, by the routes overloads of AddExtractor and
+    /// with its sources (<see cref="Sources"/>, by the routes overloads of AddExtractor and
     /// AddTransactionalIntegration).
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
@@ -43,8 +44,24 @@ public static class SourcePortServiceCollectionExtensions
     public static IServiceCollection AddSourcePort(this IServiceCollection services, string port,
         FileCompletion? completion = null)
     {
-        EnsureNoSourcePort(services, port);
-        services.AddSingleton(new SourcePort(port, completion ?? FileCompletion.Delete));
+        ArgumentException.ThrowIfNullOrWhiteSpace(port);
+        return services.AddSourcePort(new FileSourcePort(port, completion ?? FileCompletion.Delete));
+    }
+
+    /// <summary>
+    /// Declares <paramref name="source"/> the component's single source port, whatever kind of
+    /// source it is; its adapter is registered separately. A component with several source ports
+    /// declares them with its sources (<see cref="Sources"/>, by the routes overloads of
+    /// AddExtractor and AddTransactionalIntegration).
+    /// </summary>
+    /// <param name="services">The service collection to add services to.</param>
+    /// <param name="source">The source port.</param>
+    /// <exception cref="InvalidOperationException">A source port is already registered.</exception>
+    public static IServiceCollection AddSourcePort(this IServiceCollection services, SourcePort source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        EnsureNoSourcePort(services, source.Name);
+        services.AddSingleton(source);
         return services;
     }
 

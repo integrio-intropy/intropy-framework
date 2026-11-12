@@ -13,6 +13,7 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Intropy.Framework.Testing.Adapters;
@@ -256,7 +257,7 @@ public class TransactionalIntegrationDaprTests : IAsyncLifetime
     {
         public bool QueueExistedAtCompletion { get; private set; }
 
-        public override async Task CompleteAsync(IFileAdapter source, SweptFile file, FileOutcome outcome)
+        public override async Task CompleteAsync(IFileAdapter source, SweptFile file, SweepOutcome outcome)
         {
             QueueExistedAtCompletion = await test.QueueExistsAsync();
             if (!QueueExistedAtCompletion)

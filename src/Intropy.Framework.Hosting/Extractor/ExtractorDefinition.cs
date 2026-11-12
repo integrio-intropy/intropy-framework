@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 
 namespace Intropy.Framework.Hosting.Extractor;
@@ -11,11 +12,11 @@ namespace Intropy.Framework.Hosting.Extractor;
 /// <summary>
 /// Describes an extractor component for
 /// <see cref="ExtractorServiceCollectionExtensions.AddExtractor{TInput,TOutput,TCtx}(IServiceCollection, ExtractorDefinition{TInput,TOutput,TCtx})"/>:
-/// the pipeline, built per file with <see cref="ExtractorBuilder{TInput,TOutput,TCtx}"/>, together
+/// the pipeline, built per item with <see cref="ExtractorBuilder{TInput,TOutput,TCtx}"/>, together
 /// with the settings the registration needs around it — the source port, the context factory, and
 /// the runner options. The definition is validated when it is registered, so a misconfigured
 /// component fails at startup with the member that is wrong and how to fix it, not on the first
-/// file.
+/// item.
 /// </summary>
 /// <remarks>
 /// Build one with an object initializer:
@@ -46,12 +47,19 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
     /// deleted.</summary>
     public FileCompletion? Completion { get; init; }
 
-    /// <summary>Creates the context for each source file. Required when <typeparamref name="TCtx"/>
+    /// <summary>The port the component sweeps, of any kind of source (a
+    /// <see cref="FileSourcePort"/>, or a kind an adapter package provides); the registration
+    /// calls <c>AddSourcePort</c> with it. Use either this or <see cref="SourcePort"/>
+    /// (with <see cref="Completion"/>), the shorthand for a file port, not both. Optional: leave
+    /// null when the component registers the source port itself.</summary>
+    public SourcePort? Source { get; init; }
+
+    /// <summary>Creates the context for each source item. Required when <typeparamref name="TCtx"/>
     /// derives from <see cref="Context"/>; when <typeparamref name="TCtx"/> is the base
     /// <see cref="Context"/>, leave null and the plain record is created.</summary>
     public ContextFactory<TCtx>? ContextFactory { get; init; }
 
-    /// <summary>Configures the pipeline builder, given the file's scope — the deserializer,
+    /// <summary>Configures the pipeline builder, given the item's scope — the deserializer,
     /// validator, idempotency, transformer, serializer, sender and business-incident routing. This
     /// is where the generic step overloads (<c>WithDeserializer&lt;TStep&gt;()</c> and friends)
     /// save the cast-and-resolve boilerplate.</summary>
@@ -69,16 +77,21 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
 
     /// <summary>Checks the definition and returns the registration-ready pipeline configurator, so
     /// callers fail fast with the offending member instead of a null dereference when the first
-    /// file is composed.</summary>
+    /// item is composed.</summary>
     /// <returns>The validated pipeline configurator.</returns>
-    /// <exception cref="InvalidOperationException"><see cref="Pipeline"/> is missing, or
-    /// <typeparamref name="TCtx"/> needs a <see cref="ContextFactory"/> that is not set.</exception>
+    /// <exception cref="InvalidOperationException"><see cref="Pipeline"/> is missing,
+    /// <see cref="Source"/> is set together with <see cref="SourcePort"/> or <see cref="Completion"/>,
+    /// or <typeparamref name="TCtx"/> needs a <see cref="ContextFactory"/> that is not set.</exception>
     internal Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider,
         ExtractorBuilder<TInput, TOutput, TCtx>> Validate()
     {
         if (Pipeline is null)
             throw new InvalidOperationException(
                 "Extractor composition failed: Pipeline — the definition has no pipeline configurator; set Pipeline.");
+        if (Source is not null && (SourcePort is not null || Completion is not null))
+            throw new InvalidOperationException(
+                "Extractor composition failed: Source/SourcePort — the definition declares its source port twice; set " +
+                "Source for a source port of any kind, or SourcePort (and Completion) for a file port, not both.");
 
         return Pipeline;
     }
@@ -112,9 +125,11 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
         var source = factory();
         return new ExtractorDefinition<TInput, TOutput, TCtx>
         {
+            // A source port the code declares, of either shape, wins over the configured port name.
             SourcePort = source.SourcePort is { Length: > 0 } port
                 ? port
-                : ComponentConfigurationReader.String(configuration, nameof(SourcePort)),
+                : source.Source is null ? ComponentConfigurationReader.String(configuration, nameof(SourcePort)) : null,
+            Source = source.Source,
             Pipeline = source.Pipeline,
             ContextFactory = source.ContextFactory,
             ConfigureJob = source.ConfigureJob,

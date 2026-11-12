@@ -36,9 +36,9 @@ internal class SendSideRun(
     /// Serves the callback and waits for completion: until publishing is done and the queue has
     /// gone idle, or the host cancels.
     /// </summary>
-    /// <param name="publishingCompleteSignal">A task that completes when all files have been published,
+    /// <param name="publishingCompleteSignal">A task that completes when all items have been published,
     /// or faults when the sweep failed. Either way the queue is consumed until it goes idle: a failed
-    /// sweep still published the files it could.</param>
+    /// sweep still published the items it could.</param>
     /// <param name="ct">The host's cancellation: it stops waiting for the publisher and the idle
     /// timeout; messages in flight still get the grace period before the callback stops.</param>
     /// <param name="delivered">Called only for probes, with their message id: lets the

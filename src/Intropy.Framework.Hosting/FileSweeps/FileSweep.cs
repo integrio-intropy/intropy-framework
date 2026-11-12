@@ -1,8 +1,8 @@
-using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Intropy.Framework.Adapters.Common;
 using Intropy.Framework.Adapters.File;
-using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.Common;
+using Intropy.Framework.Hosting.Sweeps;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -22,7 +22,10 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// </para>
 /// <para>
 /// Cancellation: checked before listing and before each new file; in-flight work (completion
-/// included) is always awaited, and an interrupted file is never completed.
+/// included) is always awaited, and an interrupted file is never completed. These rules, and the
+/// ones below, are every framework sweep's (<see cref="SourceSweep{TEntry, TItem}"/>): this sweep
+/// supplies only the file-specific parts — listing through the adapter, reading a file, and its
+/// <see cref="FileCompletion"/>.
 /// </para>
 /// <para>
 /// No false success: every <see cref="OperationCanceledException"/> the host did not request is
@@ -39,7 +42,9 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// the span current when the sweep started (the job's), so a large sweep is not one oversized
 /// trace. The file's read, its handling and its completion are all in that trace, and so is
 /// every log written while the file is processed, which also carries the file name as a logging
-/// scope. A handler continues the file's trace rather than detaching from it, so the trace can
+/// scope. Each file is handled by a <see cref="SweepItemRunner"/>, as every framework sweep's
+/// items are; the span is also tagged <c>file.name</c>, and each file is counted on
+/// <c>intropy.sweep.files</c> as well as <c>intropy.sweep.items</c>. A handler continues the file's trace rather than detaching from it, so the trace can
 /// continue downstream (through the queue, for a Transactional Integration).
 /// </para>
 /// </remarks>
@@ -54,315 +59,56 @@ public sealed class FileSweep(
     string componentName,
     FileCompletion completion,
     ILoggerFactory loggerFactory)
+    : SourceSweep<FileEntry, SweptFile>(new SourceSweepContext(provider, componentName, loggerFactory), sourcePort)
 {
-    private readonly ILogger _logger = loggerFactory.CreateLogger<FileSweep>();
+    private readonly FileCompletion _completion = completion ?? throw new ArgumentNullException(nameof(completion));
 
-    /// <summary>Sweeps the source once.</summary>
-    /// <param name="handleFile">Processes one file inside its scope and reports the outcome. It
-    /// must not complete the source itself: the sweep does, after it returns.</param>
+    /// <summary>Checks that the port's <see cref="IFileAdapter"/> is registered.</summary>
     /// <param name="ct">The host's cancellation token.</param>
-    /// <returns>Consumed files as <c>Processed</c>, duplicates as <see cref="RunSummary.Skipped"/>,
-    /// and files left in place as <see cref="RunSummary.Failed"/>. A cancelled sweep returns the
-    /// counts recorded so far.</returns>
-    /// <exception cref="InvalidOperationException">Adapter construction or listing surfaced a
-    /// cancellation the host did not request, or the only failure was an unexpected cleanup
-    /// cancellation. Other listing exceptions propagate: a listing failure is never reported as
-    /// an empty successful sweep.</exception>
-    public async Task<RunSummary> SweepAsync(
-        Func<SweptFile, CancellationToken, Task<FileOutcome>> handleFile, CancellationToken ct)
+    /// <exception cref="InvalidOperationException">No adapter is registered for the port.</exception>
+    public override Task ValidateAsync(CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(handleFile);
-        var state = new SweepState();
+        _ = provider.GetKeyedService<IFileAdapter>(Port) ?? throw new InvalidOperationException(
+            $"Component '{Context.ComponentName}': no IFileAdapter is registered for the source port '{Port}'.");
+        return Task.CompletedTask;
+    }
 
+    /// <summary>Lists the source through its adapter, resolved from the root provider.</summary>
+    protected override async IAsyncEnumerable<FileEntry> ListAsync([EnumeratorCancellation] CancellationToken ct)
+    {
+        var source = Source;
+        // Adapter construction may have cancelled the host token without throwing; re-check
+        // before starting source I/O.
         if (ct.IsCancellationRequested)
-        {
-            _logger.LogInformation("Cancellation was requested before the sweep of {Component} started; nothing to do",
-                componentName);
-            return RunSummary.Empty;
-        }
+            yield break;
 
-        var processed = 0;
-        var failed = 0;
-        var skipped = 0;
-        var summary = RunSummary.Empty;
-        try
-        {
-            var source = provider.GetRequiredKeyedService<IFileAdapter>(sourcePort);
-
-            // Adapter construction may have cancelled the host token without throwing;
-            // re-check before starting source I/O.
-            if (ct.IsCancellationRequested)
-            {
-                _logger.LogInformation("Cancellation was requested for {Component} while preparing the source adapter; nothing to do",
-                    componentName);
-                return RunSummary.Empty;
-            }
-
-            List<FileEntry> files;
-            try
-            {
-                files = await source.ListAsync(ct);
-            }
-            catch (OperationCanceledException e) when (!ct.IsCancellationRequested)
-            {
-                throw new InvalidOperationException(
-                    $"Component '{componentName}': listing the source failed with an unexpected cancellation ({e.Message})", e);
-            }
-
-            if (files.Count == 0)
-            {
-                _logger.LogInformation("Inbound is empty for {Component}; nothing to do", componentName);
-            }
-            else
-            {
-                _logger.LogInformation("Swept {Count} file(s) from the source of {Component}", files.Count, componentName);
-
-                foreach (var file in files)
-                {
-                    if (ct.IsCancellationRequested)
-                    {
-                        // Files already completed or failed were real outcomes; the rest stay in
-                        // the source for the next run.
-                        _logger.LogInformation("Cancellation requested for {Component}; {Remaining} listed file(s) were not started",
-                            componentName, files.Count - processed - failed - skipped);
-                        break;
-                    }
-
-                    var outcome = await ProcessFileAsync(state, source, file.Name, handleFile, ct);
-                    if (outcome is FileOutcome.Aborted)
-                    {
-                        _logger.LogInformation("Sweep of {Component} was interrupted while processing {FileName}; the file is retained for the next run",
-                            componentName, file.Name);
-                        break;
-                    }
-
-                    switch (outcome)
-                    {
-                        case FileOutcome.Consumed:
-                            processed++;
-                            break;
-                        case FileOutcome.Duplicate:
-                            skipped++;
-                            break;
-                        default:
-                            failed++;
-                            break;
-                    }
-                }
-
-                if (failed > 0)
-                    _logger.LogWarning("{Failed} of {Total} file(s) failed for {Component}; exiting 1 so the scheduler records a failed run",
-                        failed, files.Count, componentName);
-
-                summary = new RunSummary(processed, failed, skipped);
-            }
-        }
-        catch (OperationCanceledException e) when (!ct.IsCancellationRequested)
-        {
-            throw new InvalidOperationException(
-                $"Component '{componentName}': preparing the source adapter failed with an unexpected cancellation ({e.Message})", e);
-        }
-        catch (OperationCanceledException)
-        {
-            // A host-requested cancellation during preparation or listing: nothing was processed.
-            _logger.LogInformation("Cancellation was requested for {Component} while preparing the source adapter; nothing to do",
-                componentName);
-        }
-
-        ThrowIfUnexpectedCleanupCancellation(state, summary);
-        return summary;
+        foreach (var file in await source.ListAsync(ct))
+            yield return file;
     }
 
-    /// <summary>The per-run sweep state.</summary>
-    private sealed class SweepState
+    /// <inheritdoc />
+    protected override string IdOf(FileEntry entry) => entry.Name;
+
+    /// <inheritdoc />
+    protected override SweptFile CreateItem(FileEntry entry, IServiceProvider scope) =>
+        new(entry.Name, Port, Source, scope);
+
+    /// <summary>Completes the file with the sweep's <see cref="FileCompletion"/>.</summary>
+    protected override Task CompleteAsync(SweptFile item, SweepOutcome outcome) =>
+        _completion.CompleteAsync(Source, item, outcome);
+
+    /// <summary>The file's name, as the span's <c>file.name</c> and the logging scope's
+    /// <c>FileName</c>.</summary>
+    protected override SweepItemTelemetry TelemetryOf(FileEntry entry) => new()
     {
-        /// <summary>Number of scope cleanups in the current sweep that failed with a cancellation
-        /// the host never requested. Single-threaded by the sequential loop.</summary>
-        internal int UnexpectedCleanupCancellations;
-    }
+        SpanTags = new Dictionary<string, object?> { ["file.name"] = entry.Name },
+        LogScope = new Dictionary<string, object> { ["FileName"] = entry.Name },
+    };
 
-    /// <returns>The file's final outcome: the handler's outcome after completion, or
-    /// <see cref="FileOutcome.Failed"/> when the scope, the handler, or completion failed. Only
-    /// a host-requested interruption returns <see cref="FileOutcome.Aborted"/>.</returns>
-    private async Task<FileOutcome> ProcessFileAsync(
-        SweepState state,
-        IFileAdapter source,
-        string fileName,
-        Func<SweptFile, CancellationToken, Task<FileOutcome>> handleFile,
-        CancellationToken ct)
-    {
-        var runActivity = Activity.Current;
-        var activity = StartFileActivity(runActivity, fileName);
-        try
-        {
-            using var logScope = _logger.BeginScope(new Dictionary<string, object>
-            {
-                ["FileName"] = fileName,
-                ["SourcePort"] = sourcePort
-            });
-            var outcome = await ProcessFileInScopeAsync(state, source, fileName, handleFile, activity, ct);
-            RecordOutcome(activity, outcome);
-            HostingMetrics.RecordSweptFile(componentName, sourcePort, outcome);
-            return outcome;
-        }
-        finally
-        {
-            activity?.Dispose();
-            Activity.Current = runActivity;
-        }
-    }
+    /// <summary>Counts the file on <c>intropy.sweep.files</c>.</summary>
+    protected override void OnItemSwept(FileEntry entry, SweepOutcome outcome) =>
+        HostingMetrics.RecordSweptFile(Context.ComponentName, Port, outcome);
 
-    /// <summary>Starts the root span of the file's own trace, linked to the run's span.</summary>
-    private Activity? StartFileActivity(Activity? runActivity, string fileName)
-    {
-        Activity.Current = null;
-        var activity = ActivitySourceProvider.ActivitySource.StartActivity(
-            $"process {sourcePort}",
-            ActivityKind.Internal,
-            parentContext: default,
-            links: runActivity is null ? null : [new ActivityLink(runActivity.Context)]);
-        activity?.SetTag("intropy.source.port", sourcePort);
-        activity?.SetTag("file.name", fileName);
-        return activity;
-    }
-
-    /// <summary>Tags the file's outcome. A file left in place is an error of its trace; a more
-    /// specific status already set while processing it is kept.</summary>
-    private static void RecordOutcome(Activity? activity, FileOutcome outcome)
-    {
-        if (activity is null)
-            return;
-
-        activity.SetTag("intropy.sweep.outcome", HostingMetrics.OutcomeName(outcome));
-        if (outcome is FileOutcome.Failed && activity.Status == ActivityStatusCode.Unset)
-            activity.SetStatus(ActivityStatusCode.Error, "The file was not handled; it stays for the next run");
-    }
-
-    private async Task<FileOutcome> ProcessFileInScopeAsync(
-        SweepState state,
-        IFileAdapter source,
-        string fileName,
-        Func<SweptFile, CancellationToken, Task<FileOutcome>> handleFile,
-        Activity? activity,
-        CancellationToken ct)
-    {
-        AsyncServiceScope? scope = null;
-        try
-        {
-            SweptFile file;
-            FileOutcome outcome;
-            try
-            {
-                scope = provider.CreateAsyncScope();
-                file = new SweptFile(fileName, sourcePort, source, scope.Value.ServiceProvider);
-                outcome = await handleFile(file, ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                return FileOutcome.Aborted;
-            }
-            catch (OperationCanceledException e)
-            {
-                _logger.LogWarning(e, "Processing {FileName} was unexpectedly cancelled without a host cancellation; leaving it for the next run",
-                    fileName);
-                RecordFailure(activity, e);
-                return FileOutcome.Failed;
-            }
-            catch (Exception e)
-            {
-                _logger.LogWarning(e, "Processing {FileName} failed unexpectedly; leaving it for the next run", fileName);
-                RecordFailure(activity, e);
-                return FileOutcome.Failed;
-            }
-
-            switch (outcome)
-            {
-                case FileOutcome.Consumed or FileOutcome.Duplicate:
-                    return await CompleteAsync(source, file, outcome, activity);
-                case FileOutcome.Aborted when ct.IsCancellationRequested:
-                    return FileOutcome.Aborted;
-                case FileOutcome.Aborted:
-                    _logger.LogWarning("Processing {FileName} was aborted without a host cancellation; leaving it for the next run",
-                        fileName);
-                    return FileOutcome.Failed;
-                default:
-                    return FileOutcome.Failed;
-            }
-        }
-        finally
-        {
-            await DisposeScopeQuietlyAsync(state, scope, fileName, ct);
-        }
-    }
-
-    /// <returns><paramref name="outcome"/> once the source is completed;
-    /// <see cref="FileOutcome.Failed"/> when completion failed and the source stays. The handler
-    /// already published, so the next run handles the file again; idempotency, where the
-    /// component has it, cancels the duplicate.</returns>
-    private async Task<FileOutcome> CompleteAsync(
-        IFileAdapter source, SweptFile file, FileOutcome outcome, Activity? activity)
-    {
-        try
-        {
-            // Completion finishes an already started file and is always awaited.
-            await completion.CompleteAsync(source, file, outcome);
-            return outcome;
-        }
-        catch (Exception e)
-        {
-            _logger.LogWarning(e, "Could not complete {FileName} ({Completion}) after processing; the next run handles it again",
-                file.Name, completion);
-            RecordFailure(activity, e);
-            return FileOutcome.Failed;
-        }
-    }
-
-    private static void RecordFailure(Activity? activity, Exception e)
-    {
-        activity?.AddException(e);
-        activity?.SetStatus(ActivityStatusCode.Error, e.Message);
-    }
-
-    /// <summary>Disposes a file scope without letting a cleanup failure escape: the file's
-    /// outcome is already recorded. Unexpected cancellations are counted so an otherwise clean run
-    /// is still escalated.</summary>
-    private async ValueTask DisposeScopeQuietlyAsync(SweepState state, AsyncServiceScope? scope, string fileName,
-        CancellationToken ct)
-    {
-        if (scope is null)
-            return;
-
-        try
-        {
-            await scope.Value.DisposeAsync();
-        }
-        catch (OperationCanceledException e) when (!ct.IsCancellationRequested)
-        {
-            state.UnexpectedCleanupCancellations++;
-            _logger.LogWarning(e, "Cleaning up the processing scope failed with an unexpected cancellation for {FileName}; the recorded outcomes stand",
-                fileName);
-        }
-        catch (OperationCanceledException)
-        {
-            _logger.LogInformation("Cleaning up the processing scope was interrupted by the host cancellation for {FileName}; the recorded outcomes stand",
-                fileName);
-        }
-        catch (Exception e)
-        {
-            _logger.LogWarning(e, "Cleaning up the processing scope failed for {FileName}; the recorded outcomes stand", fileName);
-        }
-    }
-
-    /// <summary>Escalates a run whose only failure was an unexpected cleanup cancellation; the
-    /// recorded outcomes are part of the error.</summary>
-    private void ThrowIfUnexpectedCleanupCancellation(SweepState state, RunSummary recorded)
-    {
-        if (state.UnexpectedCleanupCancellations == 0 || recorded.Failed > 0)
-            return;
-
-        throw new InvalidOperationException(
-            $"Component '{componentName}': {state.UnexpectedCleanupCancellations} scope cleanup(s) failed with an unexpected cancellation " +
-            $"the host did not request. The recorded outcome stands: {recorded.Processed} processed, " +
-            $"{recorded.Failed} failed, {recorded.Skipped} skipped — but a run with unexpected cancellations is not a clean run.");
-    }
+    // The adapter is a singleton: resolving it again for each file returns the one listed from.
+    private IFileAdapter Source => provider.GetRequiredKeyedService<IFileAdapter>(Port);
 }

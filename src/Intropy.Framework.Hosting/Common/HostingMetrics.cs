@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Messaging;
 
 namespace Intropy.Framework.Hosting.Common;
@@ -36,6 +36,9 @@ internal static class HostingMetrics
 
     private static readonly Counter<long> SweptFiles = Meter.CreateCounter<long>(
         "intropy.sweep.files", "{file}", "Source files swept, by outcome.");
+
+    private static readonly Counter<long> SweptItems = Meter.CreateCounter<long>(
+        "intropy.sweep.items", "{item}", "Source items swept, of every kind of source (files included), by outcome.");
 
     private static readonly Counter<long> ConsumedMessages = Meter.CreateCounter<long>(
         "messaging.client.consumed.messages", "{message}",
@@ -91,7 +94,19 @@ internal static class HostingMetrics
         GatewayDuration.Record(duration.TotalSeconds, tags);
     }
 
-    internal static void RecordSweptFile(string componentName, string sourcePort, FileOutcome outcome) =>
+    /// <summary>Records one swept item of any kind of source, files included.</summary>
+    /// <param name="componentName">The component sweeping the item.</param>
+    /// <param name="sourcePort">The port the item was swept from.</param>
+    /// <param name="outcome">The item's final outcome.</param>
+    internal static void RecordSweptItem(string componentName, string sourcePort, SweepOutcome outcome) =>
+        SweptItems.Add(1, new TagList
+        {
+            { "intropy.component.name", componentName },
+            { "intropy.source.port", sourcePort },
+            { "intropy.sweep.outcome", OutcomeName(outcome) }
+        });
+
+    internal static void RecordSweptFile(string componentName, string sourcePort, SweepOutcome outcome) =>
         SweptFiles.Add(1, new TagList
         {
             { "intropy.component.name", componentName },
@@ -188,11 +203,11 @@ internal static class HostingMetrics
     /// <summary>The outcome of a message delivered after stopping began.</summary>
     internal const string RejectedOutcome = "rejected";
 
-    internal static string OutcomeName(FileOutcome outcome) => outcome switch
+    internal static string OutcomeName(SweepOutcome outcome) => outcome switch
     {
-        FileOutcome.Consumed => "consumed",
-        FileOutcome.Duplicate => "duplicate",
-        FileOutcome.Aborted => "aborted",
+        SweepOutcome.Consumed => "consumed",
+        SweepOutcome.Duplicate => "duplicate",
+        SweepOutcome.Aborted => "aborted",
         _ => "failed"
     };
 

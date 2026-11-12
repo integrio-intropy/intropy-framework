@@ -4,13 +4,13 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Microsoft.Extensions.Logging;
 
 namespace Intropy.Framework.Hosting.Extractor;
 
 /// <summary>
-/// The extractor's sweep of one source port: each source file is read as raw bytes and run
+/// The extractor's sweep of one source port: each source item is read as raw bytes and run
 /// through the pipeline of the port's route.
 /// </summary>
 internal sealed class ExtractorPortSweep<TCtx>(
@@ -20,7 +20,7 @@ internal sealed class ExtractorPortSweep<TCtx>(
     FrameworkOptions frameworkOptions,
     ContextFactory<TCtx> contextFactory,
     ILoggerFactory loggerFactory)
-    : FilePipelineSweep<ExtractorRun<TCtx>, CloudEvent, TCtx>(source, provider, frameworkOptions,
+    : PortPipelineSweep<ExtractorRun<TCtx>, CloudEvent, TCtx>(source, provider, frameworkOptions,
         contextFactory, loggerFactory)
     where TCtx : Context
 {
@@ -28,13 +28,13 @@ internal sealed class ExtractorPortSweep<TCtx>(
         route.Resolve(scope, ComponentName, Port);
 
     protected override async Task<StepResult<CloudEvent>> RunPipelineAsync(ExtractorRun<TCtx> pipeline,
-        SweptFile file, TCtx context, CancellationToken ct)
+        SweptItem item, TCtx context, CancellationToken ct)
     {
-        // A listed file with no content is stuck: fail it and keep it so the run exits 1 instead
-        // of silently skipping it. An empty file reads as an empty array on every adapter.
-        var content = await file.ReadAsync(ct);
+        // An item with no content has nothing to extract: fail it and keep it so the run exits 1
+        // instead of silently skipping it. An empty file reads as an empty array on every adapter.
+        var content = await item.ReadAsync(ct);
         if (content.Length == 0)
-            return new StepResult<CloudEvent>.TechnicalFailure(new TechnicalFailure("The file has no content"));
+            return new StepResult<CloudEvent>.TechnicalFailure(new TechnicalFailure("The source item has no content"));
 
         return await pipeline(content, context, ct);
     }

@@ -2,7 +2,7 @@ using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,20 +11,20 @@ using Microsoft.Extensions.Logging;
 namespace Intropy.Framework.Hosting.Extractor;
 
 /// <summary>
-/// Registers a file-driven extractor: the pipeline, built per file with
-/// <see cref="ExtractorBuilder{TInput,TOutput,TCtx}"/>, and the job that runs each source file
+/// Registers an extractor: the pipeline, built per item with
+/// <see cref="ExtractorBuilder{TInput,TOutput,TCtx}"/>, and the job that runs each source item
 /// through it, hosted by the run-to-completion runner.
 /// </summary>
 public static class ExtractorServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers one extractor component for file-sweep processing hosted by
+    /// Registers one extractor component for sweep processing hosted by
     /// <see cref="JobRunner"/>. Only one extractor component may be registered per
     /// service provider.
     /// </summary>
     /// <remarks>
-    /// The pipeline is built in each file's own scope, so steps resolved from the provider passed to
-    /// <paramref name="configurePipeline"/> may be scoped. Before any file is listed, the job builds
+    /// The pipeline is built in each item's own scope, so steps resolved from the provider passed to
+    /// <paramref name="configurePipeline"/> may be scoped. Before any item is listed, the job builds
     /// the pipeline once, so a missing registration fails the run once. Caller-owned: the component
     /// identity (<c>AddIntropyFramework</c>), logging, <c>DaprClient</c>, the platform-service
     /// clients, the process steps, and the source port (<c>AddSourcePort</c>).
@@ -33,8 +33,8 @@ public static class ExtractorServiceCollectionExtensions
     /// <typeparam name="TOutput">The published payload.</typeparam>
     /// <typeparam name="TCtx">The pipeline context.</typeparam>
     /// <param name="services">The service collection to add services to.</param>
-    /// <param name="configurePipeline">Configures the pipeline builder, given the file's scope.</param>
-    /// <param name="contextFactory">Creates the context for each source file.</param>
+    /// <param name="configurePipeline">Configures the pipeline builder, given the item's scope.</param>
+    /// <param name="contextFactory">Creates the context for each source item.</param>
     /// <param name="configureJob">Optional runner settings: the job name (default: the component
     /// name) and the sidecar timeouts.</param>
     /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
@@ -58,12 +58,12 @@ public static class ExtractorServiceCollectionExtensions
     /// <see cref="AddExtractor{TInput,TOutput,TCtx}(IServiceCollection,
     /// Func{ExtractorBuilder{TInput,TOutput,TCtx}, IServiceProvider, ExtractorBuilder{TInput,TOutput,TCtx}},
     /// ContextFactory{TCtx}, Action{JobOptions}?, Action{ExtractorOptions}?)"/>; the context factory — plain
-    /// <see cref="Context"/> records for each source file — is provided for you.
+    /// <see cref="Context"/> records for each source item — is provided for you.
     /// </summary>
     /// <typeparam name="TInput">The deserialized input.</typeparam>
     /// <typeparam name="TOutput">The published payload.</typeparam>
     /// <param name="services">The service collection to add services to.</param>
-    /// <param name="configurePipeline">Configures the pipeline builder, given the file's scope.</param>
+    /// <param name="configurePipeline">Configures the pipeline builder, given the item's scope.</param>
     /// <param name="configureJob">Optional runner settings: the job name (default: the component
     /// name) and the sidecar timeouts.</param>
     /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
@@ -103,12 +103,12 @@ public static class ExtractorServiceCollectionExtensions
     /// Registers one extractor component described by a <paramref name="definition"/>: the pipeline,
     /// the source port, the context factory and the runner settings in one object, validated at
     /// registration so a misconfigured component fails at startup with the member that is wrong —
-    /// not on the first file. See <see cref="ExtractorDefinition{TInput,TOutput,TCtx}"/>.
+    /// not on the first item. See <see cref="ExtractorDefinition{TInput,TOutput,TCtx}"/>.
     /// </summary>
     /// <remarks>
-    /// The pipeline is built in each file's own scope, so steps resolved from the provider passed to
+    /// The pipeline is built in each item's own scope, so steps resolved from the provider passed to
     /// the definition's <see cref="ExtractorDefinition{TInput,TOutput,TCtx}.Pipeline"/> may be
-    /// scoped. Before any file is listed, the job builds the pipeline once, so a missing
+    /// scoped. Before any item is listed, the job builds the pipeline once, so a missing
     /// registration fails the run once. Caller-owned: the component identity
     /// (<c>AddIntropyFramework</c>), logging, <c>DaprClient</c>, and the platform-service clients.
     /// Only one extractor component may be registered per service provider.
@@ -129,7 +129,9 @@ public static class ExtractorServiceCollectionExtensions
         var pipeline = definition.Validate();
         var contextFactory = definition.ResolveContextFactory();
         ComponentRegistration.EnsureNoOther(services, "extractor");
-        if (definition.SourcePort is { } port)
+        if (definition.Source is { } source)
+            services.AddSourcePort(source);
+        else if (definition.SourcePort is { } port)
             services.AddSourcePort(port, definition.Completion);
         return AddExtractorCore(services, pipeline, contextFactory, definition.ConfigureJob,
             definition.Configure);
@@ -138,35 +140,35 @@ public static class ExtractorServiceCollectionExtensions
     /// <summary>
     /// Registers one extractor component with routes: <paramref name="configureSources"/> declares
     /// the source ports it sweeps, and <paramref name="configureRoutes"/> which pipeline each port's
-    /// files go through. Validated at registration, so a misdeclared extractor fails at startup.
+    /// items go through. Validated at registration, so a misdeclared extractor fails at startup.
     /// </summary>
     /// <remarks>
     /// The ports are swept one after another, in declaration order; a port that fails does not stop
     /// the others, but the run still fails. Each route's pipeline is built for one port at a time, in
-    /// each file's own scope: it stamps the port on every event it publishes (the
+    /// each item's own scope: it stamps the port on every event it publishes (the
     /// <see cref="CloudEventExtensionKeys.SourcePort"/> extension) and keeps its idempotency records
-    /// per port unless it shares them (<see cref="IdempotencyScope"/>). Before any file is listed,
+    /// per port unless it shares them (<see cref="IdempotencyScope"/>). Before any item is listed,
     /// the job builds each port's pipeline once, so a missing registration fails the run once.
     /// Caller-owned: the component identity (<c>AddIntropyFramework</c>), logging, <c>DaprClient</c>,
-    /// the platform-service clients, the process steps, and each port's file adapter, keyed by the
-    /// port name. Do not call <c>AddSourcePort</c>: the sources declare the ports. Only one extractor
+    /// the platform-service clients, the process steps, and whatever each port's kind of source
+    /// needs (a file port's file adapter, keyed by the port name). Do not call <c>AddSourcePort</c>: the sources declare the ports. Only one extractor
     /// component may be registered per service provider.
     /// </remarks>
     /// <typeparam name="TCtx">The context type shared by every route's pipeline.</typeparam>
     /// <param name="services">The service collection to add services to.</param>
     /// <param name="configureSources">Declares the source ports and their completions.</param>
     /// <param name="configureRoutes">Declares the routes.</param>
-    /// <param name="contextFactory">Creates the context for each source file.</param>
+    /// <param name="contextFactory">Creates the context for each source item.</param>
     /// <param name="configureJob">Optional runner settings: the job name (default: the component
     /// name) and the sidecar timeouts.</param>
     /// <returns>The service collection, for chaining.</returns>
     /// <exception cref="InvalidOperationException">No source or route is declared; a route for every
-    /// file is combined with other routes; a route names an undeclared port, a port is routed twice
+    /// item is combined with other routes; a route names an undeclared port, a port is routed twice
     /// or not at all; a source port or an extractor is already registered.</exception>
     /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
     /// anything configuration supplied.</param>
     public static IServiceCollection AddExtractor<TCtx>(this IServiceCollection services,
-        Action<FileSources> configureSources, Action<ExtractorRoutes<TCtx>> configureRoutes,
+        Action<Sources> configureSources, Action<ExtractorRoutes<TCtx>> configureRoutes,
         ContextFactory<TCtx> contextFactory, Action<JobOptions>? configureJob = null,
         Action<ExtractorOptions>? configureOptions = null) where TCtx : Context
     {
@@ -175,7 +177,7 @@ public static class ExtractorServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configureRoutes);
         ArgumentNullException.ThrowIfNull(contextFactory);
         // Everything that can fail runs before any registration: a rejected declaration leaves nothing behind.
-        var sources = new FileSources();
+        var sources = new Sources();
         configureSources(sources);
         var routes = new ExtractorRoutes<TCtx>();
         configureRoutes(routes);
@@ -193,8 +195,8 @@ public static class ExtractorServiceCollectionExtensions
     /// <summary>
     /// Registers one extractor component with routes, whose pipelines use the base
     /// <see cref="Context"/>. See
-    /// <see cref="AddExtractor{TCtx}(IServiceCollection, Action{FileSources}, Action{ExtractorRoutes{TCtx}}, ContextFactory{TCtx}, Action{JobOptions}?, Action{ExtractorOptions}?)"/>;
-    /// the context factory — plain <see cref="Context"/> records for each source file — is provided
+    /// <see cref="AddExtractor{TCtx}(IServiceCollection, Action{Sources}, Action{ExtractorRoutes{TCtx}}, ContextFactory{TCtx}, Action{JobOptions}?, Action{ExtractorOptions}?)"/>;
+    /// the context factory — plain <see cref="Context"/> records for each source item — is provided
     /// for you.
     /// </summary>
     /// <param name="services">The service collection to add services to.</param>
@@ -206,12 +208,12 @@ public static class ExtractorServiceCollectionExtensions
     /// <param name="configureOptions">Optional extractor settings: the claim check. Applied over
     /// anything configuration supplied.</param>
     public static IServiceCollection AddExtractor(this IServiceCollection services,
-        Action<FileSources> configureSources, Action<ExtractorRoutes<Context>> configureRoutes,
+        Action<Sources> configureSources, Action<ExtractorRoutes<Context>> configureRoutes,
         Action<JobOptions>? configureJob = null, Action<ExtractorOptions>? configureOptions = null) =>
         services.AddExtractor(configureSources, configureRoutes,
             static (metadata, isRetry) => new Context(metadata, isRetry), configureJob, configureOptions);
 
-    // Without routes: the one registered pipeline handles every file.
+    // Without routes: the one registered pipeline handles every item.
     private static IServiceCollection AddExtractorCore<TInput, TOutput, TCtx>(
         IServiceCollection services,
         Func<ExtractorBuilder<TInput, TOutput, TCtx>, IServiceProvider, ExtractorBuilder<TInput, TOutput, TCtx>> configurePipeline,

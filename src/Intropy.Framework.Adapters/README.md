@@ -32,7 +32,8 @@ To declare the port the framework sweeps (one per component, one per file-driven
 choose its `FileCompletion`, register through `Intropy.Framework.Hosting`:
 
 ```csharp
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.FileSweeps; // FileCompletion
+using Intropy.Framework.Hosting.Sweeps;     // AddSourcePort
 services.AddSourcePort("orders-source", configuration, FileCompletion.Archive("archive")); // completion optional; default: delete
 ```
 
@@ -127,7 +128,8 @@ file is always awaited to the end, even when the host cancels the sweep.
 ## Sweeping a source
 
 `FileSweep` and the source-port registration (`AddSourcePort`) live in the
-`Intropy.Framework.Hosting` package (`Intropy.Framework.Hosting.FileSweeps` namespace) — see the
+`Intropy.Framework.Hosting` package (the `Intropy.Framework.Hosting.FileSweeps` and
+`Intropy.Framework.Hosting.Sweeps` namespaces) — see the
 [Sweeping a source](../Intropy.Framework.Hosting/README.md#sweeping-a-source) section of its
 README. `Intropy.Framework.Adapters` supplies the `IFileAdapter` implementations, the options,
 and `AddFileAdapter` / `AddDestinationPort`; extractors and transactional integrations consume

@@ -5,6 +5,7 @@ using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Extractor;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Testing.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -429,7 +430,7 @@ public class ExtractorJobTests
         Assert.Contains("order-1.json", handled.Text);
         // The file is still completed: a sweep has no redelivery to leave it for, so routing the
         // incident is its terminal handling.
-        Assert.Contains("the file is completed", handled.Text);
+        Assert.Contains("the item is completed", handled.Text);
     }
 
     private static ExtractorJob<ExtractorTestProcess.TestContext>

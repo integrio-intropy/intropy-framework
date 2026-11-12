@@ -4,7 +4,7 @@ using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Common;
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -103,11 +103,11 @@ internal sealed class RegisteredSendRoute<TCtx>(ContextFactory<TCtx> contextFact
         scope.GetRequiredService<ISendPipeline<TCtx>>();
 }
 
-/// <summary>A send route declared with <see cref="TransactionalIntegrationRoutes{TCtx}"/>: the files
-/// its match selects — by the source port the framework recorded on the message — or every file (a
+/// <summary>A send route declared with <see cref="TransactionalIntegrationRoutes{TCtx}"/>: the items
+/// its match selects — by the source port the framework recorded on the message — or every item (a
 /// null match), through a send pipeline built in the message's own scope.</summary>
 internal sealed class DeclaredSendRoute<TInput, TOutput, TCtx>(
-    FileMatch? match,
+    PortMatch? match,
     Func<SendPipelineBuilder<TInput, TOutput, TCtx>, IServiceProvider, SendPipelineBuilder<TInput, TOutput, TCtx>> configureSend,
     ContextFactory<TCtx> contextFactory) : SendRoute<TCtx>(contextFactory) where TCtx : Context
 {

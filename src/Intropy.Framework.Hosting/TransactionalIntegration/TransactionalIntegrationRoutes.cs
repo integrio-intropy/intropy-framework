@@ -1,13 +1,13 @@
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Messaging;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
 
 /// <summary>
-/// The send routes of a Transactional Integration: which send pipeline a file's message goes
-/// through, by the source port the framework recorded when it swept the file. Each port carries one
+/// The send routes of a Transactional Integration: which send pipeline an item's message goes
+/// through, by the source port the framework recorded when it swept the item. Each port carries one
 /// kind of data, and each route's send pipeline is typed on its own data; the context type is the
 /// integration's. The counterpart of a loader's routes, which match on the CloudEvent type.
 /// </summary>
@@ -32,8 +32,8 @@ public sealed class TransactionalIntegrationRoutes<TCtx> where TCtx : Context
 {
     private readonly List<Declaration> _routes = [];
 
-    /// <summary>Sends the files of <paramref name="ports"/> through a send pipeline.</summary>
-    /// <param name="ports">The source ports whose files this route handles, matched exactly on
+    /// <summary>Sends the items of <paramref name="ports"/> through a send pipeline.</summary>
+    /// <param name="ports">The source ports whose items this route handles, matched exactly on
     /// what the framework records from the sweep.</param>
     /// <param name="configureSend">Configures the route's send pipeline builder, given the message's
     /// scope — the same shape as <c>AddSendPipeline</c>.</param>
@@ -51,13 +51,13 @@ public sealed class TransactionalIntegrationRoutes<TCtx> where TCtx : Context
                 nameof(ports));
         ArgumentNullException.ThrowIfNull(configureSend);
 
-        var criteria = new FileMatch(ports);
+        var criteria = new PortMatch(ports);
         _routes.Add(new Declaration(criteria, contextFactory =>
             new DeclaredSendRoute<TInput, TOutput, TCtx>(criteria, configureSend, contextFactory)));
         return this;
     }
 
-    /// <summary>Sends every file, from any source port, through one send pipeline: the same data,
+    /// <summary>Sends every item, from any source port, through one send pipeline: the same data,
     /// received in several places.</summary>
     /// <param name="configureSend">Configures the send pipeline builder, given the message's scope —
     /// the same shape as <c>AddSendPipeline</c>.</param>
@@ -73,13 +73,13 @@ public sealed class TransactionalIntegrationRoutes<TCtx> where TCtx : Context
         return this;
     }
 
-    /// <summary>The declared routes' matches, in declaration order; null for a route for every file.</summary>
-    internal IEnumerable<FileMatch?> Matches => _routes.Select(r => r.Match);
+    /// <summary>The declared routes' matches, in declaration order; null for a route for every item.</summary>
+    internal IEnumerable<PortMatch?> Matches => _routes.Select(r => r.Match);
 
     /// <summary>The declared routes, with the integration's context factory.</summary>
     internal IReadOnlyList<IMessageRoute> Build(ContextFactory<TCtx> contextFactory) =>
         [.. _routes.Select(r => r.Create(contextFactory))];
 
-    private sealed record Declaration(FileMatch? Match,
+    private sealed record Declaration(PortMatch? Match,
         Func<ContextFactory<TCtx>, IMessageRoute> Create);
 }

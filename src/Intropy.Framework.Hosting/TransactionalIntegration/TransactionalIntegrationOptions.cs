@@ -35,14 +35,14 @@ public class TransactionalIntegrationOptions
     /// component, <see cref="FrameworkOptions.TopicName"/>: for a transactional integration, its
     /// internal queue's topic, which the system topology names <c>internal-&lt;component&gt;</c>. Keep it unique per
     /// integration: brokers name their exchanges, topics and queues after it, so integrations sharing
-    /// a topic name would receive each other's files whatever Dapr component they publish through.
+    /// a topic name would receive each other's items whatever Dapr component they publish through.
     /// </summary>
     public string DaprTopicName { get; set; } = "";
 
 
     /// <summary>
     /// The time to wait between messages before deciding to shut down.
-    /// This time begins when the adapter has returned all files, and they have been published to the queue.
+    /// This time begins when the adapter has returned all items, and they have been published to the queue.
     /// </summary>
     /// <value>Default: 5 seconds</value>
     public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(5);
@@ -57,8 +57,8 @@ public class TransactionalIntegrationOptions
     /// <summary>
     /// The longest a run waits, before it sweeps, for the internal queue to deliver a probe. A
     /// broker can discard a message published before the subscription has created its queue, so
-    /// no file is published (and completed) until a probe from this run has come back. When none
-    /// comes back in time, the run touches no source file and exits with
+    /// no item is published (and completed) until a probe from this run has come back. When none
+    /// comes back in time, the run touches no source item and exits with
     /// <c>JobExitCodes.InfrastructureFailure</c>. Must be positive and within the .NET timer range.
     /// Applies only when the receive side's enqueuer can be probed (the built-in Dapr enqueuer).
     /// Run only one job instance per internal queue; competing consumers can receive each other's
