@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>SQL Server source port for the Intropy.Framework pipeline framework: reads a query into one message per run, as a full export or a delta with a watermark.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;adapters;sql;sqlserver</PackageTags>
+  </PropertyGroup>
+
+  <!-- The SQL Server driver is referenced here and nowhere else: only components that read SQL
+       reference this package, so Core, Blocks, Adapters and Hosting stay free of it. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>
