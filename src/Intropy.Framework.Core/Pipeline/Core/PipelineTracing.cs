@@ -35,20 +35,19 @@ public static class PipelineTracing
 
         using var activity = detachTrace
             ? CreateDetachedActivity(pipelineName, previousActivity)
-            : CreateChildActivity(pipelineName);
+            : StartPipelineActivity(pipelineName);
 
-        activity?.SetTag("pipeline.name", pipelineName);
         configureActivity?.Invoke(activity);
 
         try
         {
             var (result, context, _) = await pipeline();
-            SetActivityStatus(result, activity, logger);
+            Complete(activity, result, logger);
             return (result, context);
         }
         catch (Exception ex)
         {
-            HandleException(ex, pipelineName, activity, logger);
+            Fail(activity, ex, pipelineName, logger);
             throw;
         }
         finally
@@ -60,6 +59,50 @@ public static class PipelineTracing
         }
     }
 
+    /// <summary>
+    /// Starts a pipeline's span without running anything under it, for a pipeline whose run the
+    /// caller drives itself — one that pauses between steps, say — and ends with
+    /// <see cref="Complete{T}"/> or <see cref="Fail"/>. The caller disposes it.
+    /// </summary>
+    /// <param name="pipelineName">The name of the pipeline.</param>
+    /// <param name="parent">The span to start it under; <see langword="default"/> starts it under
+    /// the current activity, as <see cref="ExecuteWithTracing{T,TCtx}"/> does.</param>
+    /// <returns>The span, or null when nothing listens.</returns>
+    public static Activity? StartPipelineActivity(string pipelineName, ActivityContext parent = default)
+    {
+        var activity = ActivitySourceProvider.ActivitySource.StartActivity($"Pipeline.{pipelineName}",
+            ActivityKind.Internal, parent);
+        activity?.SetTag("pipeline.name", pipelineName);
+        return activity;
+    }
+
+    /// <summary>
+    /// Records a pipeline's result on its span: a technical failure is logged and is an error;
+    /// anything else, an aborted run included, is not.
+    /// </summary>
+    /// <param name="activity">The pipeline's span; nothing is recorded on it when it is null.</param>
+    /// <param name="result">The pipeline's result.</param>
+    /// <param name="logger">The logger a technical failure is logged to.</param>
+    /// <typeparam name="T">The type of the value the result carries.</typeparam>
+    public static void Complete<T>(Activity? activity, StepResult<T> result, ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        SetActivityStatus(result, activity, logger);
+    }
+
+    /// <summary>
+    /// Records an exception that escaped a pipeline on its span, and logs it as a technical failure.
+    /// </summary>
+    /// <param name="activity">The pipeline's span; nothing is recorded on it when it is null.</param>
+    /// <param name="exception">The exception.</param>
+    /// <param name="pipelineName">The name of the pipeline.</param>
+    /// <param name="logger">The logger it is logged to.</param>
+    public static void Fail(Activity? activity, Exception exception, string pipelineName, ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        HandleException(exception, pipelineName, activity, logger);
+    }
+
     private static Activity? CreateDetachedActivity(string pipelineName, Activity? previousActivity)
     {
         var links = previousActivity?.Context is not null
@@ -68,17 +111,12 @@ public static class PipelineTracing
 
         Activity.Current = null;
 
-        return ActivitySourceProvider.ActivitySource.StartActivity(
+        var activity = ActivitySourceProvider.ActivitySource.StartActivity(
             name: $"Pipeline.{pipelineName}",
             kind: ActivityKind.Internal,
             links: links);
-    }
-
-    private static Activity? CreateChildActivity(string pipelineName)
-    {
-        return ActivitySourceProvider.ActivitySource.StartActivity(
-            name: $"Pipeline.{pipelineName}",
-            kind: ActivityKind.Internal);
+        activity?.SetTag("pipeline.name", pipelineName);
+        return activity;
     }
 
     private static void SetActivityStatus<T>(StepResult<T> result, Activity? activity, ILogger logger)

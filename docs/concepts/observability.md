@@ -51,6 +51,22 @@ var (result, context) = await PipelineTracing.ExecuteWithTracing(
 
 This is useful when you want a separate trace for each pipeline execution while preserving the causal link to the parent.
 
+### Driving a pipeline span yourself
+
+`ExecuteWithTracing` starts and ends its span within one call. A pipeline whose run pauses between
+steps — the Bulk Loader stops every message's chain at the batch send and resumes it afterwards —
+needs the span to stay open across the pause. For that, `PipelineTracing` exposes the same parts
+separately:
+
+- `StartPipelineActivity(pipelineName, parent)` starts the `Pipeline.{pipelineName}` span, under
+  `parent` when one is given and under the current activity otherwise. The caller disposes it.
+- `Complete(activity, result, logger)` records the result exactly as `ExecuteWithTracing` does.
+- `Fail(activity, exception, pipelineName, logger)` records an exception that escaped the pipeline.
+
+Run each part of the chain with the span as `Activity.Current`, so its step spans land under it.
+`StepTracing.SetResult(activity, result)` tags a span the way a step's own span is tagged, for a
+step that runs outside a `Step` but should read like one.
+
 ## Step-level tracing
 
 Every step creates its own `Activity` span inside `ExecuteAsyncInternal`, which wraps your `ExecuteAsync` method. This happens automatically for all step types.
@@ -146,6 +162,46 @@ span starts a new trace instead. Both carry `messaging.system`, `messaging.desti
 status. Each consumer span links to the job span of the run that consumed it. The job span is
 tagged with the run's message counts: `intropy.messages.processed`, `intropy.messages.failed` (left
 for redelivery) and `intropy.messages.skipped` (duplicates).
+
+### Bulk loader traces
+
+A Bulk Loader processes many messages in one batch, but traces each message the way a
+single-message Loader would: in its producer's trace. The batch send, the one call that carries
+them all, is traced once in a trace of its own, and the two are linked both ways.
+
+```
+message trace (one per message, continuing its producer's trace)
+└─ process {topic}                     Consumer; outcome and route, as for a single message
+   └─ Pipeline.{pipeline}              one per message, open from its first step to its last
+      ├─ Step.Deserialize … Step.Transform
+      ├─ Step.BulkSend                 the batch call's start and end, this message's verdict,
+      │                                linked to the batch send (intropy.link.kind = batch)
+      ├─ Step.IdempotencyRecord, Step.Send (receipt)
+      └─ Finalizer.RouteBusinessIncidents
+
+batch send trace (one per batch)
+└─ Step.BulkSend                       root; messaging.batch.message_count,
+   │                                   intropy.batch.succeeded_count, intropy.batch.failed_count;
+   │                                   linked to each message's pipeline span (intropy.link.kind = message)
+   └─ the destination call (HttpClient or gRPC client spans)
+```
+
+A message that fails before the send — invalid, a duplicate — has no `Step.BulkSend` span and is
+not linked from the batch. A message that cannot be prepared at all, such as one with a claim
+pointer that cannot be resolved, has only its `process` span, with `Error` status.
+
+The `BulkLoader` traces itself without the host too. `Execute(batch, parents)` takes a parent per
+message, and `Execute(batch)` traces every message under the current activity. Either way, each
+message has its own pipeline span.
+
+Sampling: message spans follow their producer's sampling decision. The batch send span starts a
+new trace, so it is sampled at the root rate. With parent-based "always on" sampling (Aspire's
+default) it is always recorded. With ratio-based root sampling, a message's trace can link to a
+batch send that was not recorded. Each message's own `Step.BulkSend` span still carries the batch
+call's timing, its size and the message's verdict.
+
+An exporter caps the links one span keeps (OpenTelemetry's default is 128), so the batch send of a
+large batch links to only its first messages. Each message's link to the batch send is always kept.
 
 ## Metrics
 

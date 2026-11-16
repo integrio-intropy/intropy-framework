@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Intropy.Framework.Core.Common;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
+using Intropy.Framework.Core.Pipeline.Core;
 
 namespace Intropy.Framework.Core.Pipeline.Abstractions.Steps;
 
@@ -82,24 +83,6 @@ public abstract class Step<TIn, TOut, TCtx>
     /// </summary>
     /// <param name="activity">The <see cref="Activity"/> to act on</param>
     /// <param name="result">The <see cref="StepResult{T}"/> from the step execution</param>
-    private static void SetFinalActivityStatus(Activity? activity, StepResult<TOut> result)
-    {
-        if (activity is null) return;
-
-        var resultType = result.GetResultType();
-        activity.SetTag("step.result", resultType);
-        activity.SetStatus(resultType == "technical_failure"
-            ? ActivityStatusCode.Error
-            : ActivityStatusCode.Ok);
-
-        if (result is StepResult<TOut>.BusinessFailure bf)
-        {
-            activity.SetTag("step.business_failure_message", bf.Value.Description);
-            activity.SetTag("step.business_failure_retriable", bf.Retriable);
-        }
-        else if (result is StepResult<TOut>.TechnicalFailure tf)
-        {
-            activity.SetTag("step.technical_failure_message", tf.Value.Description);
-        }
-    }
+    private static void SetFinalActivityStatus(Activity? activity, StepResult<TOut> result) =>
+        StepTracing.SetResult(activity, result);
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Framework.Core.Common;
 using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
@@ -264,5 +265,109 @@ public class PipelineTracingTests
         {
             listener.Dispose();
         }
+    }
+
+    [Fact]
+    public void StartPipelineActivity_WithAParent_StartsItInThatTrace_AndLeavesEndingItToTheCaller()
+    {
+        // Arrange
+        var parent = new ActivityContext(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(),
+            ActivityTraceFlags.Recorded, isRemote: true);
+        using var listener = Listen(parent.TraceId);
+        using var current = new Activity("current").Start();
+
+        // Act
+        using var activity = PipelineTracing.StartPipelineActivity(PipelineName, parent);
+
+        // Assert
+        Assert.NotNull(activity);
+        Assert.Equal($"Pipeline.{PipelineName}", activity.DisplayName);
+        Assert.Equal(parent.TraceId, activity.TraceId);
+        Assert.Equal(parent.SpanId, activity.ParentSpanId);
+        Assert.Equal(PipelineName, activity.GetTagItem("pipeline.name"));
+        Assert.False(activity.IsStopped);
+    }
+
+    [Fact]
+    public void StartPipelineActivity_WithoutAParent_StartsItUnderTheCurrentActivity()
+    {
+        // Arrange
+        using var current = new Activity("current").Start();
+        using var listener = Listen(current.TraceId);
+
+        // Act
+        using var activity = PipelineTracing.StartPipelineActivity(PipelineName);
+
+        // Assert
+        Assert.NotNull(activity);
+        Assert.Equal(current.SpanId, activity.ParentSpanId);
+    }
+
+    [Fact]
+    public void Complete_RecordsTheResultAsExecuteWithTracingDoes()
+    {
+        // Arrange
+        using var current = new Activity("current").Start();
+        using var listener = Listen(current.TraceId);
+        using var failed = PipelineTracing.StartPipelineActivity(PipelineName);
+        using var aborted = PipelineTracing.StartPipelineActivity(PipelineName);
+
+        // Act
+        PipelineTracing.Complete(failed,
+            new StepResult<string>.TechnicalFailure(new TechnicalFailure(FailureDescription)), _logger);
+        PipelineTracing.Complete(aborted, new StepResult<string>.Aborted(), _logger);
+
+        // Assert
+        Assert.Equal(ActivityStatusCode.Error, failed!.Status);
+        Assert.Equal(FailureDescription, failed.StatusDescription);
+        Assert.Equal(ActivityStatusCode.Ok, aborted!.Status);
+    }
+
+    [Fact]
+    public void Fail_RecordsTheExceptionAsAnError()
+    {
+        // Arrange
+        using var current = new Activity("current").Start();
+        using var listener = Listen(current.TraceId);
+        using var activity = PipelineTracing.StartPipelineActivity(PipelineName);
+
+        // Act
+        PipelineTracing.Fail(activity, new InvalidOperationException("boom"), PipelineName, _logger);
+
+        // Assert
+        Assert.Equal(ActivityStatusCode.Error, activity!.Status);
+        Assert.Equal("boom", activity.StatusDescription);
+    }
+
+    [Fact]
+    public void StepTracing_SetResult_TagsAStepsResultAsAStepDoes()
+    {
+        // Arrange
+        using var activity = new Activity("step").Start();
+
+        // Act
+        StepTracing.SetResult(activity, new StepResult<string>.BusinessFailure(
+            new BusinessIncidentData { Description = "rejected" }, Retriable: false));
+
+        // Assert
+        Assert.Equal("business_failure", activity.GetTagItem("step.result"));
+        Assert.Equal("rejected", activity.GetTagItem("step.business_failure_message"));
+        Assert.Equal(false, activity.GetTagItem("step.business_failure_retriable"));
+        Assert.Equal(ActivityStatusCode.Ok, activity.Status);
+    }
+
+    /// <summary>Samples this source's spans in <paramref name="traceId"/> only, leaving other tests'
+    /// spans to their own listeners.</summary>
+    private static ActivityListener Listen(ActivityTraceId traceId)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ActivitySourceProvider.ActivitySourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) => options.TraceId == traceId
+                ? ActivitySamplingResult.AllDataAndRecorded
+                : ActivitySamplingResult.None
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 }

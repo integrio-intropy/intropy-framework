@@ -59,14 +59,14 @@ public class LoaderCallbackDaprTests(LoaderDaprFixture dapr) : IClassFixture<Loa
         var orderId = NewOrderId();
         var attempts = Sender.Attempts;
         var deadLettered = await dapr.DeadLetteredAsync();
-        Sender.FailNext(LoaderDaprFixture.SidecarRetries + 10);
+        Sender.FailNext(DaprSidecarFixture.SidecarRetries + 10);
         try
         {
             await dapr.PublishAsync(Guid.NewGuid().ToString(), LoaderHost.Created, orderId, new OrderCreated(orderId, "CUST-1"));
             await WaitUntilAsync(async () => await dapr.DeadLetteredAsync() > deadLettered);
 
             Assert.Equal(0, SentTo(orderId));
-            Assert.Equal(attempts + 1 + LoaderDaprFixture.SidecarRetries, Sender.Attempts);
+            Assert.Equal(attempts + 1 + DaprSidecarFixture.SidecarRetries, Sender.Attempts);
         }
         finally
         {

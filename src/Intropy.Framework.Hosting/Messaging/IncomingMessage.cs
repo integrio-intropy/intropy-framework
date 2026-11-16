@@ -51,6 +51,24 @@ internal sealed record IncomingMessage(
             extensions.ContainsKey(RetryCountKey), NullIfEmpty(request.Path));
     }
 
+    /// <summary>
+    /// Reads one entry of a bulk delivery: the entry carries the event, the batch around it carries
+    /// the pub/sub, the topic and the route the subscription's rules selected for the batch. Null
+    /// for an entry the sidecar delivered as raw bytes instead of a CloudEvent — it carries no type
+    /// to route on and no attributes to key idempotency off.
+    /// </summary>
+    internal static IncomingMessage? FromBulkEntry(TopicEventBulkRequestEntry entry, TopicEventBulkRequest batch)
+    {
+        if (entry.EventCase != TopicEventBulkRequestEntry.EventOneofCase.CloudEvent)
+            return null;
+
+        var cloudEvent = entry.CloudEvent;
+        IReadOnlyDictionary<string, Value> extensions = cloudEvent.Extensions?.Fields ?? s_noExtensions;
+        return new IncomingMessage(cloudEvent.Id, batch.PubsubName, batch.Topic, cloudEvent.Source, cloudEvent.Type,
+            NullIfEmpty(cloudEvent.SpecVersion), cloudEvent.DataContentType, cloudEvent.Data.Memory, extensions,
+            extensions.ContainsKey(RetryCountKey), NullIfEmpty(batch.Path));
+    }
+
     /// <summary>The CloudEvent subject, if it has one.</summary>
     internal string? Subject => NullIfEmpty(GetExtension("subject"));
 

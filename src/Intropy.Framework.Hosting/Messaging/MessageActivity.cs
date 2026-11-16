@@ -29,10 +29,7 @@ internal static class MessageActivity
     internal static Activity? StartProcessActivity(IncomingMessage message, string componentName,
         ActivityContext run = default, ActivityContext delivery = default)
     {
-        var parentContext = TryParseTraceContext(message.GetExtension(TraceParentKey),
-            message.GetExtension(TraceStateKey), out var propagated)
-            ? propagated
-            : default;
+        var parentContext = PropagatedContext(message);
 
         // With a default parent, StartActivity falls back to Activity.Current: clear it so a
         // message without trace context starts a new trace. The caller's context is async-local
@@ -64,6 +61,35 @@ internal static class MessageActivity
             parentContext,
             tags,
             Links(parentContext, run, delivery));
+    }
+
+    /// <summary>The trace context <paramref name="message"/> carries from its producer;
+    /// <see langword="default"/> when it carries none, or an unparsable one.</summary>
+    internal static ActivityContext PropagatedContext(IncomingMessage message) =>
+        TryParseTraceContext(message.GetExtension(TraceParentKey), message.GetExtension(TraceStateKey),
+            out var propagated)
+            ? propagated
+            : default;
+
+    /// <summary>Records how a message ended on its consumer span: its outcome and route, the
+    /// exception that failed it, and — for a message left for redelivery or otherwise in error —
+    /// <paramref name="errorType"/> and an error status. A message deliberately dropped is not an
+    /// error.</summary>
+    internal static void Complete(Activity? activity, PipelineOutcome outcome, string? route, string? errorType)
+    {
+        if (activity is null)
+            return;
+
+        activity.SetTag(MessagingAttributes.MessageOutcome, HostingMetrics.OutcomeName(outcome.Outcome));
+        if (route is not null)
+            activity.SetTag(MessagingAttributes.LoaderRoute, route);
+        if (outcome.Exception is not null)
+            activity.AddException(outcome.Exception);
+        if (errorType is not null)
+        {
+            activity.SetTag(MessagingAttributes.ErrorType, errorType);
+            activity.SetStatus(ActivityStatusCode.Error, outcome.Description);
+        }
     }
 
     /// <summary>Parses a W3C trace context, as propagated in a CloudEvent's extensions or a call's

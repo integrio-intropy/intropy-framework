@@ -107,8 +107,8 @@ internal class SendSideRun(
             // The idle window measures quiet time after the sweep, not the process's whole
             // lifetime: the clock restarts here so a sweep longer than IdleTimeout cannot make
             // the first poll look already-idle and exit with messages still on the queue.
-            subscription.Consumer.InFlight.RestartIdleClock();
-            await new IdleTimeoutMonitor(subscription.Consumer.InFlight, options.IdleTimeout, _logger, timeProvider)
+            subscription.InFlight.RestartIdleClock();
+            await new IdleTimeoutMonitor(subscription.InFlight, options.IdleTimeout, _logger, timeProvider)
                 .WaitForIdleTimeoutAsync(ct);
 
             _logger.LogInformation("Idle timeout triggered. Beginning graceful shutdown.");
