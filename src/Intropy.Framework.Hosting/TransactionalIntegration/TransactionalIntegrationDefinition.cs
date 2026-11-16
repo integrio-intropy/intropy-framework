@@ -46,10 +46,11 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
     /// are authoritative over what is set here.</summary>
     public Action<TransactionalIntegrationOptions>? Configure { get; init; }
 
-    /// <summary>The port the component sweeps, as declared in the system's topology; the
-    /// registration calls <c>AddSourcePort</c> with it
-    /// (and <see cref="Completion"/>), so the source the integration sweeps is described alongside
-    /// the rest. Optional: leave null when the component registers the source port itself.</summary>
+    /// <summary>The name of a <b>file</b> port the component sweeps, as declared in the system's
+    /// topology: the shorthand for <see cref="Source"/> = <c>new FileSourcePort(name, Completion)</c>.
+    /// A port of another kind (a polled source such as SQL) is declared with <see cref="Source"/>;
+    /// naming it here fails the run's validation. Optional: leave null when the component registers
+    /// the source port itself.</summary>
     public string? SourcePort { get; init; }
 
     /// <summary>What happens to a handled source file, for <see cref="SourcePort"/>. Default:
@@ -57,10 +58,11 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
     public FileCompletion? Completion { get; init; }
 
     /// <summary>The port the component sweeps, of any kind of source (a
-    /// <see cref="FileSourcePort"/>, or a kind an adapter package provides); the registration
-    /// calls <c>AddSourcePort</c> with it. Use either this or <see cref="SourcePort"/>
-    /// (with <see cref="Completion"/>), the shorthand for a file port, not both. Optional: leave
-    /// null when the component registers the source port itself.</summary>
+    /// <see cref="FileSourcePort"/>, a <see cref="StatefulSweeps.PolledSourcePort"/>, or a kind an
+    /// adapter package provides); the registration calls <c>AddSourcePort</c> with it. The canonical
+    /// way to declare the port: <see cref="SourcePort"/> (with <see cref="Completion"/>) is the
+    /// shorthand for a file port; set one or the other, not both. Optional: leave null when the
+    /// component registers the source port itself.</summary>
     public SourcePort? Source { get; init; }
 
     /// <summary>Creates the context for each source item and each message. Required when

@@ -40,6 +40,10 @@ internal static class HostingMetrics
     private static readonly Counter<long> SweptItems = Meter.CreateCounter<long>(
         "intropy.sweep.items", "{item}", "Source items swept, of every kind of source (files included), by outcome.");
 
+    private static readonly Counter<long> PolledReads = Meter.CreateCounter<long>(
+        "intropy.sweep.reads", "{read}",
+        "Reads of polled source ports (such as a database query), by result: pages, empty or not_ready. Their items are counted on intropy.sweep.items.");
+
     private static readonly Counter<long> ConsumedMessages = Meter.CreateCounter<long>(
         "messaging.client.consumed.messages", "{message}",
         "Messages the sidecar delivered to a subscribing block, by outcome.");
@@ -104,6 +108,18 @@ internal static class HostingMetrics
             { "intropy.component.name", componentName },
             { "intropy.source.port", sourcePort },
             { "intropy.sweep.outcome", OutcomeName(outcome) }
+        });
+
+    /// <summary>Records one read of a polled source port.</summary>
+    /// <param name="componentName">The component reading the port.</param>
+    /// <param name="sourcePort">The port read.</param>
+    /// <param name="result">What the read found: <c>pages</c>, <c>empty</c> or <c>not_ready</c>.</param>
+    internal static void RecordPolledRead(string componentName, string sourcePort, string result) =>
+        PolledReads.Add(1, new TagList
+        {
+            { "intropy.component.name", componentName },
+            { "intropy.source.port", sourcePort },
+            { "intropy.sweep.read.result", result }
         });
 
     internal static void RecordSweptFile(string componentName, string sourcePort, SweepOutcome outcome) =>

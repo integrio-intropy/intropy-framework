@@ -320,6 +320,82 @@ listing and completion. `test/Intropy.Framework.Hosting.Extensibility.Test` buil
 the public API only, and checks a non-file source's failures, duplicates, cancellation, listing
 failures, empty content and tracing.
 
+### Polled sources and their cursor
+
+Some sources are read, not listed: a database query or an HTTP API is read from a cursor.
+`PolledSourcePort` (`Intropy.Framework.Hosting.StatefulSweeps`) is that kind of source port. The
+source implements `IPolledSource`, registered keyed by the port name, as a file port's adapter is:
+
+```csharp
+// A component's single port: register the source and declare the port.
+services.AddPolledSourcePort("campaigns", sp => new CampaignPoller(/* ... */));
+
+// With routes: register the source, declare the port with the others.
+services.AddPolledSource("campaigns", sp => new CampaignPoller(/* ... */));
+services.AddExtractor(definition,
+    sources => sources.Port(new PolledSourcePort("campaigns")),
+    routes => routes.On<Campaigns, CampaignsOut>(["campaigns"], ConfigurePipeline));
+```
+
+A port declared by name alone (`sources.Port("campaigns")`, a definition's `SourcePort`) is a
+file port. Declare a polled port as a `PolledSourcePort`, with `Port(...)` or a definition's
+`Source`; a run whose file port has a polled source registered (or the other way round) fails
+validation and names the fix.
+
+The source only reads. `ReadAsync(range)` returns a `PolledResult`, and each outcome has its own
+cursor behaviour:
+
+| Outcome | Sent | Cursor |
+|---|---|---|
+| `PolledResult.Page(items, cursor)` / `PolledResult.Pages(stream)` | Each page's items, in order | Moves page by page, once a page's items are handled |
+| `PolledResult.Empty` | Nothing | Stays; a pinned range is committed, since nothing is left to deliver from it |
+| `PolledResult.NotReady` | Nothing | Stays exactly as it is; a pinned range stays pending |
+
+How the source pages and what an item is are its own choice, whatever it reads: a query read whole
+is one page with one item (its rows); read in batches, several pages; an API response can be one
+item or one item per element; a feed's archive pages are pages and its entries items
+(`Hosting.Extensibility.Test` builds an archived Atom feed reader this way, on the public API). A
+page (`PolledPage`) has its items (`PolledItem`: content, an optional id, metadata) and the cursor
+after it. A streamed read requests each page only once the previous one is committed.
+
+`Cursor` (`CursorOptions`) is `null` for a full export, which reads everything on every run. With
+a cursor, the sweep keeps it and moves it only after a page has been handled, the way a file is
+deleted or archived only after success:
+
+| | Full export (no cursor) | With a cursor |
+|---|---|---|
+| Read | Everything, every run | After `committed`, or exactly `(committed, pending]` after a crash |
+| Before a page's items | Nothing | `pending` = the page's cursor, saved |
+| After its last item is `Consumed`/`Duplicate` | Nothing to commit | `committed = pending`, `pending` cleared |
+| After a `Failed` item | The next run exports again | The read stops; `pending` stays and the next run reads the same range |
+| Idempotency key | The item's id, if it has one | `{port}:{id}`, or `{port}:{committed}:{pending}` plus `#{position}` in a page of several items |
+
+Items are ordered, so the first failed item stops the read; a business incident is `Consumed` and
+does not. The cursor is opaque to the sweep (a timestamp, a rowversion, an ETag, a page token) and
+kept in a Dapr state store (`CursorOptions.StoreName`) as one record per component and port, saved
+first-write-wins: a second run that moved it makes this run's save fail
+(`CursorConflictException`) instead of being overwritten. The system's topology mints that store
+(`<component>-cursors`) and its host sets the name in the port's section,
+`Ports:<port>:CursorStore`; `CursorOptions.FromPort(configuration, port, initial)` reads it, and
+fails naming the key when it is not set:
+
+```csharp
+public CursorOptions? Cursor { get; } = CursorOptions.FromPort(configuration, "campaigns", initial: "0");
+```
+
+Register an `ICursorStore` keyed by the
+store name to keep it elsewhere; `InMemoryCursorStore` (Intropy.Framework.Testing) is the fake for
+component tests. Pinning `pending` before a page is handled is what makes a re-read after a crash
+carry the same idempotency keys. A source that cannot read a bounded range again sets
+`CanPin: false`, keeps no `pending`, and gets plain at-least-once delivery.
+
+The key reaches the pipeline as `SourceContextKeys.IdempotencyKey`, through the internal queue of a
+Transactional Integration too. `WithSourceIdempotency()` on `ExtractorBuilder` and
+`SendPipelineBuilder` deduplicates on it instead of on the payload. Each read is counted on
+`intropy.sweep.reads` by result (`pages`, `empty`, `not_ready`), each item on `intropy.sweep.items`
+like any swept item, and an item's span carries `intropy.cursor.from`, `intropy.cursor.to` and
+`intropy.cursor.pinned`.
+
 ### Completion modes
 
 `FileCompletion.Delete` and `FileCompletion.Archive(basePath)` are built in. On an SMB source,

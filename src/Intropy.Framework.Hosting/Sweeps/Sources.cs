@@ -25,7 +25,10 @@ public sealed class Sources
 {
     private readonly List<SourcePort> _ports = [];
 
-    /// <summary>Declares a file source port to sweep.</summary>
+    /// <summary>Declares a <b>file</b> source port to sweep: the shorthand for
+    /// <c>Port(new FileSourcePort(port, completion))</c>. A port of another kind (a polled source such
+    /// as SQL) is declared with <see cref="Port(SourcePort)"/>; declaring it by name alone fails the
+    /// run's validation, naming the port.</summary>
     /// <param name="port">The port name, as declared in the system's topology; the key of the
     /// port's file adapter.</param>
     /// <param name="completion">What happens to a source file once the component has handled it.

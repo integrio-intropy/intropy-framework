@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Intropy.Framework.Adapters.Common;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Hosting.Common;
+using Intropy.Framework.Hosting.StatefulSweeps;
 using Intropy.Framework.Hosting.Sweeps;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -63,11 +64,19 @@ public sealed class FileSweep(
 {
     private readonly FileCompletion _completion = completion ?? throw new ArgumentNullException(nameof(completion));
 
-    /// <summary>Checks that the port's <see cref="IFileAdapter"/> is registered.</summary>
+    /// <summary>Checks that the port's <see cref="IFileAdapter"/> is registered, and that no source of
+    /// another kind is: a port declared by name alone is a file port.</summary>
     /// <param name="ct">The host's cancellation token.</param>
-    /// <exception cref="InvalidOperationException">No adapter is registered for the port.</exception>
+    /// <exception cref="InvalidOperationException">No adapter is registered for the port, or a polled
+    /// source is.</exception>
     public override Task ValidateAsync(CancellationToken ct = default)
     {
+        if (provider.GetKeyedService<IPolledSource>(Port) is not null)
+            throw new InvalidOperationException(
+                $"Component '{Context.ComponentName}': source port '{Port}' is declared as a file port, but a polled " +
+                $"source (IPolledSource) is registered for it. A port declared by name alone (Port(\"{Port}\"), " +
+                $"SourcePort = \"{Port}\") is a file port; declare it as new PolledSourcePort(\"{Port}\") (Port(...), " +
+                "or a definition's Source).");
         _ = provider.GetKeyedService<IFileAdapter>(Port) ?? throw new InvalidOperationException(
             $"Component '{Context.ComponentName}': no IFileAdapter is registered for the source port '{Port}'.");
         return Task.CompletedTask;

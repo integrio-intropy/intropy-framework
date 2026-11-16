@@ -94,6 +94,27 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
     }
 
     /// <summary>
+    /// Configures idempotency keyed on the range a polled source read, from the context metadata
+    /// (<see cref="SourceContextKeys.IdempotencyKey"/>) instead of the payload: use it on the send
+    /// side of a Transactional Integration whose source is a database query with a delta (or another
+    /// source with a cursor). A run that sends the same range again after a failure is cancelled as a
+    /// duplicate.
+    /// </summary>
+    /// <remarks>
+    /// The date is when the source was read (<see cref="SourceContextKeys.ReceivedAt"/>). The hash is
+    /// constant unless <paramref name="hashGenerator"/> is given, so the range alone decides. A message
+    /// without the key (from a full export, which needs no idempotency) fails the check.
+    /// </remarks>
+    /// <param name="client">The idempotency service client.</param>
+    /// <param name="hashGenerator">Optional hash of the payload, to also tell apart re-reads of the
+    /// same range whose content changed.</param>
+    /// <returns>The builder for method chaining.</returns>
+    public SendPipelineBuilder<TInput, TOutput, TCtx> WithSourceIdempotency(IIdempotencyServiceClient client,
+        Func<TInput, string>? hashGenerator = null) =>
+        WithIdempotency(client, (_, context) => SourceIdempotency.Id(context),
+            (_, context) => SourceIdempotency.Date(context), hashGenerator ?? (_ => SourceIdempotency.RangeHash));
+
+    /// <summary>
     /// Use this instead of <see cref="WithIdempotency"/> to use custom implementations of <see cref="IdempotencyCheckStep{T,TCtx}"/> and <see cref="IdempotencyRecordStep{T,TCtx}"/>.
     /// </summary>
     /// <param name="idempotencyCheckStep">A custom implementation of <see cref="IdempotencyCheckStep{T,TCtx}"/></param>

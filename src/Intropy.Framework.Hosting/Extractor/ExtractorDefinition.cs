@@ -36,11 +36,11 @@ namespace Intropy.Framework.Hosting.Extractor;
 /// <typeparam name="TCtx">The pipeline context.</typeparam>
 public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Context
 {
-    /// <summary>The port the component sweeps, as declared in the system's topology; the
-    /// registration calls <c>AddSourcePort</c> with it
-    /// (and <see cref="Completion"/>), so the component identity and the source it sweeps are
-    /// described in one place. Optional: leave null when the component registers the source port
-    /// itself — a test fake, or an adapter whose registration needs configuration.</summary>
+    /// <summary>The name of a <b>file</b> port the component sweeps, as declared in the system's
+    /// topology: the shorthand for <see cref="Source"/> = <c>new FileSourcePort(name, Completion)</c>.
+    /// A port of another kind (a polled source such as SQL) is declared with <see cref="Source"/>;
+    /// naming it here fails the run's validation. Optional: leave null when the component registers
+    /// the source port itself — a test fake, or an adapter whose registration needs configuration.</summary>
     public string? SourcePort { get; init; }
 
     /// <summary>What happens to a handled source file, for <see cref="SourcePort"/>. Default:
@@ -48,10 +48,11 @@ public sealed class ExtractorDefinition<TInput, TOutput, TCtx> where TCtx : Cont
     public FileCompletion? Completion { get; init; }
 
     /// <summary>The port the component sweeps, of any kind of source (a
-    /// <see cref="FileSourcePort"/>, or a kind an adapter package provides); the registration
-    /// calls <c>AddSourcePort</c> with it. Use either this or <see cref="SourcePort"/>
-    /// (with <see cref="Completion"/>), the shorthand for a file port, not both. Optional: leave
-    /// null when the component registers the source port itself.</summary>
+    /// <see cref="FileSourcePort"/>, a <see cref="StatefulSweeps.PolledSourcePort"/>, or a kind an
+    /// adapter package provides); the registration calls <c>AddSourcePort</c> with it. The canonical
+    /// way to declare the port: <see cref="SourcePort"/> (with <see cref="Completion"/>) is the
+    /// shorthand for a file port; set one or the other, not both. Optional: leave null when the
+    /// component registers the source port itself.</summary>
     public SourcePort? Source { get; init; }
 
     /// <summary>Creates the context for each source item. Required when <typeparamref name="TCtx"/>

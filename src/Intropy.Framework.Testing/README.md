@@ -11,6 +11,7 @@ helpers for delivering CloudEvents to loaders exactly as a Dapr sidecar does:
 | Helper | Namespace | Fakes |
 |---|---|---|
 | `InMemoryFileAdapter` | `Intropy.Framework.Testing.Adapters` | `IFileAdapter` (source/destination connectors) |
+| `InMemoryCursorStore` | `Intropy.Framework.Testing.StatefulSweeps` | `ICursorStore` (a polled source port's cursor, first-write-wins ETags) |
 | `FakeTopic<TCtx>` | `Intropy.Framework.Testing.Topics` | The extractor's Dapr pub/sub publish step |
 | `FakeEnqueueStep<TCtx>` | `Intropy.Framework.Testing.Topics` | The transactional receive pipeline's queue publish step |
 | `FakeIdempotencyServiceClient` | `Intropy.Framework.Testing.Services` | `IIdempotencyServiceClient` |
