@@ -74,7 +74,7 @@ public class BulkLoaderBuilderTests
             .WithIdempotency((_, _) => "id", (_, _) => DateTimeOffset.UtcNow)
             .WithValidator(_validator)
             .WithTransformer(_transformer)
-            .WithSender(_sender)
+            .WithBatchSender(_sender)
             .WithBusinessIncidents(x => x.Metadata["TEST"], x => x.Metadata["TEST"]);
 
         var result = _builder.Build();
@@ -112,7 +112,7 @@ public class BulkLoaderBuilderTests
             .WithIdempotency((_, _) => "", (_, _) => DateTimeOffset.UtcNow)
             .WithValidator(_validator)
             .WithTransformer(_transformer)
-            .WithSender(_sender)
+            .WithBatchSender(_sender)
             .WithBusinessIncidents(x => x.Metadata["TEST"], x => x.Metadata["TEST"]);
 
         // Building succeeds — the guard only fires when the pipeline actually runs the extractor.
@@ -132,10 +132,19 @@ public class BulkLoaderBuilderTests
     [Fact]
     public void WithSenderFromServices_WhenSenderIsMissing_ThrowsException()
     {
-        var serviceProvider = GetServiceCollection().BuildServiceProvider();
-        var builder = BulkLoaderBuilder<int, int, Context>.Create("Test", serviceProvider);
+        var builder = BulkLoaderBuilder<int, int, Context>.Create("Test", GetServiceCollection().BuildServiceProvider());
 
         var exception = Assert.Throws<InvalidOperationException>(() => builder.WithSenderFromServices());
+        Assert.Contains("SendStep", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("BatchSendStep", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WithBatchSenderFromServices_WhenSenderIsMissing_ThrowsException()
+    {
+        var builder = BulkLoaderBuilder<int, int, Context>.Create("Test", GetServiceCollection().BuildServiceProvider());
+
+        var exception = Assert.Throws<InvalidOperationException>(() => builder.WithBatchSenderFromServices());
         Assert.Contains("BatchSendStep", exception.Message, StringComparison.Ordinal);
     }
 
@@ -143,20 +152,65 @@ public class BulkLoaderBuilderTests
     public void WithSenderFromServices_WithRegisteredSender_ConfiguresSender()
     {
         var services = GetServiceCollection();
+        services.AddSingleton(Substitute.For<SendStep<int, Context>>());
+        var builder = BulkLoaderBuilder<int, int, Context>.Create("Test", services.BuildServiceProvider());
+
+        ConfigureAllDependenciesExcept("Sender", builder);
+        builder.WithSenderFromServices();
+
+        Assert.IsType<BulkLoader<int, int, Context>>(builder.Build());
+    }
+
+    [Fact]
+    public void WithBatchSenderFromServices_WithRegisteredSender_ConfiguresSender()
+    {
+        var services = GetServiceCollection();
         services.AddSingleton(_sender);
         var builder = BulkLoaderBuilder<int, int, Context>.Create("Test", services.BuildServiceProvider());
 
-        builder
-            .WithDeserializer(_deserializer)
-            .WithIdempotency((_, _) => "id", (_, _) => DateTimeOffset.UtcNow)
-            .WithValidator(_validator)
-            .WithTransformer(_transformer)
-            .WithSenderFromServices()
-            .WithBusinessIncidents(x => x.Metadata["TEST"], x => x.Metadata["TEST"]);
+        ConfigureAllDependenciesExcept("Sender", builder);
+        builder.WithBatchSenderFromServices();
 
-        var result = builder.Build();
+        Assert.IsType<BulkLoader<int, int, Context>>(builder.Build());
+    }
 
-        Assert.IsType<BulkLoader<int, int, Context>>(result);
+    [Fact]
+    public void WithBatchExtractor_OfARegisteredType_ResolvesIt()
+    {
+        var services = GetServiceCollection();
+        services.AddSingleton(Substitute.For<BatchExtractStep<int, Context>>());
+        var builder = BulkLoaderBuilder<int, int, Context>.Create("Test", services.BuildServiceProvider());
+
+        ConfigureAllDependenciesExcept("", builder);
+        builder.WithBatchExtractor<BatchExtractStep<int, Context>>();
+
+        Assert.IsType<BulkLoader<int, int, Context>>(builder.Build());
+    }
+
+    [Fact]
+    public void WithBatchExtractor_OfAnUnregisteredType_Throws()
+    {
+        var builder = GetBuilder();
+
+        Assert.Throws<InvalidOperationException>(() => builder.WithBatchExtractor<BatchExtractStep<int, Context>>());
+    }
+
+    [Fact]
+    public void Build_WithoutASender_NamesBothWaysToConfigureOne()
+    {
+        ConfigureAllDependenciesExcept("Sender");
+
+        var exception = Assert.Throws<InvalidOperationException>(() => _builder.Build());
+        Assert.Contains("WithSender()", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("WithBatchSender()", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void WithParallelism_BelowOne_Throws(int degree)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => _builder.WithParallelism(degree));
     }
 
     private static ServiceCollection GetServiceCollection()
@@ -190,7 +244,7 @@ public class BulkLoaderBuilderTests
         if (skip != "Idempotency") builder.WithIdempotency((_, _) => "id", (_, _) => DateTimeOffset.UtcNow);
         if (skip != "Validate") builder.WithValidator(_validator);
         if (skip != "Transform") builder.WithTransformer(_transformer);
-        if (skip != "Sender") builder.WithSender(_sender);
+        if (skip != "Sender") builder.WithBatchSender(_sender);
         if (skip != "Business incident route")
             builder.WithBusinessIncidents(x => x.Metadata["TEST"], x => x.Metadata["TEST"]);
     }

@@ -32,8 +32,10 @@ public sealed class BulkLoaderHost : IAsyncDisposable
     /// <param name="reject">Created orders the validator fails as a terminal business incident.</param>
     /// <param name="configure">Further options, applied over the fixture's defaults.</param>
     /// <param name="extraServices">Registrations the loader resolves at run time.</param>
+    /// <param name="createdLookup">A batch extractor for created orders, run before validation.</param>
     public static async Task<BulkLoaderHost> StartRoutingAsync(Func<OrderCreated, bool>? reject = null,
-        Action<BulkLoaderOptions>? configure = null, Action<IServiceCollection>? extraServices = null)
+        Action<BulkLoaderOptions>? configure = null, Action<IServiceCollection>? extraServices = null,
+        BatchExtractStep<OrderCreated, Context>? createdLookup = null)
     {
         var fixture = new BulkLoaderHost();
         var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(
@@ -57,7 +59,7 @@ public sealed class BulkLoaderHost : IAsyncDisposable
             },
             routes => routes
                 .On<OrderCreated, OrderCreated, Context>(LoaderHost.Created,
-                    (b, _) => Pipeline(b, fixture.CreatedSender, reject),
+                    (b, _) => Pipeline(b, fixture.CreatedSender, reject, createdLookup),
                     (metadata, isRetry) => new Context(metadata, isRetry))
                 .On<OrderCancelled, OrderCancelled, Context>(LoaderHost.Cancelled,
                     (b, _) => Pipeline(b, fixture.CancelledSender),
@@ -83,14 +85,18 @@ public sealed class BulkLoaderHost : IAsyncDisposable
         Callback.DeliverBulkAsync(cloudEvents);
 
     private static BulkLoaderBuilder<T, T, Context> Pipeline<T>(BulkLoaderBuilder<T, T, Context> builder,
-        RecordingBatchSender<T> sender, Func<T, bool>? reject = null) =>
-        builder
-            .WithDeserializer(new JsonDeserializer<T>())
+        RecordingBatchSender<T> sender, Func<T, bool>? reject = null, BatchExtractStep<T, Context>? lookup = null)
+    {
+        builder.WithDeserializer(new JsonDeserializer<T>());
+        if (lookup is not null)
+            builder.WithBatchExtractor(lookup);
+        return builder
             .WithValidator(new TestValidator<T>(reject))
             .WithTransformer(new IdentityTransformer<T>())
-            .WithSender(sender)
+            .WithBatchSender(sender)
             .WithBusinessIncidents(ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"),
                 ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"));
+    }
 }
 
 /// <summary>A batch sender that records every batch it is handed and accepts every entry, or fails

@@ -36,7 +36,15 @@ file sealed class MiscountingBatchSender : BatchSendStep<string, Context>
         Task.FromResult<IReadOnlyList<StepResult<string>>>([new StepResult<string>.Success("only one")]);
 }
 
-public class BulkSendStageTests
+file sealed class ThrowingBatchExtractor(Exception exception, bool retriable = true) : BatchExtractStep<string, Context>
+{
+    protected override bool ExceptionsAreRetriable => retriable;
+
+    public override Task<IReadOnlyList<StepResult<string>>> ExecuteBatchAsync(
+        IReadOnlyList<(string Value, Context Context)> entries, CancellationToken ct) => throw exception;
+}
+
+public class BatchStageTests
 {
     private static Context NewContext() => new([]);
 
@@ -52,7 +60,7 @@ public class BulkSendStageTests
 
         var batch = Batch(new StepResult<string>.Success("a"), new StepResult<string>.Success("b"));
 
-        var output = await BulkSendStage.ApplyAsync(batch, sender, CancellationToken.None);
+        var output = await BatchStage.ApplyAsync(batch, sender, CancellationToken.None);
 
         Assert.Single(sender.Calls);
         Assert.Equal(2, sender.Calls[0].Count);
@@ -70,7 +78,7 @@ public class BulkSendStageTests
             new BusinessIncidentData { Description = "pre-send failure" }, Retriable: false);
         var batch = Batch(new StepResult<string>.Success("a"), preFailure, new StepResult<string>.Cancelled());
 
-        var output = await BulkSendStage.ApplyAsync(batch, sender, CancellationToken.None);
+        var output = await BatchStage.ApplyAsync(batch, sender, CancellationToken.None);
 
         // Only the Success entry reaches the batch step.
         Assert.Single(sender.Calls);
@@ -93,7 +101,7 @@ public class BulkSendStageTests
 
         var batch = Batch(new StepResult<string>.Success("good"), new StepResult<string>.Success("bad"));
 
-        var output = await BulkSendStage.ApplyAsync(batch, sender, CancellationToken.None);
+        var output = await BatchStage.ApplyAsync(batch, sender, CancellationToken.None);
 
         Assert.Equal("good-sent", ((StepResult<string>.Success)output[0].Result).Value);
         var rejected = Assert.IsType<StepResult<string>.BusinessFailure>(output[1].Result);
@@ -106,7 +114,7 @@ public class BulkSendStageTests
         var sender = new ThrowingBatchSender(new TimeoutException("downstream unreachable"));
         var batch = Batch(new StepResult<string>.Success("a"), new StepResult<string>.Success("b"));
 
-        var output = await BulkSendStage.ApplyAsync(batch, sender, CancellationToken.None);
+        var output = await BatchStage.ApplyAsync(batch, sender, CancellationToken.None);
 
         var first = Assert.IsType<StepResult<string>.BusinessFailure>(output[0].Result);
         var second = Assert.IsType<StepResult<string>.BusinessFailure>(output[1].Result);
@@ -115,12 +123,40 @@ public class BulkSendStageTests
     }
 
     [Fact]
+    public async Task ApplyAsync_WholeBatchException_IsRetriableByDefault_AndNamesTheStep()
+    {
+        var extractor = new ThrowingBatchExtractor(new TimeoutException("source unreachable"));
+        var batch = Batch(new StepResult<string>.Success("a"), new StepResult<string>.Success("b"));
+
+        var output = await BatchStage.ApplyAsync(batch, extractor, CancellationToken.None);
+
+        Assert.Equal("BulkExtract", extractor.StepName);
+        Assert.All(output, o =>
+        {
+            var failure = Assert.IsType<StepResult<string>.BusinessFailure>(o.Result);
+            Assert.True(failure.Retriable);
+            Assert.Contains("'BulkExtract'", failure.Value.Description);
+        });
+    }
+
+    [Fact]
+    public async Task ApplyAsync_WholeBatchException_FromAStepWhoseExceptionsAreTerminal_IsNotRetriable()
+    {
+        var extractor = new ThrowingBatchExtractor(new InvalidDataException("bad response"), retriable: false);
+        var batch = Batch(new StepResult<string>.Success("a"));
+
+        var output = await BatchStage.ApplyAsync(batch, extractor, CancellationToken.None);
+
+        Assert.False(Assert.IsType<StepResult<string>.BusinessFailure>(output[0].Result).Retriable);
+    }
+
+    [Fact]
     public async Task ApplyAsync_NoSuccessEntries_NeverCallsTheBatchStep()
     {
         var sender = new RecordingBatchSender(entries => []);
         var batch = Batch(new StepResult<string>.Cancelled(), new StepResult<string>.Cancelled());
 
-        var output = await BulkSendStage.ApplyAsync(batch, sender, CancellationToken.None);
+        var output = await BatchStage.ApplyAsync(batch, sender, CancellationToken.None);
 
         Assert.Empty(sender.Calls);
         Assert.All(output, o => Assert.IsType<StepResult<string>.Cancelled>(o.Result));
@@ -133,6 +169,6 @@ public class BulkSendStageTests
         var batch = Batch(new StepResult<string>.Success("a"), new StepResult<string>.Success("b"));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            BulkSendStage.ApplyAsync(batch, sender, CancellationToken.None));
+            BatchStage.ApplyAsync(batch, sender, CancellationToken.None));
     }
 }

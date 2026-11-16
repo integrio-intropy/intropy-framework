@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using CloudNative.CloudEvents;
+using Intropy.Framework.Blocks.BulkLoader.Steps;
 using Intropy.Framework.Blocks.Shared;
+using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Messaging;
 using Intropy.Framework.Testing.Delivery;
 
@@ -11,6 +13,23 @@ namespace Intropy.Framework.Hosting.Test.Loader;
 /// bulkSubscribe delivery, through the real consumer, route and bulk pipeline, with one ack per
 /// entry back.
 /// </summary>
+/// <summary>Fills in each order's customer in one call, as a batch lookup against the source would.</summary>
+file sealed class CustomerLookup : BatchExtractStep<OrderCreated, Context>
+{
+    public List<IReadOnlyList<string>> Calls { get; } = [];
+
+    public override Task<IReadOnlyList<StepResult<OrderCreated>>> ExecuteBatchAsync(
+        IReadOnlyList<(OrderCreated Value, Context Context)> entries, CancellationToken ct)
+    {
+        lock (Calls)
+            Calls.Add([.. entries.Select(e => e.Value.OrderId)]);
+        return Task.FromResult<IReadOnlyList<StepResult<OrderCreated>>>([
+            .. entries.Select(e => (StepResult<OrderCreated>)new StepResult<OrderCreated>.Success(
+                e.Value with { Customer = $"CUST-{e.Value.OrderId}" }))
+        ]);
+    }
+}
+
 [Collection(ProcessStateCollection.Name)]
 public class BulkLoaderCallbackTests
 {
@@ -52,6 +71,20 @@ public class BulkLoaderCallbackTests
         Assert.Equal([DeliveryAck.Success, DeliveryAck.Success, DeliveryAck.Success], acks);
         var batch = Assert.Single(host.CreatedSender.Batches);
         Assert.Equal(["ORD-1", "ORD-2", "ORD-3"], batch.Select(o => o.OrderId));
+    }
+
+    [Fact]
+    public async Task ABatchOfReferences_IsLookedUpInOneCall_AndEachMessageSentWithItsOwnData()
+    {
+        var lookup = new CustomerLookup();
+        await using var host = await BulkLoaderHost.StartRoutingAsync(createdLookup: lookup);
+
+        var acks = await host.DeliverBulkAsync(Created("ORD-1"), Created("ORD-2"), Created("ORD-3"));
+
+        Assert.All(acks, ack => Assert.Equal(DeliveryAck.Success, ack));
+        Assert.Equal(["ORD-1", "ORD-2", "ORD-3"], Assert.Single(lookup.Calls));
+        Assert.Equal(["CUST-ORD-1", "CUST-ORD-2", "CUST-ORD-3"],
+            Assert.Single(host.CreatedSender.Batches).Select(o => o.Customer));
     }
 
     [Fact]
