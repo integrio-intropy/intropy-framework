@@ -46,6 +46,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
     private IdempotencyRecordStep<TOutput, TCtx>? _idempotencyRecorder;
     private BusinessIncidentRouteStep<TOutput, TCtx>? _businessIncidentRouter;
+    private ArchivePolicy? _archive;
 
     // Optional receipt sender
     private SendStep<TOutput, TCtx>? _receiptSender;
@@ -412,6 +413,24 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     }
 
     /// <summary>
+    /// Configures the archive: the received payload is copied to the archive store on receipt, on a
+    /// business incident, or both, as <paramref name="policy"/> says. Optional; without it nothing is
+    /// archived.
+    /// </summary>
+    /// <remarks>
+    /// Internal for the same reason as the claim check: archiving has one control surface, and it is
+    /// configuration. The hosting layer calls this from the registered archive store
+    /// (<c>AddArchiveStore</c>) and the component's <c>Archive</c> settings.
+    /// </remarks>
+    /// <param name="policy">The archive, or <see langword="null"/> for none.</param>
+    /// <returns>The builder for method chaining.</returns>
+    internal LoaderBuilder<TInput, TOutput, TCtx> WithArchive(ArchivePolicy? policy)
+    {
+        _archive = policy;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="Loader{TInput,TOutput,TContext}"/>.
     /// </summary>
     /// <returns>A configured instance of <see cref="Loader{TInput,TOutput,TContext}"/></returns>
@@ -448,7 +467,8 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
             _idempotencyChecker,
             _idempotencyRecorder,
             _businessIncidentRouter,
-            _receiptSender
+            _receiptSender,
+            _archive
         );
     }
 }

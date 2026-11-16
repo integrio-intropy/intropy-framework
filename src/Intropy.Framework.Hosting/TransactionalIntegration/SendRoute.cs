@@ -123,5 +123,8 @@ internal sealed class DeclaredSendRoute<TInput, TOutput, TCtx>(
             configureSend(SendPipelineBuilder<TInput, TOutput, TCtx>.Create(
                     Name is null ? $"{componentName}.Send" : $"{componentName}.Send.{Name}",
                     scope.GetRequiredService<FrameworkOptions>(), scope.GetRequiredService<ILoggerFactory>()),
-                scope).Build());
+                scope)
+                // The archive goes on after the route's own configuration: it is the deployment's decision.
+                .WithArchive(ArchiveStoreServiceCollectionExtensions.PolicyFor(scope))
+                .Build());
 }

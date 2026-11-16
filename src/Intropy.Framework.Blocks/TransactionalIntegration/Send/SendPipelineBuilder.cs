@@ -31,6 +31,7 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
     private IdempotencyRecordStep<byte[], TCtx>? _idempotencyRecorder;
     private BusinessIncidentRouteStep<byte[], TCtx>? _businessIncidentRouter;
+    private ArchivePolicy? _archive;
 
     private SendPipelineBuilder(string pipelineName, FrameworkOptions frameworkOptions,
         ILoggerFactory loggerFactory)
@@ -218,6 +219,24 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
     }
 
     /// <summary>
+    /// Configures the archive: the received payload is copied to the archive store on receipt, on a
+    /// business incident, or both, as <paramref name="policy"/> says. Optional; without it nothing is
+    /// archived.
+    /// </summary>
+    /// <remarks>
+    /// Internal for the same reason as the claim check: archiving has one control surface, and it is
+    /// configuration. The hosting layer calls this from the registered archive store
+    /// (<c>AddArchiveStore</c>) and the component's <c>Archive</c> settings.
+    /// </remarks>
+    /// <param name="policy">The archive, or <see langword="null"/> for none.</param>
+    /// <returns>The builder for method chaining.</returns>
+    internal SendPipelineBuilder<TInput, TOutput, TCtx> WithArchive(ArchivePolicy? policy)
+    {
+        _archive = policy;
+        return this;
+    }
+
+    /// <summary>
     /// Builds the <see cref="SendPipeline{TInput,TOutput,TCtx}"/>.
     /// </summary>
     /// <returns>A configured instance of <see cref="SendPipeline{TInput,TOutput,TCtx}"/></returns>
@@ -245,7 +264,8 @@ public class SendPipelineBuilder<TInput, TOutput, TCtx>
             _sender,
             _idempotencyChecker,
             _idempotencyRecorder,
-            _businessIncidentRouter
+            _businessIncidentRouter,
+            _archive
         );
     }
 }
