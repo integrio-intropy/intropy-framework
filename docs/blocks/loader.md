@@ -410,6 +410,7 @@ copy on the incident (`dataref`). In `OnReceipt` mode every event is archived on
 
 ## Related
 
+- [Bulk Loader](bulk-loader.md) — the same pipeline for messages that arrive in batches
 - [Extractor](extractor.md) — the counterpart that publishes CloudEvents from a source system
 - [Transactional Integration](transactional-integration.md) — the two-pipeline alternative with receive and send
 - [Result Types](../concepts/result-types.md) — understanding the four result variants

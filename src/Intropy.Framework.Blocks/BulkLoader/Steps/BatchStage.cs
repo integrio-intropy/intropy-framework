@@ -5,18 +5,18 @@ using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 namespace Intropy.Framework.Blocks.BulkLoader.Steps;
 
 /// <summary>
-/// Applies a <see cref="BatchSendStep{T,TCtx}"/> to a whole batch's current pipeline state:
+/// Applies a <see cref="BatchStep{T,TCtx}"/> to a whole batch's current pipeline state:
 /// partitions by <see cref="StepResult{T}.Success"/>/non-success — mirroring
 /// <c>Pipeline.AddStep</c>'s own short-circuit, applied across a collection instead of a scalar —
 /// calls the batch step once with only the success values, and merges its per-entry verdicts back
 /// into the original N positions. Non-success entries pass through unchanged. Always N in, N out.
-/// The call is traced as <see cref="BulkSendTracing"/> describes, against each entry's own span.
+/// The call is traced as <see cref="BatchStepTracing"/> describes, against each entry's own span.
 /// </summary>
-internal static class BulkSendStage
+internal static class BatchStage
 {
     internal static async Task<(StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)[]> ApplyAsync<T, TCtx>(
         (StepResult<T> Result, TCtx Context, CancellationToken CancellationToken)[] batch,
-        BatchSendStep<T, TCtx> step, CancellationToken ct, IReadOnlyList<Activity?>? spans = null)
+        BatchStep<T, TCtx> step, CancellationToken ct, IReadOnlyList<Activity?>? spans = null)
         where TCtx : Context
     {
         if (spans is not null && spans.Count != batch.Length)
@@ -48,11 +48,11 @@ internal static class BulkSendStage
         return output;
     }
 
-    private static async Task<IReadOnlyList<StepResult<T>>> SendAsync<T, TCtx>(BatchSendStep<T, TCtx> step,
+    private static async Task<IReadOnlyList<StepResult<T>>> SendAsync<T, TCtx>(BatchStep<T, TCtx> step,
         List<(T Value, TCtx Context)> entries, Activity?[] spans, CancellationToken ct) where TCtx : Context
     {
         var start = DateTimeOffset.UtcNow;
-        var batch = BulkSendTracing.StartBatch(step.StepName, spans, start);
+        var batch = BatchStepTracing.StartBatch(step.StepName, spans, start);
         IReadOnlyList<StepResult<T>>? verdicts = null;
         Exception? failure = null;
         try
@@ -68,9 +68,9 @@ internal static class BulkSendStage
         finally
         {
             var end = DateTimeOffset.UtcNow;
-            BulkSendTracing.EndBatch(batch, verdicts, failure, end);
+            BatchStepTracing.EndBatch(batch, verdicts, failure, end);
             for (var j = 0; j < spans.Length; j++)
-                BulkSendTracing.RecordMessage(step.StepName, spans[j], batch, spans.Length, verdicts?[j], failure,
+                BatchStepTracing.RecordMessage(step.StepName, spans[j], batch, spans.Length, verdicts?[j], failure,
                     start, end);
         }
     }

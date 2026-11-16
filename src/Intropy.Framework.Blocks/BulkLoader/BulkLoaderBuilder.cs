@@ -34,16 +34,16 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private readonly ILogger _logger;
 
     private DeserializeStep<TInput, TCtx>? _deserializer;
-    private readonly List<ExtractStep<TInput, TCtx>> _extractors = [];
+    private readonly List<(ExtractStep<TInput, TCtx>? PerMessage, BatchExtractStep<TInput, TCtx>? Batch)> _extractors = [];
     private ValidateStep<TInput, TCtx>? _validator;
     private TransformStep<TInput, TOutput, TCtx>? _transformer;
-    private BatchSendStep<TOutput, TCtx>? _sender;
+    private SendStep<TOutput, TCtx>? _sender;
+    private BatchSendStep<TOutput, TCtx>? _batchSender;
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
     private IdempotencyRecordStep<TOutput, TCtx>? _idempotencyRecorder;
     private BusinessIncidentRouteStep<TOutput, TCtx>? _businessIncidentRouter;
     private SendStep<TOutput, TCtx>? _receiptSender;
-    private int _preBatchDegreeOfParallelism = 1;
-    private int _postBatchDegreeOfParallelism = 1;
+    private int _degreeOfParallelism = 1;
 
     // The CloudEvent type of the route this pipeline serves in a routing bulk loader; null otherwise.
     private readonly string? _routeEventType;
@@ -99,7 +99,7 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     public BulkLoaderBuilder<TInput, TOutput, TCtx> WithExtractor(ExtractStep<TInput, TCtx> extractor)
     {
         ArgumentNullException.ThrowIfNull(extractor);
-        _extractors.Add(extractor);
+        _extractors.Add((extractor, null));
         return this;
     }
 
@@ -107,6 +107,21 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     public BulkLoaderBuilder<TInput, TOutput, TCtx> WithExtractor<TStep>()
         where TStep : ExtractStep<TInput, TCtx>
         => WithExtractor(StepFromServices.Resolve<TStep>(_serviceProvider));
+
+    /// <summary>Adds an extractor that runs once for the whole batch instead of once per message,
+    /// such as a lookup that resolves many references in one call. Extractors run in the order they
+    /// are added, whether per message or per batch.</summary>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithBatchExtractor(BatchExtractStep<TInput, TCtx> extractor)
+    {
+        ArgumentNullException.ThrowIfNull(extractor);
+        _extractors.Add((null, extractor));
+        return this;
+    }
+
+    /// <summary>Adds a batch extractor resolved from the service provider to the pipeline.</summary>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithBatchExtractor<TStep>()
+        where TStep : BatchExtractStep<TInput, TCtx>
+        => WithBatchExtractor(StepFromServices.Resolve<TStep>(_serviceProvider));
 
     /// <summary>Configures input validation using a custom validator.</summary>
     public BulkLoaderBuilder<TInput, TOutput, TCtx> WithValidator(ValidateStep<TInput, TCtx> validator)
@@ -134,25 +149,55 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         where TStep : TransformStep<TInput, TOutput, TCtx>
         => WithTransformer(StepFromServices.Resolve<TStep>(_serviceProvider));
 
-    /// <summary>Configures sending using a custom batch sender. Sends every message's output to the
-    /// external system in one call, instead of one call per message.</summary>
-    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithSender(BatchSendStep<TOutput, TCtx> sender)
+    /// <summary>Configures sending using a custom sender, called once per message. Replaces any
+    /// sender configured before, per message or batch.</summary>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithSender(SendStep<TOutput, TCtx> sender)
     {
+        ArgumentNullException.ThrowIfNull(sender);
         _sender = sender;
+        _batchSender = null;
         return this;
     }
 
-    /// <summary>Configures sending by resolving the registered <see cref="BatchSendStep{T,TCtx}"/>
+    /// <summary>Configures sending by resolving the registered <typeparamref name="TStep"/> from the
+    /// service provider.</summary>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithSender<TStep>()
+        where TStep : SendStep<TOutput, TCtx>
+        => WithSender(StepFromServices.Resolve<TStep>(_serviceProvider));
+
+    /// <summary>Configures sending by resolving the registered <see cref="SendStep{T,TCtx}"/>
     /// from the service provider.</summary>
-    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithSenderFromServices()
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithSenderFromServices() =>
+        WithSender(_serviceProvider.GetService<SendStep<TOutput, TCtx>>()
+                   ?? throw NotRegistered(nameof(SendStep<TOutput, TCtx>)));
+
+    /// <summary>Configures sending using a custom batch sender. Sends every message's output to the
+    /// external system in one call, instead of one call per message. Replaces any sender configured
+    /// before, per message or batch.</summary>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithBatchSender(BatchSendStep<TOutput, TCtx> sender)
     {
-        _sender = _serviceProvider.GetService<BatchSendStep<TOutput, TCtx>>()
-                  ?? throw new InvalidOperationException(
-                      $"{nameof(BatchSendStep<TOutput, TCtx>)}<{typeof(TOutput).Name}, {typeof(TCtx).Name}> is not registered in the service provider. " +
-                      $"Please register it using services.AddSingleton<{nameof(BatchSendStep<TOutput, TCtx>)}<{typeof(TOutput).Name}, {typeof(TCtx).Name}>>(...) " +
-                      "with a sender implementation.");
+        ArgumentNullException.ThrowIfNull(sender);
+        _batchSender = sender;
+        _sender = null;
         return this;
     }
+
+    /// <summary>Configures batch sending by resolving the registered <typeparamref name="TStep"/>
+    /// from the service provider.</summary>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithBatchSender<TStep>()
+        where TStep : BatchSendStep<TOutput, TCtx>
+        => WithBatchSender(StepFromServices.Resolve<TStep>(_serviceProvider));
+
+    /// <summary>Configures batch sending by resolving the registered
+    /// <see cref="BatchSendStep{T,TCtx}"/> from the service provider.</summary>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithBatchSenderFromServices() =>
+        WithBatchSender(_serviceProvider.GetService<BatchSendStep<TOutput, TCtx>>()
+                        ?? throw NotRegistered(nameof(BatchSendStep<TOutput, TCtx>)));
+
+    private static InvalidOperationException NotRegistered(string step) =>
+        new($"{step}<{typeof(TOutput).Name}, {typeof(TCtx).Name}> is not registered in the service provider. " +
+            $"Please register it using services.AddSingleton<{step}<{typeof(TOutput).Name}, {typeof(TCtx).Name}>>(...) " +
+            "with a sender implementation.");
 
     /// <summary>Configures an optional receipt sender that runs per message, after a successful load
     /// and, when idempotency is configured, after its record.</summary>
@@ -234,18 +279,16 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         return this;
     }
 
-    /// <summary>Configures the maximum number of messages processed concurrently in each of the two
-    /// per-message phases around the batch send. Both default to 1: each phase runs one message at
-    /// a time, and only the batch send handles the messages together.</summary>
-    /// <param name="preBatch">Degree of parallelism for Deserialize through Transform.</param>
-    /// <param name="postBatch">Degree of parallelism for idempotency record, receipt send, and
-    /// business incident routing.</param>
-    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithParallelism(int? preBatch = null, int? postBatch = null)
+    /// <summary>Configures the maximum number of messages processed concurrently by the steps that
+    /// run per message. Defaults to 1: those steps handle one message at a time, and only the batch
+    /// steps handle the messages together.</summary>
+    /// <param name="degreeOfParallelism">How many messages the per-message steps run at once.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="degreeOfParallelism"/> is below
+    /// 1.</exception>
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithParallelism(int degreeOfParallelism)
     {
-        if (preBatch is { } pre)
-            _preBatchDegreeOfParallelism = pre;
-        if (postBatch is { } post)
-            _postBatchDegreeOfParallelism = post;
+        ArgumentOutOfRangeException.ThrowIfLessThan(degreeOfParallelism, 1);
+        _degreeOfParallelism = degreeOfParallelism;
         return this;
     }
 
@@ -262,9 +305,9 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         if (_transformer == null)
             throw new InvalidOperationException("Transform step must be configured using WithTransformer()");
 
-        if (_sender == null)
+        if (_sender == null && _batchSender == null)
             throw new InvalidOperationException(
-                "Sender step must be configured using WithSender() or WithSenderFromServices()");
+                "Sender step must be configured using WithSender() or WithBatchSender()");
 
         if (_businessIncidentRouter == null)
             throw new InvalidOperationException(
@@ -278,12 +321,12 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
             _validator,
             _transformer,
             _sender,
+            _batchSender,
             _idempotencyChecker,
             _idempotencyRecorder,
             _businessIncidentRouter,
             _receiptSender,
-            _preBatchDegreeOfParallelism,
-            _postBatchDegreeOfParallelism
+            _degreeOfParallelism
         );
     }
 }

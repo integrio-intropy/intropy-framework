@@ -54,7 +54,7 @@ This is useful when you want a separate trace for each pipeline execution while 
 ### Driving a pipeline span yourself
 
 `ExecuteWithTracing` starts and ends its span within one call. A pipeline whose run pauses between
-steps — the Bulk Loader stops every message's chain at the batch send and resumes it afterwards —
+steps — the Bulk Loader stops every message's chain at each batch step and resumes it afterwards —
 needs the span to stay open across the pause. For that, `PipelineTracing` exposes the same parts
 separately:
 
@@ -166,42 +166,47 @@ for redelivery) and `intropy.messages.skipped` (duplicates).
 ### Bulk loader traces
 
 A Bulk Loader processes many messages in one batch, but traces each message the way a
-single-message Loader would: in its producer's trace. The batch send, the one call that carries
-them all, is traced once in a trace of its own, and the two are linked both ways.
+single-message Loader would: in its producer's trace. Each batch step — a batch lookup
+(`Step.BulkExtract`) or the batch send (`Step.BulkSend`), each one call that carries them all — is
+traced once in a trace of its own, and the two are linked both ways.
 
 ```
 message trace (one per message, continuing its producer's trace)
 └─ process {topic}                     Consumer; outcome and route, as for a single message
    └─ Pipeline.{pipeline}              one per message, open from its first step to its last
-      ├─ Step.Deserialize … Step.Transform
-      ├─ Step.BulkSend                 the batch call's start and end, this message's verdict,
-      │                                linked to the batch send (intropy.link.kind = batch)
+      ├─ Step.Deserialize
+      ├─ Step.BulkExtract              the batch call's start and end, this message's verdict,
+      │                                linked to the batch call (intropy.link.kind = batch)
+      ├─ Step.Validate … Step.Transform
+      ├─ Step.BulkSend                 likewise, for the batch send
       ├─ Step.IdempotencyRecord, Step.Send (receipt)
       └─ Finalizer.RouteBusinessIncidents
 
-batch send trace (one per batch)
-└─ Step.BulkSend                       root; messaging.batch.message_count,
+batch step trace (one per batch step, per batch)
+└─ Step.BulkExtract / Step.BulkSend    root; messaging.batch.message_count,
    │                                   intropy.batch.succeeded_count, intropy.batch.failed_count;
    │                                   linked to each message's pipeline span (intropy.link.kind = message)
-   └─ the destination call (HttpClient or gRPC client spans)
+   └─ the external call (HttpClient or gRPC client spans)
 ```
 
-A message that fails before the send — invalid, a duplicate — has no `Step.BulkSend` span and is
-not linked from the batch. A message that cannot be prepared at all, such as one with a claim
-pointer that cannot be resolved, has only its `process` span, with `Error` status.
+A pipeline without batch extractors has no `Step.BulkExtract` spans, and one with a per-message
+sender has a `Step.Send` per message instead of `Step.BulkSend`. A message that fails before a batch
+step — invalid, a duplicate, rejected by the lookup — has no span for it and is not linked from its
+trace. A message that cannot be prepared at all, such as one with a claim pointer that cannot be
+resolved, has only its `process` span, with `Error` status.
 
 The `BulkLoader` traces itself without the host too. `Execute(batch, parents)` takes a parent per
 message, and `Execute(batch)` traces every message under the current activity. Either way, each
 message has its own pipeline span.
 
-Sampling: message spans follow their producer's sampling decision. The batch send span starts a
+Sampling: message spans follow their producer's sampling decision. A batch step's span starts a
 new trace, so it is sampled at the root rate. With parent-based "always on" sampling (Aspire's
 default) it is always recorded. With ratio-based root sampling, a message's trace can link to a
-batch send that was not recorded. Each message's own `Step.BulkSend` span still carries the batch
-call's timing, its size and the message's verdict.
+batch call that was not recorded. Each message's own span for it still carries the batch call's
+timing, its size and the message's verdict.
 
-An exporter caps the links one span keeps (OpenTelemetry's default is 128), so the batch send of a
-large batch links to only its first messages. Each message's link to the batch send is always kept.
+An exporter caps the links one span keeps (OpenTelemetry's default is 128), so a batch step of a
+large batch links to only its first messages. Each message's link to the batch call is always kept.
 
 ## Metrics
 

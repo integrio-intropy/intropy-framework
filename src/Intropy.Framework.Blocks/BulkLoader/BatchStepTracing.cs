@@ -6,13 +6,14 @@ using Intropy.Framework.Core.Pipeline.Core;
 namespace Intropy.Framework.Blocks.BulkLoader;
 
 /// <summary>
-/// The spans of a batch send. The send is one call for many messages, each traced in its own
-/// trace, so it gets a trace of its own: a root span for the call, linked to every message it
-/// carried. Each message in turn gets a span for its part in the call — the call's own start and
-/// end, and the verdict for that message — in its own trace, linked back to the call. A message's
-/// trace then reads like a single-message load, and the call can be found from any of them.
+/// The spans of a batch step, such as a batch lookup or a batch send. The step is one call for many
+/// messages, each traced in its own trace, so it gets a trace of its own: a root span for the call,
+/// linked to every message it carried. Each message in turn gets a span for its part in the call —
+/// the call's own start and end, and the verdict for that message — in its own trace, linked back
+/// to the call. A message's trace then reads like a single-message load, and each call can be found
+/// from any of them.
 /// </summary>
-internal static class BulkSendTracing
+internal static class BatchStepTracing
 {
     private const string LinkKind = "intropy.link.kind";
     private const string MessageLink = "message";
