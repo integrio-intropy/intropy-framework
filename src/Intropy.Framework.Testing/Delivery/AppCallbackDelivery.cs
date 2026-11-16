@@ -11,7 +11,9 @@ namespace Intropy.Framework.Testing.Delivery;
 
 /// <summary>
 /// Delivers <see cref="CloudEvent"/>s to a running loader's Dapr gRPC app callback exactly as the
-/// sidecar does, one message per <c>OnTopicEvent</c> call, and returns the loader's acks.
+/// sidecar does — one message per <c>OnTopicEvent</c> call, or, for a subscription that declares
+/// <c>bulkSubscribe</c>, a whole batch per <c>OnBulkTopicEvent</c> call — and returns the loader's
+/// acks.
 /// </summary>
 /// <remarks>
 /// The loader always serves the Dapr gRPC app callback: start its host with
@@ -111,16 +113,47 @@ public sealed class AppCallbackDelivery : IDisposable
         return SendAsync(cloudEvent, pubSubName, topicName, $"/{cloudEvent.Type}", redelivery, ct);
     }
 
+    /// <summary>Delivers <paramref name="cloudEvents"/> as one bulk delivery on
+    /// <see cref="PubSubName"/> and <see cref="TopicName"/>, as the sidecar does for a subscription
+    /// that declares <c>bulkSubscribe</c>: one <c>OnBulkTopicEvent</c> call for the whole batch, and
+    /// one ack per event back.</summary>
+    /// <remarks>The sidecar groups a batch by the route its rules selected, so a real batch carries
+    /// events of one type and is delivered on that type's route — the route of the first event
+    /// here. Mixing types reproduces a delivery the sidecar does not make.</remarks>
+    /// <param name="cloudEvents">The batch's events, as their publishers sent them.</param>
+    /// <param name="redelivery">Marks every entry as a redelivery.</param>
+    /// <param name="ct">Cancels the call, as the sidecar would when it gives up on it.</param>
+    /// <returns>The block's ack for each event, in the order the events were given.</returns>
+    public Task<IReadOnlyList<DeliveryAck>> DeliverBulkAsync(IReadOnlyList<CloudEvent> cloudEvents,
+        bool redelivery = false, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(cloudEvents);
+        if (cloudEvents.Count == 0)
+            throw new ArgumentException("A bulk delivery carries at least one event.", nameof(cloudEvents));
+        return SendBulkAsync(cloudEvents, $"/{cloudEvents[0].Type}", redelivery, ct);
+    }
+
+    /// <summary>Delivers <paramref name="cloudEvents"/> as one bulk delivery on the subscription's
+    /// default route, as the sidecar does when none of the subscription's rules select them, and
+    /// returns the block's ack for each.</summary>
+    /// <param name="cloudEvents">The batch's events, as their publishers sent them.</param>
+    /// <param name="redelivery">Marks every entry as a redelivery.</param>
+    /// <param name="ct">Cancels the call.</param>
+    /// <returns>The block's ack for each event, in the order the events were given.</returns>
+    public Task<IReadOnlyList<DeliveryAck>> DeliverBulkUnhandledAsync(IReadOnlyList<CloudEvent> cloudEvents,
+        bool redelivery = false, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(cloudEvents);
+        if (cloudEvents.Count == 0)
+            throw new ArgumentException("A bulk delivery carries at least one event.", nameof(cloudEvents));
+        return SendBulkAsync(cloudEvents, UnhandledPath, redelivery, ct);
+    }
+
     private async Task<DeliveryAck> SendAsync(CloudEvent cloudEvent, string pubSubName, string topicName,
         string path, bool redelivery, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(cloudEvent);
         var (data, attributes) = SidecarEncoding.Encode(cloudEvent);
-        var extensions = new Struct();
-        foreach (var (name, value) in attributes)
-            extensions.Fields[name] = Value.ForString(value);
-        if (redelivery)
-            extensions.Fields["retrycount"] = Value.ForString("1");
 
         var response = await CallAsync("OnTopicEvent", new TopicEventRequest
         {
@@ -133,16 +166,89 @@ public sealed class AppCallbackDelivery : IDisposable
             PubsubName = pubSubName,
             Topic = topicName,
             Path = path,
-            Extensions = extensions
+            Extensions = Extensions(attributes, redelivery)
         }, TopicEventResponse.Parser, ct);
 
-        return response.Status switch
-        {
-            TopicEventResponse.Types.TopicEventResponseStatus.Success => DeliveryAck.Success,
-            TopicEventResponse.Types.TopicEventResponseStatus.Drop => DeliveryAck.Drop,
-            _ => DeliveryAck.Retry
-        };
+        return Ack(response.Status);
     }
+
+    private async Task<IReadOnlyList<DeliveryAck>> SendBulkAsync(IReadOnlyList<CloudEvent> cloudEvents, string path,
+        bool redelivery, CancellationToken ct)
+    {
+        // The batch-wide type the sidecar sets on every bulk delivery; the events' own types are on
+        // their entries.
+        var request = new TopicEventBulkRequest
+        {
+            Id = Guid.NewGuid().ToString(),
+            PubsubName = PubSubName,
+            Topic = TopicName,
+            Path = path,
+            Type = "com.dapr.event.sent.bulk"
+        };
+        // The sidecar also sends each entry's trace context as call metadata: one traceparent and
+        // one grpc-trace-bin header per entry, all-zero for an entry without one.
+        var headers = new Metadata();
+        var entryIds = new List<string>(cloudEvents.Count);
+        foreach (var cloudEvent in cloudEvents)
+        {
+            ArgumentNullException.ThrowIfNull(cloudEvent);
+            var (data, attributes) = SidecarEncoding.Encode(cloudEvent);
+            var traceParent = attributes.GetValueOrDefault("traceparent") ?? NoTraceParent;
+            headers.Add("traceparent", traceParent);
+            headers.Add("grpc-trace-bin", TraceContextBinary(traceParent));
+            var entryId = Guid.NewGuid().ToString();
+            entryIds.Add(entryId);
+            request.Entries.Add(new TopicEventBulkRequestEntry
+            {
+                EntryId = entryId,
+                ContentType = "application/cloudevents+json",
+                CloudEvent = new TopicEventCERequest
+                {
+                    Id = cloudEvent.Id ?? Guid.NewGuid().ToString(),
+                    Source = cloudEvent.Source?.ToString() ?? "",
+                    Type = cloudEvent.Type ?? "",
+                    SpecVersion = "1.0",
+                    DataContentType = cloudEvent.DataContentType ?? "application/json",
+                    Data = ByteString.CopyFrom(data),
+                    Extensions = Extensions(attributes, redelivery)
+                }
+            });
+        }
+
+        var response = await CallAsync("OnBulkTopicEvent", request, TopicEventBulkResponse.Parser, ct, headers);
+
+        // The sidecar retries an entry the app answered nothing for.
+        var acks = response.Statuses.ToDictionary(s => s.EntryId, s => Ack(s.Status), StringComparer.Ordinal);
+        return [.. entryIds.Select(id => acks.GetValueOrDefault(id, DeliveryAck.Retry))];
+    }
+
+    private const string NoTraceParent = "00-00000000000000000000000000000000-0000000000000000-00";
+
+    /// <summary>A W3C traceparent in the binary form gRPC carries it in: version, then the trace
+    /// id, span id and flags, each behind its field id.</summary>
+    private static byte[] TraceContextBinary(string traceParent)
+    {
+        var parts = traceParent.Split('-');
+        return [0, 0, .. Convert.FromHexString(parts[1]), 1, .. Convert.FromHexString(parts[2]), 2,
+            .. Convert.FromHexString(parts[3])];
+    }
+
+    private static Struct Extensions(IReadOnlyDictionary<string, string> attributes, bool redelivery)
+    {
+        var extensions = new Struct();
+        foreach (var (name, value) in attributes)
+            extensions.Fields[name] = Value.ForString(value);
+        if (redelivery)
+            extensions.Fields["retrycount"] = Value.ForString("1");
+        return extensions;
+    }
+
+    private static DeliveryAck Ack(TopicEventResponse.Types.TopicEventResponseStatus status) => status switch
+    {
+        TopicEventResponse.Types.TopicEventResponseStatus.Success => DeliveryAck.Success,
+        TopicEventResponse.Types.TopicEventResponseStatus.Drop => DeliveryAck.Drop,
+        _ => DeliveryAck.Retry
+    };
 
     /// <inheritdoc />
     public void Dispose() => _channel.Dispose();
@@ -150,14 +256,14 @@ public sealed class AppCallbackDelivery : IDisposable
     // Dapr's protos ship only the server side of the AppCallback service, so the calls are described
     // from its service descriptor.
     private async Task<TResponse> CallAsync<TRequest, TResponse>(string method, TRequest request,
-        MessageParser<TResponse> parser, CancellationToken ct)
+        MessageParser<TResponse> parser, CancellationToken ct, Metadata? headers = null)
         where TRequest : class, IMessage<TRequest>
         where TResponse : class, IMessage<TResponse>
     {
         var descriptor = new Method<TRequest, TResponse>(MethodType.Unary, s_service, method,
             Marshallers.Create<TRequest>(r => r.ToByteArray(), _ => throw new NotSupportedException()),
             Marshallers.Create(r => r.ToByteArray(), parser.ParseFrom));
-        return await _invoker.AsyncUnaryCall(descriptor, null, new CallOptions(cancellationToken: ct), request);
+        return await _invoker.AsyncUnaryCall(descriptor, null, new CallOptions(headers, cancellationToken: ct), request);
     }
 }
 

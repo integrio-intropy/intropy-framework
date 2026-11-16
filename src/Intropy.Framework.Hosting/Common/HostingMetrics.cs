@@ -46,6 +46,13 @@ internal static class HostingMetrics
         "Duration of processing one message through a Transactional Integration's send pipeline or a loader route.",
         advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = MessageDurationBuckets });
 
+    // A bulk delivery is processed as one unit, so it has no per-message duration: its messages are
+    // counted on messaging.client.consumed.messages, and the batch's time is recorded here, once.
+    private static readonly Histogram<double> BatchProcessDuration = Meter.CreateHistogram(
+        "intropy.messaging.batch.process.duration", "s",
+        "Duration of processing one bulk delivery through a bulk loader route.",
+        advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = MessageDurationBuckets });
+
     private static readonly Counter<long> GatewayRequests = Meter.CreateCounter<long>(
         "intropy.gateway.requests", "{request}", "Requests a gateway received, by outcome.");
 
@@ -124,6 +131,25 @@ internal static class HostingMetrics
         ConsumedMessages.Add(1, tags);
         if (duration is { } elapsed)
             ProcessDuration.Record(elapsed.TotalSeconds, tags);
+    }
+
+    /// <summary>Records how long one bulk delivery took to process, on
+    /// <c>intropy.messaging.batch.process.duration</c>. Its messages are counted one by one through
+    /// <see cref="RecordConsumedMessage"/>, without a duration of their own.</summary>
+    internal static void RecordBatchProcessDuration(string componentName, string pubSubName, string topic,
+        string? route, TimeSpan duration)
+    {
+        var tags = new TagList
+        {
+            { MessagingAttributes.System, MessagingAttributes.DaprSystem },
+            { MessagingAttributes.OperationName, MessagingAttributes.Process },
+            { MessagingAttributes.DestinationName, topic },
+            { MessagingAttributes.PubSubName, pubSubName },
+            { MessagingAttributes.ComponentName, componentName }
+        };
+        if (route is not null)
+            tags.Add(MessagingAttributes.LoaderRoute, route);
+        BatchProcessDuration.Record(duration.TotalSeconds, tags);
     }
 
     /// <summary>Reports <paramref name="count"/> as a subscribing block's messages in flight, on

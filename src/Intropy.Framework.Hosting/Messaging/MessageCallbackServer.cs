@@ -18,7 +18,20 @@ namespace Intropy.Framework.Hosting.Messaging;
 /// its subscription is a declarative Dapr <c>Subscription</c> resource. The sidecar needs
 /// <c>app-port</c> and <c>app-protocol</c> <c>grpc</c>.
 /// </summary>
-internal sealed class MessageCallbackServer(MessageConsumer consumer, int? port, ILoggerFactory loggerFactory)
+/// <remarks>
+/// A block consumes its subscription either one message at a time (<see cref="MessageConsumer"/>,
+/// the <c>AppCallback</c> service) or in batches (<see cref="BulkMessageConsumer"/>, the
+/// <c>AppCallbackAlpha</c> service) — which of the two the sidecar calls follows from the
+/// subscription's own <c>bulkSubscribe</c>, not from anything the block says. The
+/// <c>AppCallback</c> service is served either way: the sidecar asks it for the block's
+/// programmatic subscriptions at startup, which are none, because the block's subscription is a
+/// declarative resource.
+/// </remarks>
+internal sealed class MessageCallbackServer(
+    MessageConsumer? consumer,
+    BulkMessageConsumer? bulkConsumer,
+    int? port,
+    ILoggerFactory loggerFactory)
     : IAsyncDisposable
 {
     private WebApplication? _server;
@@ -42,7 +55,8 @@ internal sealed class MessageCallbackServer(MessageConsumer consumer, int? port,
             kestrel.ListenAnyIP(listenPort, listen => listen.Protocols = HttpProtocols.Http2));
         builder.Logging.ClearProviders();
         builder.Services.AddSingleton(loggerFactory);
-        builder.Services.AddSingleton(consumer);
+        builder.Services.AddSingleton(new AppCallbackService(consumer, bulkConsumer,
+            loggerFactory.CreateLogger<MessageCallbackServer>()));
         builder.Services.AddGrpc();
 
         _server = builder.Build();
@@ -65,7 +79,8 @@ internal sealed class MessageCallbackServer(MessageConsumer consumer, int? port,
             await _server.DisposeAsync();
     }
 
-    private sealed class AppCallbackService(MessageConsumer consumer) : AppCallback.AppCallbackBase
+    private sealed class AppCallbackService(MessageConsumer? consumer, BulkMessageConsumer? bulkConsumer,
+        ILogger logger) : AppCallback.AppCallbackBase
     {
         public override Task<ListTopicSubscriptionsResponse> ListTopicSubscriptions(Empty request,
             ServerCallContext context) => Task.FromResult(new ListTopicSubscriptionsResponse());
@@ -73,8 +88,58 @@ internal sealed class MessageCallbackServer(MessageConsumer consumer, int? port,
         public override Task<ListInputBindingsResponse> ListInputBindings(Empty request, ServerCallContext context) =>
             Task.FromResult(new ListInputBindingsResponse());
 
-        public override Task<TopicEventResponse> OnTopicEvent(TopicEventRequest request, ServerCallContext context) =>
-            consumer.HandleAsync(request, context.CancellationToken, DeliveryContext(context.RequestHeaders));
+        public override Task<TopicEventResponse> OnTopicEvent(TopicEventRequest request, ServerCallContext context)
+        {
+            // A block that consumes in batches serves this callback only for the sidecar's startup
+            // handshake: its subscription is bulk, so its messages arrive on the alpha callback. A
+            // message here means the subscription is not the one the block was registered for.
+            if (consumer is null)
+            {
+                logger.LogError(
+                    "Message {MessageId} was pushed to the single-message callback of a block that consumes in batches; left for redelivery. Check the component's Subscription resource.",
+                    request.Id);
+                return Task.FromResult(new TopicEventResponse
+                {
+                    Status = TopicEventResponse.Types.TopicEventResponseStatus.Retry
+                });
+            }
+
+            return consumer.HandleAsync(request, context.CancellationToken, DeliveryContext(context.RequestHeaders));
+        }
+
+        /// <summary>
+        /// The callback the sidecar uses instead of <see cref="OnTopicEvent"/> for a subscription
+        /// that declares <c>bulkSubscribe</c>: one call per batch, one acknowledgement per entry.
+        /// The sidecar calls this stable method first and only falls back to the deprecated
+        /// <c>OnBulkTopicEventAlpha1</c> if the app leaves it unimplemented, so the alpha service is
+        /// not served at all.
+        /// </summary>
+        public override Task<TopicEventBulkResponse> OnBulkTopicEvent(TopicEventBulkRequest request,
+            ServerCallContext context)
+        {
+            // A block that consumes one message at a time serves this callback only to answer the
+            // sidecar: a batch here means its subscription declares bulkSubscribe and the block was
+            // not registered for it.
+            if (bulkConsumer is null)
+            {
+                logger.LogError(
+                    "Batch {BatchId} of {Count} messages was pushed to a block that consumes one message at a time; left for redelivery. Either register it as a bulk loader or drop bulkSubscribe from its Subscription resource.",
+                    request.Id, request.Entries.Count);
+                var response = new TopicEventBulkResponse();
+                foreach (var entry in request.Entries)
+                    response.Statuses.Add(new TopicEventBulkResponseEntry
+                    {
+                        EntryId = entry.EntryId,
+                        Status = TopicEventResponse.Types.TopicEventResponseStatus.Retry
+                    });
+                return Task.FromResult(response);
+            }
+
+            // Each entry carries its own trace context, which the batch's span links to. The call's
+            // metadata is left unread: the sidecar sends a grpc-trace-bin header per entry, and
+            // ServerCallContext.RequestHeaders throws decoding the repeated binary header.
+            return bulkConsumer.HandleAsync(request, context.CancellationToken);
+        }
 
         /// <summary>The trace context of the sidecar's span delivering the message, from the call's
         /// metadata; <see langword="default"/> when it sent none.</summary>

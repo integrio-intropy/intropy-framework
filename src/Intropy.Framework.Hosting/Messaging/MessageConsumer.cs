@@ -165,19 +165,7 @@ internal sealed class MessageConsumer : IDisposable
 
         // A message left for redelivery is an error; one deliberately dropped is not.
         var errorType = acknowledged ? null : outcome.ErrorType;
-        if (activity is not null)
-        {
-            activity.SetTag(MessagingAttributes.MessageOutcome, HostingMetrics.OutcomeName(outcome.Outcome));
-            if (handled.Route is not null)
-                activity.SetTag(MessagingAttributes.LoaderRoute, handled.Route);
-            if (outcome.Exception is not null)
-                activity.AddException(outcome.Exception);
-            if (errorType is not null)
-            {
-                activity.SetTag(MessagingAttributes.ErrorType, errorType);
-                activity.SetStatus(ActivityStatusCode.Error, outcome.Description);
-            }
-        }
+        MessageActivity.Complete(activity, outcome, handled.Route, errorType);
 
         Log(message, handled.Route, outcome);
         HostingMetrics.RecordConsumedMessage(_componentName, message.PubSubName, message.TopicName,
