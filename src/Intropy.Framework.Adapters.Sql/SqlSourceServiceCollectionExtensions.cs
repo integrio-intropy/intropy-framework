@@ -143,8 +143,9 @@ public static class SqlSourceServiceCollectionExtensions
 
     private static void Validate(SqlSourceOptions options, bool hasDelta, string location)
     {
-        if (!string.Equals(options.Kind?.Trim(), SqlSourceOptions.SqlKind, StringComparison.OrdinalIgnoreCase))
-            throw Invalid(location, "Kind must be Sql.");
+        if (!string.Equals(options.Kind?.Trim(), SqlSourceOptions.SqlKind, StringComparison.OrdinalIgnoreCase)
+            && !options.IsSqlite)
+            throw Invalid(location, "Kind must be Sql or Sqlite.");
         if (string.IsNullOrWhiteSpace(options.ConnectionString))
             throw Invalid(location, "ConnectionString is required.");
         if (!Enum.IsDefined(options.EmptyResult))

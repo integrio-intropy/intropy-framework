@@ -1,4 +1,5 @@
 using System.Data;
+using System.Data.Common;
 using System.Globalization;
 using Microsoft.Data.SqlClient;
 
@@ -47,6 +48,8 @@ internal sealed class SqlWatermark : IComparable<SqlWatermark>
         short v => new SqlWatermark(IntegerTag, (long)v),
         byte v => new SqlWatermark(IntegerTag, (long)v),
         decimal v => new SqlWatermark(DecimalTag, v),
+        // SQLite returns a REAL column as a double.
+        double v => new SqlWatermark(DecimalTag, (decimal)v),
         byte[] v => new SqlWatermark(BinaryTag, v),
         string v => new SqlWatermark(StringTag, v),
         _ => throw new InvalidOperationException(
@@ -175,11 +178,32 @@ internal sealed class SqlWatermark : IComparable<SqlWatermark>
     /// <summary>The value as stored: text tagged with its type.</summary>
     internal string Stored => $"{Tag}:{Text}";
 
-    /// <summary>The value as a query parameter.</summary>
-    internal SqlParameter Parameter(string name) => new(name, DbType) { Value = Value };
+    /// <summary>
+    /// <paramref name="value"/> as the parameter <paramref name="name"/> of <paramref name="command"/>,
+    /// or a <c>NULL</c> of <paramref name="type"/>'s type when there is no value. SQL Server gets the
+    /// watermark's SQL type. SQLite has no declared types: a date and time is passed as ISO 8601 text,
+    /// so it compares with a TEXT column holding ISO 8601 values.
+    /// </summary>
+    internal static DbParameter Parameter(DbCommand command, string name, SqlWatermark? value, SqlWatermark? type)
+    {
+        if (command is SqlCommand)
+        {
+            return new SqlParameter(name, (value ?? type)?.DbType ?? SqlDbType.NVarChar)
+            {
+                Value = value?.Value ?? DBNull.Value
+            };
+        }
 
-    /// <summary>A <c>NULL</c> parameter of this watermark's type.</summary>
-    internal SqlParameter NullParameter(string name) => new(name, DbType) { Value = DBNull.Value };
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = name;
+        parameter.Value = value?.Value switch
+        {
+            null => DBNull.Value,
+            DateTime or DateTimeOffset => value.Text,
+            var v => v
+        };
+        return parameter;
+    }
 
     private SqlDbType DbType => Tag switch
     {

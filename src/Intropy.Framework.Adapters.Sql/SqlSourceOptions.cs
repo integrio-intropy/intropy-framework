@@ -6,13 +6,22 @@ namespace Intropy.Framework.Adapters.Sql;
 /// </summary>
 public sealed class SqlSourceOptions
 {
-    /// <summary>The kind every SQL port's section names.</summary>
+    /// <summary>The kind of a SQL Server port.</summary>
     public const string SqlKind = "Sql";
 
-    /// <summary>The port's kind: <c>Sql</c>.</summary>
+    /// <summary>The kind of a SQLite port: a local stand-in for SQL Server, a database file with no
+    /// server to run. The same query runs against it, so keep the query to SQL both accept.</summary>
+    public const string SqliteKind = "Sqlite";
+
+    /// <summary>The port's kind: <c>Sql</c> (SQL Server) or <c>Sqlite</c>. The environment chooses it,
+    /// like a file port's binding type: a local run can read SQLite where the deployment reads SQL
+    /// Server.</summary>
     public string Kind { get; init; } = SqlKind;
 
-    /// <summary>The SQL Server connection string. A secret: never logged. Use a SQL login; Windows
+    /// <summary>Whether the port reads SQLite rather than SQL Server.</summary>
+    internal bool IsSqlite => string.Equals(Kind?.Trim(), SqliteKind, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The SQL Server (or SQLite) connection string. A secret: never logged. Use a SQL login; Windows
     /// integrated authentication does not work from a Linux container.</summary>
     public string? ConnectionString { get; init; }
 

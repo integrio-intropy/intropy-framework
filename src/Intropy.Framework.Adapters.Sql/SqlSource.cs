@@ -1,8 +1,10 @@
 using System.Data;
+using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Intropy.Framework.Hosting.StatefulSweeps;
 using Microsoft.Data.SqlClient;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 
 namespace Intropy.Framework.Adapters.Sql;
@@ -39,7 +41,9 @@ internal sealed class SqlSource(
         var from = range.From is null ? null : SqlWatermark.Parse(range.From);
         var to = range.To is null ? null : SqlWatermark.Parse(range.To);
 
-        await using var connection = new SqlConnection(options.ConnectionString);
+        await using DbConnection connection = options.IsSqlite
+            ? new SqliteConnection(options.ConnectionString)
+            : new SqlConnection(options.ConnectionString);
         await connection.OpenAsync(ct);
 
         if (delta is not null && dataAvailable is not null && to is null
@@ -81,7 +85,7 @@ internal sealed class SqlSource(
         return PolledResult.Page([new PolledItem(result.Content) { Metadata = metadata }], result.Watermark?.Stored);
     }
 
-    private async Task<bool> IsDataAvailableAsync(SqlConnection connection, SqlWatermark? from, CancellationToken ct)
+    private async Task<bool> IsDataAvailableAsync(DbConnection connection, SqlWatermark? from, CancellationToken ct)
     {
         await using var command = Command(connection, dataAvailable!, from, null);
         return await command.ExecuteScalarAsync(ct) switch
@@ -96,22 +100,17 @@ internal sealed class SqlSource(
 
     [SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities",
         Justification = "The statement is the component's own SQL, embedded in its code; values are parameters.")]
-    private SqlCommand Command(SqlConnection connection, SqlFile statement, SqlWatermark? from, SqlWatermark? to)
+    private DbCommand Command(DbConnection connection, SqlFile statement, SqlWatermark? from, SqlWatermark? to)
     {
-        var command = new SqlCommand(statement.Text, connection)
-        {
-            CommandTimeout = (int)Math.Ceiling(options.CommandTimeout.TotalSeconds)
-        };
+        var command = connection.CreateCommand();
+        command.CommandText = statement.Text;
+        command.CommandTimeout = (int)Math.Ceiling(options.CommandTimeout.TotalSeconds);
         if (delta is null)
             return command;
 
         var type = from ?? to;
-        command.Parameters.Add(from?.Parameter(WatermarkParameter)
-                               ?? type?.NullParameter(WatermarkParameter)
-                               ?? new SqlParameter(WatermarkParameter, SqlDbType.NVarChar) { Value = DBNull.Value });
-        command.Parameters.Add(to?.Parameter(WatermarkToParameter)
-                               ?? type?.NullParameter(WatermarkToParameter)
-                               ?? new SqlParameter(WatermarkToParameter, SqlDbType.NVarChar) { Value = DBNull.Value });
+        command.Parameters.Add(SqlWatermark.Parameter(command, WatermarkParameter, from, type));
+        command.Parameters.Add(SqlWatermark.Parameter(command, WatermarkToParameter, to, type));
         return command;
     }
 }

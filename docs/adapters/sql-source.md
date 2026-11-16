@@ -75,7 +75,7 @@ The port's section holds only what differs between environments:
 
 | Setting | Meaning |
 |---|---|
-| `Kind` | `Sql`. |
+| `Kind` | `Sql` (SQL Server), or `Sqlite` for a local run. See [SQLite for local runs](#sqlite-for-local-runs). |
 | `ConnectionString` | SQL Server connection string. Use a SQL login: Windows integrated authentication does not work from a Linux container. |
 | `EmptyResult` | `Skip` (default): a run without rows sends nothing. `Send`: it sends an empty array. |
 | `WatermarkStore` | The Dapr state store the watermark is kept in. Required with a delta. |
@@ -105,6 +105,18 @@ tag. Later watermarks are stored with their tag, taken from the column.
 Registration validates the section immediately; unknown settings are rejected, and errors never
 include a value (the connection string is a secret). Scheduling, such as once a day at 01:50, is the
 CronJob's job, not the adapter's.
+
+### SQLite for local runs
+
+`Kind: Sqlite` reads a SQLite database file instead of SQL Server, with the same query file and
+delta: a local run needs no database server. The environment chooses the kind, so a component's
+`appsettings.json` can say `Sql` while the local system host sets `Ports__<port>__Kind=Sqlite` and a
+connection string such as `Data Source=/abs/path/marketing.db`.
+
+The query runs unchanged on both, so keep it to SQL both accept: a plain `SELECT … WHERE column >
+@watermark ORDER BY column` does; `TOP`, T-SQL functions and SQL Server types do not. SQLite has no
+declared types: use an integer or a text watermark column, and a date and time watermark is passed
+as ISO 8601 text.
 
 ## Behaviour
 
