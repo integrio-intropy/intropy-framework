@@ -39,7 +39,7 @@ public class ArchiveStoreTests
             ["ArchiveStore:Kind"] = "Local",
             ["ArchiveStore:DaprBindingName"] = "archive-store",
             ["Archive:Mode"] = "OnReceipt",
-            ["Archive:BrowseBaseUrl"] = "https://starchive.blob.core.windows.net/archive/"
+            ["Archive:BrowseBaseUrl"] = "https://examplearchive.blob.core.windows.net/archive/"
         }).Build();
         var services = new ServiceCollection().AddSingleton(Substitute.For<DaprClient>());
 
@@ -50,7 +50,7 @@ public class ArchiveStoreTests
             provider.GetKeyedService<IFileAdapter>(ArchiveStoreServiceCollectionExtensions.ArchiveStoreKey));
         var options = provider.GetRequiredService<ArchiveOptions>();
         Assert.Equal(ArchiveMode.OnReceipt, options.Mode);
-        Assert.Equal(new Uri("https://starchive.blob.core.windows.net/archive/"), options.BrowseBaseUrl);
+        Assert.Equal(new Uri("https://examplearchive.blob.core.windows.net/archive/"), options.BrowseBaseUrl);
     }
 
     [Fact]

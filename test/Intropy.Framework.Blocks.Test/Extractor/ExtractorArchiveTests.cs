@@ -22,7 +22,7 @@ public class ExtractorArchiveTests
 {
     private const string ReceivedAt = "2026-10-28T10:15:00.0000000Z";
 
-    private static readonly Uri BrowseBaseUrl = new("https://starchive.blob.core.windows.net/archive/");
+    private static readonly Uri BrowseBaseUrl = new("https://examplearchive.blob.core.windows.net/archive/");
 
     private readonly RecordingStore _store = new();
     private readonly IBusinessIncidentServiceClient _incidents = Substitute.For<IBusinessIncidentServiceClient>();
@@ -79,7 +79,7 @@ public class ExtractorArchiveTests
     public async Task OnIncident_AnIncidentsPayloadIsArchivedUnchanged_AndTheIncidentNamesTheCopy()
     {
         // Latin-1 bytes that are not valid UTF-8: the copy must be the bytes, not a decoding of them.
-        var input = Input("reject: Bærum");
+        var input = Input("reject: café crème");
 
         var (result, context) = await Build(ArchiveMode.OnIncident, BrowseBaseUrl)
             .Execute(input, FileContext(), ct: CancellationToken.None);

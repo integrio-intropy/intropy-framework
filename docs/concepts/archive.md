@@ -20,11 +20,11 @@ Two configuration sections, like the claim store and its mode:
 |---------|---------|-------------|
 | `ArchiveStore` | `Kind`, `DaprBindingName`, `BasePath` | The store's adapter: the same settings a port takes, validated the same way |
 | `Archive` | `Mode` | `OnIncident` (default), `OnReceipt` or `Never` |
-| `Archive` | `BrowseBaseUrl` | Optional. Where a copy can be opened, its key appended — the archive container's address, e.g. `https://stprodarchive001.blob.core.windows.net/archive/` |
+| `Archive` | `BrowseBaseUrl` | Optional. Where a copy can be opened, its key appended — the archive container's address, e.g. `https://<account>.blob.core.windows.net/archive/` |
 
 ```json
 "ArchiveStore": { "DaprBindingName": "archive-store" },
-"Archive": { "Mode": "OnIncident", "BrowseBaseUrl": "https://stprodarchive001.blob.core.windows.net/archive/" }
+"Archive": { "Mode": "OnIncident", "BrowseBaseUrl": "https://<account>.blob.core.windows.net/archive/" }
 ```
 
 Without an archive store nothing is archived, whatever the mode, and incidents are raised as before.

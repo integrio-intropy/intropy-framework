@@ -97,7 +97,7 @@ public sealed class ArchiveOptions
 
     /// <summary>
     /// Where an archived copy can be opened, its key appended — the archive container's address, e.g.
-    /// <c>https://stprodarchive001.blob.core.windows.net/archive/</c>. Optional: with it, traces and
+    /// <c>https://&lt;account&gt;.blob.core.windows.net/archive/</c>. Optional: with it, traces and
     /// incidents link straight to the copy; without it, they name its key.
     /// </summary>
     public Uri? BrowseBaseUrl { get; set; }
