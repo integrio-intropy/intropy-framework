@@ -1,10 +1,11 @@
 using Intropy.Framework.Adapters.File;
+using Intropy.Framework.Hosting.Sweeps;
 
 namespace Intropy.Framework.Hosting.FileSweeps;
 
 /// <summary>
-/// What happens to a source file once its handler reports it <see cref="FileOutcome.Consumed"/>
-/// or <see cref="FileOutcome.Duplicate"/>. Completion only ever runs after the handler returns,
+/// What happens to a source file once its handler reports it <see cref="SweepOutcome.Consumed"/>
+/// or <see cref="SweepOutcome.Duplicate"/>. Completion only ever runs after the handler returns,
 /// so a source is never completed before its content has been handled.
 /// </summary>
 /// <remarks>
@@ -34,13 +35,13 @@ public abstract class FileCompletion
     /// <summary>Completes one handled file.</summary>
     /// <param name="source">The adapter the file was listed from.</param>
     /// <param name="file">The file, with its content (read once and kept) and its own scope.</param>
-    /// <param name="outcome"><see cref="FileOutcome.Consumed"/> or
-    /// <see cref="FileOutcome.Duplicate"/>.</param>
-    public abstract Task CompleteAsync(IFileAdapter source, SweptFile file, FileOutcome outcome);
+    /// <param name="outcome"><see cref="SweepOutcome.Consumed"/> or
+    /// <see cref="SweepOutcome.Duplicate"/>.</param>
+    public abstract Task CompleteAsync(IFileAdapter source, SweptFile file, SweepOutcome outcome);
 
     private sealed class DeleteCompletion : FileCompletion
     {
-        public override Task CompleteAsync(IFileAdapter source, SweptFile file, FileOutcome outcome) =>
+        public override Task CompleteAsync(IFileAdapter source, SweptFile file, SweepOutcome outcome) =>
             source.DeleteAsync(file.Name);
 
         public override string ToString() => "delete";
@@ -48,7 +49,7 @@ public abstract class FileCompletion
 
     private sealed class ArchiveCompletion(string basePath) : FileCompletion
     {
-        public override async Task CompleteAsync(IFileAdapter source, SweptFile file, FileOutcome outcome)
+        public override async Task CompleteAsync(IFileAdapter source, SweptFile file, SweepOutcome outcome)
         {
             if (source is SmbAdapter smb)
             {

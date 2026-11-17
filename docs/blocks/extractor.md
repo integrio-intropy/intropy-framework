@@ -449,7 +449,8 @@ Each route's pipeline is typed on its own data (`On<TInput, TOutput>`) and confi
 `AddExtractor`'s; only the context type is shared by the whole extractor. On the base `Context`,
 leave out the context factory: `AddExtractor(sources, routes)`. Each port's file adapter is
 registered keyed by the port name, as for a single port. Don't call `AddSourcePort`: the sources
-declare the ports.
+declare the ports. `Port(name, completion)` declares a file port; a source of another kind is declared with
+`Port(sourcePort)`, and routes match on its port name the same way.
 
 A route names the ports whose files it handles: `["orders-in"]`, or several ports that carry the
 same data, `["orders-se", "orders-no"]`. When every port carries the same data, declare one route

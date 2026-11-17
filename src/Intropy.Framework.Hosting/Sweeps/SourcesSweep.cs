@@ -3,11 +3,11 @@ using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace Intropy.Framework.Hosting.FileSweeps;
+namespace Intropy.Framework.Hosting.Sweeps;
 
 /// <summary>
-/// One run's sweep of a file-driven component's sources: one <see cref="IPortSweep"/> per
-/// registered <see cref="SourcePort"/>, validated before any file is listed, then swept one port
+/// One run's sweep of a swept component's sources: one <see cref="IPortSweep"/> per
+/// registered <see cref="SourcePort"/>, validated before anything is read, then swept one port
 /// after another in registration order. It is a part of a run, not the job itself: the
 /// component's <see cref="IJob"/> runs it.
 /// </summary>
@@ -27,17 +27,17 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// <param name="frameworkOptions">The component's identity, for errors.</param>
 /// <param name="createSweep">Creates the sweep of one port.</param>
 /// <param name="loggerFactory">The logger factory.</param>
-internal sealed class SourceSweep(
+internal sealed class SourcesSweep(
     IServiceProvider provider,
     FrameworkOptions frameworkOptions,
     Func<SourcePort, IPortSweep> createSweep,
     ILoggerFactory loggerFactory)
 {
-    private readonly ILogger _logger = loggerFactory.CreateLogger<SourceSweep>();
+    private readonly ILogger _logger = loggerFactory.CreateLogger<SourcesSweep>();
 
     /// <summary>Sweeps every source port once.</summary>
     /// <returns>The ports' summaries added together.</returns>
-    /// <exception cref="InvalidOperationException">Thrown before any file is listed when no
+    /// <exception cref="InvalidOperationException">Thrown before anything is read when no
     /// source port is registered (<c>AddSourcePort</c>) or a port cannot be swept, and after the
     /// last port when a port failed: the error names every failed port, and its inner
     /// <see cref="AggregateException"/> carries the ports' failures. A listing failure is never
@@ -51,7 +51,7 @@ internal sealed class SourceSweep(
 
         var sweeps = ports.Select(createSweep).ToList();
         foreach (var sweep in sweeps)
-            await sweep.ValidateAsync();
+            await sweep.ValidateAsync(ct);
 
         var summary = RunSummary.Empty;
         var failures = new List<(string Port, Exception Error)>();

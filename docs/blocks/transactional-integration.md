@@ -282,7 +282,9 @@ The definition holds what belongs to the whole integration: the pub/sub and topi
 factory, the options and the runner settings. Leave its `SourcePort` and `Completion` unset; the
 sources declare them. Each port's file adapter is registered keyed by the port name, as for a
 single port (for example `services.AddFileAdapter("orders-in", configuration.GetSection("Ports:orders-in"))`).
-Don't call `AddSourcePort` or register an `ISendPipeline`: the sources and routes declare both. A
+Don't call `AddSourcePort` or register an `ISendPipeline`: the sources and routes declare both.
+`Port(name, completion)` declares a file port; a source of another kind is declared with `Port(sourcePort)`, and
+routes match on its port name the same way. A
 configuration-bound overload, `AddTransactionalIntegration(configuration, factory, sources, routes)`,
 binds the definition's values the same way as for a single port.
 

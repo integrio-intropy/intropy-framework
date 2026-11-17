@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Consumes Intropy.Framework.Hosting the way an adapter package does: through its public API
+    only. Hosting grants no InternalsVisibleTo to this assembly, so anything here that compiles
+    and runs is usable from a separate package (a guard test asserts the grant stays absent).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="JunitXml.TestLogger" />
+    <PackageReference Include="coverlet.msbuild" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
+    <ProjectReference Include="..\..\src\Intropy.Framework.Testing\Intropy.Framework.Testing.csproj" />
+  </ItemGroup>
+</Project>

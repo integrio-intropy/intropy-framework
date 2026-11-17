@@ -1,7 +1,7 @@
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Hosting.Extractor;
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 
 namespace Intropy.Framework.Hosting.Gateway;
 
@@ -73,7 +73,7 @@ public sealed class GatewayEndpointDeclarations
         ArgumentNullException.ThrowIfNull(configurePipeline);
         _endpoints.Add(new GatewayEndpoint(new GatewayEndpointDeclaration(port, path),
             new GatewayPipeline<TCtx>(
-                new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new FileMatch([port]), configurePipeline),
+                new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new PortMatch([port]), configurePipeline),
                 contextFactory)));
         return this;
     }

@@ -45,4 +45,17 @@ public static class SourceContextKeys
     /// the response, so the caller and an incident name the same request.
     /// </summary>
     public const string RequestId = "request_id";
+
+    /// <summary>
+    /// The idempotency key of an item read from a polled source with a cursor (such as a database
+    /// query with a delta): <c>{source port}:{from}:{to}</c>, the range the item covers. The framework
+    /// pins the range before the item is sent, so a run that reads it again after a failure produces
+    /// the same key. Absent for a source without a cursor (a full export), which needs none.
+    /// </summary>
+    /// <remarks>
+    /// Read it with <c>WithSourceIdempotency</c> on the extractor and send pipeline builders. It is
+    /// technical data about the read, not part of the payload, so it travels in the context metadata
+    /// (and with the message through a Transactional Integration's queue).
+    /// </remarks>
+    public const string IdempotencyKey = "source_idempotency_key";
 }

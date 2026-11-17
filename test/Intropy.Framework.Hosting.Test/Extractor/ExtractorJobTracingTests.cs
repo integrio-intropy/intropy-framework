@@ -98,7 +98,7 @@ public class ExtractorJobTracingTests
 
         var file = Assert.Single(files);
         Assert.Equal(ActivityStatusCode.Error, file.Status);
-        Assert.Equal("The file has no content", file.StatusDescription);
+        Assert.Equal("The source item has no content", file.StatusDescription);
     }
 
     [Fact]
@@ -126,7 +126,7 @@ public class ExtractorJobTracingTests
 
         await sweep.ExecuteAsync(CancellationToken.None);
 
-        var handled = Assert.Single(logger.Entries, e => e.Text.Contains("Handled source file"));
+        var handled = Assert.Single(logger.Entries, e => e.Text.Contains("Handled source item"));
         var scope = Assert.Single(handled.Scopes.OfType<IReadOnlyDictionary<string, object>>());
         Assert.Equal("order-1.json", scope["FileName"]);
         Assert.Equal(ExtractorSweepTestProcess.SourceKey, scope["SourcePort"]);

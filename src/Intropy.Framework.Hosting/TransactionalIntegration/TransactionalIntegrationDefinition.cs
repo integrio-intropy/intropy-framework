@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Intropy.Framework.Hosting.Common;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 
 namespace Intropy.Framework.Hosting.TransactionalIntegration;
@@ -28,13 +29,13 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <typeparam name="TCtx">The context type shared by the receive and send pipelines.</typeparam>
 public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Context
 {
-    /// <summary>The name of the Dapr pub/sub component the receive side publishes swept files to.
+    /// <summary>The name of the Dapr pub/sub component the receive side publishes swept items to.
     /// Optional: unset, it is the internal queue's pub/sub the system topology generates for the
     /// component. (Member name mirrors
     /// <see cref="TransactionalIntegrationOptions.DaprPubSubName"/>.)</summary>
     public string? DaprPubSubName { get; init; }
 
-    /// <summary>The name of the topic the receive side publishes swept files to, and the sidecar
+    /// <summary>The name of the topic the receive side publishes swept items to, and the sidecar
     /// pushes back to the send side. Optional: unset, it is the internal queue's topic the system
     /// topology generates for the component. (Member name mirrors
     /// <see cref="TransactionalIntegrationOptions.DaprTopicName"/>.)</summary>
@@ -45,17 +46,26 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
     /// are authoritative over what is set here.</summary>
     public Action<TransactionalIntegrationOptions>? Configure { get; init; }
 
-    /// <summary>The port the component sweeps, as declared in the system's topology; the
-    /// registration calls <c>AddSourcePort</c> with it
-    /// (and <see cref="Completion"/>), so the source the integration sweeps is described alongside
-    /// the rest. Optional: leave null when the component registers the source port itself.</summary>
+    /// <summary>The name of a <b>file</b> port the component sweeps, as declared in the system's
+    /// topology: the shorthand for <see cref="Source"/> = <c>new FileSourcePort(name, Completion)</c>.
+    /// A port of another kind (a polled source such as SQL) is declared with <see cref="Source"/>;
+    /// naming it here fails the run's validation. Optional: leave null when the component registers
+    /// the source port itself.</summary>
     public string? SourcePort { get; init; }
 
     /// <summary>What happens to a handled source file, for <see cref="SourcePort"/>. Default:
     /// deleted.</summary>
     public FileCompletion? Completion { get; init; }
 
-    /// <summary>Creates the context for each source file and each message. Required when
+    /// <summary>The port the component sweeps, of any kind of source (a
+    /// <see cref="FileSourcePort"/>, a <see cref="StatefulSweeps.PolledSourcePort"/>, or a kind an
+    /// adapter package provides); the registration calls <c>AddSourcePort</c> with it. The canonical
+    /// way to declare the port: <see cref="SourcePort"/> (with <see cref="Completion"/>) is the
+    /// shorthand for a file port; set one or the other, not both. Optional: leave null when the
+    /// component registers the source port itself.</summary>
+    public SourcePort? Source { get; init; }
+
+    /// <summary>Creates the context for each source item and each message. Required when
     /// <typeparamref name="TCtx"/> derives from <see cref="Context"/>; when
     /// <typeparamref name="TCtx"/> is the base <see cref="Context"/>, leave null and the plain
     /// record is created.</summary>
@@ -73,6 +83,10 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
     /// shapes with different values, or the callback port is out of range.</exception>
     internal TransactionalIntegrationOptions Validate()
     {
+        if (Source is not null && (SourcePort is not null || Completion is not null))
+            throw new InvalidOperationException(
+                "Transactional Integration composition failed: Source/SourcePort — the definition declares its source port twice; set " +
+                "Source for a source port of any kind, or SourcePort (and Completion) for a file port, not both.");
         var options = new TransactionalIntegrationOptions();
         Configure?.Invoke(options);
         // The definition's names are authoritative when the code set them: configuration
@@ -132,6 +146,7 @@ public sealed class TransactionalIntegrationDefinition<TCtx> where TCtx : Contex
             },
             SourcePort = source.SourcePort,
             Completion = source.Completion,
+            Source = source.Source,
             ContextFactory = source.ContextFactory,
             ConfigureJob = source.ConfigureJob,
         };

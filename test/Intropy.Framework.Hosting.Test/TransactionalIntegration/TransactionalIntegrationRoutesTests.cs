@@ -7,10 +7,12 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Send.Steps;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Intropy.Framework.Testing.Adapters;
 using Microsoft.Extensions.Configuration;
+using Intropy.Framework.Hosting.Test.Sweeps;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
 
@@ -28,12 +30,12 @@ public class TransactionalIntegrationRoutesTests
 
     [Fact]
     public void Port_RejectsAnEmptyPort() =>
-        Assert.Throws<ArgumentException>(() => new FileSources().Port(" "));
+        Assert.Throws<ArgumentException>(() => new Sources().Port(" "));
 
     [Fact]
     public void Port_RejectsADuplicatePort()
     {
-        var sources = new FileSources().Port("orders-in");
+        var sources = new Sources().Port("orders-in");
 
         var error = Assert.Throws<ArgumentException>(() => sources.Port("orders-in"));
 
@@ -52,8 +54,8 @@ public class TransactionalIntegrationRoutesTests
     [Fact]
     public void FileMatch_RejectsAnEmptyPortList()
     {
-        Assert.Throws<ArgumentException>(() => new FileMatch([]));
-        Assert.Throws<ArgumentException>(() => new FileMatch([" "]));
+        Assert.Throws<ArgumentException>(() => new PortMatch([]));
+        Assert.Throws<ArgumentException>(() => new PortMatch([" "]));
     }
 
     [Fact]
@@ -65,7 +67,7 @@ public class TransactionalIntegrationRoutesTests
             sources => sources.Port("orders-in").Port("invoices-in", FileCompletion.Archive("processed")),
             routes => routes.OnAny<OrderFile, string>(Send));
 
-        var ports = services.BuildServiceProvider().GetServices<SourcePort>().ToList();
+        var ports = services.BuildServiceProvider().GetServices<SourcePort>().Cast<FileSourcePort>().ToList();
         Assert.Equal(["orders-in", "invoices-in"], ports.Select(p => p.Name));
         Assert.Same(FileCompletion.Delete, ports[0].Completion);
         Assert.NotSame(FileCompletion.Delete, ports[1].Completion);
@@ -189,13 +191,17 @@ public class TransactionalIntegrationRoutesTests
     }
 
     [Fact]
-    public void AddTransactionalIntegration_RejectsADefinitionThatSetsASourcePortOrCompletion()
+    public void AddTransactionalIntegration_RejectsADefinitionThatSetsItsOwnSourcePort()
     {
         Assert.Contains("SourcePort/Completion", Assert.Throws<InvalidOperationException>(() =>
             GetServices().AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context> { SourcePort = "orders-in" },
                 sources => sources.Port("orders-in"), routes => routes.OnAny<OrderFile, string>(Send))).Message);
         Assert.Throws<InvalidOperationException>(() =>
             GetServices().AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context> { Completion = FileCompletion.Delete },
+                sources => sources.Port("orders-in"), routes => routes.OnAny<OrderFile, string>(Send)));
+        Assert.Throws<InvalidOperationException>(() =>
+            GetServices().AddTransactionalIntegration(
+                new TransactionalIntegrationDefinition<Context> { Source = new ListedSourcePort("orders-in", []) },
                 sources => sources.Port("orders-in"), routes => routes.OnAny<OrderFile, string>(Send)));
     }
 

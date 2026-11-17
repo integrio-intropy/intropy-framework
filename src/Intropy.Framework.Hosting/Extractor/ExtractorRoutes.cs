@@ -1,11 +1,11 @@
 using Intropy.Framework.Blocks.Extractor;
 using Intropy.Framework.Blocks.Shared;
-using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 
 namespace Intropy.Framework.Hosting.Extractor;
 
 /// <summary>
-/// The routes of an extractor: which pipeline a file goes through, by the source port the framework
+/// The routes of an extractor: which pipeline an item goes through, by the source port the framework
 /// swept it from. Each port carries one kind of data, and each route's pipeline is typed on its own
 /// data; the context type is the extractor's. The counterpart of a Transactional Integration's send
 /// routes.
@@ -33,10 +33,10 @@ public sealed class ExtractorRoutes<TCtx> where TCtx : Context
 {
     private readonly List<ExtractorRoute<TCtx>> _routes = [];
 
-    /// <summary>Runs the files of <paramref name="ports"/> through a pipeline.</summary>
-    /// <param name="ports">The source ports whose files this route handles, matched exactly on
+    /// <summary>Runs the items of <paramref name="ports"/> through a pipeline.</summary>
+    /// <param name="ports">The source ports whose items this route handles, matched exactly on
     /// what the framework records from the sweep.</param>
-    /// <param name="configurePipeline">Configures the route's pipeline builder, given the file's
+    /// <param name="configurePipeline">Configures the route's pipeline builder, given the item's
     /// scope — the same shape as <c>AddExtractor</c>'s.</param>
     /// <typeparam name="TInput">The route's deserialized input.</typeparam>
     /// <typeparam name="TOutput">The route's published payload.</typeparam>
@@ -52,13 +52,13 @@ public sealed class ExtractorRoutes<TCtx> where TCtx : Context
                 nameof(ports));
         ArgumentNullException.ThrowIfNull(configurePipeline);
 
-        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new FileMatch(ports), configurePipeline));
+        _routes.Add(new DeclaredExtractorRoute<TInput, TOutput, TCtx>(new PortMatch(ports), configurePipeline));
         return this;
     }
 
-    /// <summary>Runs every file, from any source port, through one pipeline: the same data,
+    /// <summary>Runs every item, from any source port, through one pipeline: the same data,
     /// received in several places.</summary>
-    /// <param name="configurePipeline">Configures the pipeline builder, given the file's scope — the
+    /// <param name="configurePipeline">Configures the pipeline builder, given the item's scope — the
     /// same shape as <c>AddExtractor</c>'s.</param>
     /// <typeparam name="TInput">The deserialized input.</typeparam>
     /// <typeparam name="TOutput">The published payload.</typeparam>

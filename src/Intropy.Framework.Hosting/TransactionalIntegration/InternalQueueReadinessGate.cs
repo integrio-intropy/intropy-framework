@@ -8,7 +8,7 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 /// <summary>
 /// Holds the sweep back until the internal queue delivers. A broker can accept a publish that no
 /// queue stores: RabbitMQ discards a message published before the subscription has declared and
-/// bound its queue, as on a first deploy or after the queue was deleted. A file completed after
+/// bound its queue, as on a first deploy or after the queue was deleted. An item completed after
 /// such a publish is lost. So before the sweep, the gate publishes probes through the receive
 /// side's enqueuer until one of this run's probes reaches the send side. An old queued message
 /// proves consumption works, not that the current publisher reaches the queue. This is a startup

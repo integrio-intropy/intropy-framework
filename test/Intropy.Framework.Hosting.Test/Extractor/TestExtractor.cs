@@ -6,6 +6,7 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.Extractor;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;

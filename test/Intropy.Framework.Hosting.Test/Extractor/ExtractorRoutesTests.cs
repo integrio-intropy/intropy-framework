@@ -9,7 +9,9 @@ using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Extractor;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
+using Intropy.Framework.Hosting.Test.Sweeps;
 using Intropy.Framework.Testing.Adapters;
 using Microsoft.Extensions.DependencyInjection;
 using NSubstitute;
@@ -98,6 +100,30 @@ public class ExtractorRoutesTests
     }
 
     [Fact]
+    public async Task Run_SweepsASourceOfAnotherKindLikeAFilePort()
+    {
+        // Routes match on the port, whatever kind of source it is: the other source's item goes
+        // through its own route, carries the source's metadata on the context (here, the key its
+        // idempotency is checked on), and is completed in its source once handled.
+        _orders.AddFile("order.csv", "o-1");
+        var feed = new ListedSourcePort("feed",
+            [new ListedItem("batch-7", "i-1", new Dictionary<string, string> { ["feed_cursor"] = "7" })]);
+        await using var provider = Register(sources => sources.Port("orders-se").Port(feed), routes => routes
+            .On<Order, Order>(["orders-se"], Pipeline<Order>(id => new Order(id), "orders.accepted"))
+            .On<Invoice, Invoice>(["feed"], Pipeline<Invoice>(id => new Invoice(id), "invoices.accepted",
+                idempotencyId: (_, context) => context.Metadata["feed_cursor"])));
+
+        var summary = await RunAsync(provider);
+
+        Assert.Equal(2, summary.Processed);
+        Assert.Equal(["orders-se", "feed"], _sender.Sent.Select(e => e[CloudEventExtensionKeys.SourcePort]));
+        Assert.Equal(new Invoice("i-1"), _sender.Sent[1].Data);
+        await _idempotency.Received(1).GetStatusAsync(Arg.Is<MessageInfo>(m => m.Id == "feed:7"));
+        Assert.Equal([("batch-7", SweepOutcome.Consumed)], feed.Completed);
+        Assert.Empty(_orders.Files);
+    }
+
+    [Fact]
     public async Task Run_WhenARouteCannotBeComposed_FailsBeforeAnyFileIsListed()
     {
         _orders.AddFile("order.csv", "o-1");
@@ -182,23 +208,26 @@ public class ExtractorRoutesTests
         Assert.Contains("extractor", error.Message);
     }
 
-    private static void Sources(FileSources sources) => sources.Port("orders-se").Port("invoices-no");
+    private static void Sources(Sources sources) => sources.Port("orders-se").Port("invoices-no");
 
     /// <summary>A complete pipeline that reads the file's text as the record id and publishes the
     /// record as <paramref name="type"/>.</summary>
     private static Func<ExtractorBuilder<T, T, Context>, IServiceProvider, ExtractorBuilder<T, T, Context>>
-        Pipeline<T>(Func<string, T> read, string type, System.Text.Encoding? encoding = null) where T : IRecord =>
+        Pipeline<T>(Func<string, T> read, string type, System.Text.Encoding? encoding = null,
+            Func<T, Context, string>? idempotencyId = null) where T : IRecord =>
         (builder, _) => builder
             .WithDeserializer(new ReadDeserializer<T>(read, encoding ?? System.Text.Encoding.UTF8))
             .WithValidator(new AcceptValidator<T>())
-            .WithIdempotency((record, _) => record.Id, (_, _) => DateTimeOffset.UnixEpoch)
+            .WithIdempotency(idempotencyId ?? ((record, _) => record.Id), (_, _) => DateTimeOffset.UnixEpoch)
             .WithTransformer(new IdentityTransformer<T>())
             .WithSerializer(new CloudEventSerializeStep<T, Context>(record => record.Id, _ => DateTimeOffset.UnixEpoch,
                 type: (_, _) => type))
             .WithSenderFromServices()
             .WithBusinessIncidents(_ => "unknown", _ => "unknown");
 
-    private ServiceProvider Register(Action<ExtractorRoutes<Context>> routes)
+    private ServiceProvider Register(Action<ExtractorRoutes<Context>> routes) => Register(Sources, routes);
+
+    private ServiceProvider Register(Action<Sources> sources, Action<ExtractorRoutes<Context>> routes)
     {
         var services = GetServices();
         services.AddSingleton(_idempotency);
@@ -206,7 +235,7 @@ public class ExtractorRoutesTests
         services.AddSingleton<SendStep<Context>>(_sender);
         services.AddKeyedSingleton<IFileAdapter>("orders-se", _orders);
         services.AddKeyedSingleton<IFileAdapter>("invoices-no", _invoices);
-        services.AddExtractor(Sources, routes);
+        services.AddExtractor(sources, routes);
         return services.BuildServiceProvider();
     }
 

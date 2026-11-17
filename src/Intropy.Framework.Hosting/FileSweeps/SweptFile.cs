@@ -1,5 +1,6 @@
-using System.Text;
 using Intropy.Framework.Adapters.File;
+using Intropy.Framework.Blocks.Shared;
+using Intropy.Framework.Hosting.Sweeps;
 
 namespace Intropy.Framework.Hosting.FileSweeps;
 
@@ -7,41 +8,27 @@ namespace Intropy.Framework.Hosting.FileSweeps;
 /// One listed source file, handed to the file handler inside its own dependency-injection scope.
 /// Content is read on demand, once: the bytes are kept for archiving.
 /// </summary>
-public sealed class SweptFile
+public sealed class SweptFile : SweptItem
 {
     private readonly IFileAdapter _source;
     private byte[]? _content;
 
     internal SweptFile(string name, string port, IFileAdapter source, IServiceProvider services)
+        : base(name, port, services)
     {
-        Name = name;
-        Port = port;
         _source = source;
-        Services = services;
+        Metadata = new Dictionary<string, string> { [SourceContextKeys.FileName] = name };
     }
 
-    /// <summary>The file's name in the source.</summary>
-    public string Name { get; }
+    /// <summary>The file's name in the source; the item's <see cref="SweptItem.Id"/>.</summary>
+    public string Name => Id;
 
-    /// <summary>The source port the file was listed from.</summary>
-    public string Port { get; }
+    /// <summary>The file's name, as <see cref="SourceContextKeys.FileName"/>.</summary>
+    public override IReadOnlyDictionary<string, string> Metadata { get; }
 
-    /// <summary>The file's own scope: resolve per-file services (such as the pipeline) here.</summary>
-    public IServiceProvider Services { get; }
-
-    /// <summary>Reads the file's content.</summary>
+    /// <summary>Reads the file's content. The bytes are fetched once and kept: reading again,
+    /// or as text, never fetches the file again, and an empty file reads as an empty array.</summary>
     /// <param name="ct">A cancellation token forwarded to the source adapter.</param>
-    public async Task<byte[]> ReadAsync(CancellationToken ct = default) =>
+    public override async Task<byte[]> ReadAsync(CancellationToken ct = default) =>
         _content ??= await _source.GetContentAsync(Name, ct);
-
-    /// <summary>Reads the file's content as text, decoded with <paramref name="encoding"/> from
-    /// the bytes <see cref="ReadAsync"/> fetched and kept: reading the text never fetches the file
-    /// again, and an empty file reads as <see cref="string.Empty"/>.</summary>
-    /// <param name="encoding">The encoding to use to decode the binary content.</param>
-    /// <param name="ct">A cancellation token forwarded to the source adapter.</param>
-    public async Task<string> ReadTextAsync(Encoding encoding, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(encoding);
-        return encoding.GetString(await ReadAsync(ct));
-    }
 }

@@ -10,6 +10,7 @@ using Intropy.Framework.Core.Pipeline.Abstractions.Failures;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Blocks.TransactionalIntegration;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
 using Intropy.Framework.Testing.Adapters;

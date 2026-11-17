@@ -5,8 +5,10 @@ using Intropy.Framework.Blocks.TransactionalIntegration.Receive;
 using Intropy.Framework.Blocks.TransactionalIntegration.Send;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.TransactionalIntegration;
+using Intropy.Framework.Hosting.Test.Sweeps;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -126,9 +128,42 @@ public class TransactionalIntegrationDefinitionTests
         });
 
         using var provider = services.BuildServiceProvider();
-        var sourcePort = provider.GetRequiredService<SourcePort>();
+        var sourcePort = Assert.IsType<FileSourcePort>(provider.GetRequiredService<SourcePort>());
         Assert.Equal("orders-inbox", sourcePort.Name);
         Assert.Same(completion, sourcePort.Completion);
+    }
+
+
+    [Fact]
+    public void ADeclaredSourceOfAnyKind_IsRegistered()
+    {
+        var services = GetServices();
+        var feed = new ListedSourcePort("feed", []);
+
+        services.AddTransactionalIntegration(new TransactionalIntegrationDefinition<Context>
+        {
+            DaprPubSubName = "test-pubsub",
+            DaprTopicName = "orders.received",
+            Source = feed,
+        });
+
+        using var provider = services.BuildServiceProvider();
+        Assert.Same(feed, provider.GetRequiredService<SourcePort>());
+    }
+
+    [Fact]
+    public void ASourceDeclaredTwice_FailsAtRegistration()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => GetServices().AddTransactionalIntegration(
+            new TransactionalIntegrationDefinition<Context>
+            {
+                DaprPubSubName = "test-pubsub",
+                DaprTopicName = "orders.received",
+                Source = new ListedSourcePort("feed", []),
+                Completion = FileCompletion.Delete,
+            }));
+
+        Assert.Contains("Source/SourcePort", error.Message);
     }
 
     [Fact]

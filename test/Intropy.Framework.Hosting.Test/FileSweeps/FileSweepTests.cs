@@ -2,6 +2,7 @@ using System.Text;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Hosting.Jobs;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Testing.Adapters;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,7 +28,7 @@ public class FileSweepTests
         var summary = await Sweep(source).SweepAsync((file, _) =>
         {
             presentWhileHandling = source.Files.ContainsKey(file.Name);
-            return Task.FromResult(FileOutcome.Consumed);
+            return Task.FromResult(SweepOutcome.Consumed);
         }, CancellationToken.None);
 
         Assert.True(presentWhileHandling);
@@ -40,7 +41,7 @@ public class FileSweepTests
     {
         var source = new InMemoryFileAdapter().AddFile("order.json", "{}");
 
-        var summary = await Sweep(source).SweepAsync((_, _) => Task.FromResult(FileOutcome.Duplicate), CancellationToken.None);
+        var summary = await Sweep(source).SweepAsync((_, _) => Task.FromResult(SweepOutcome.Duplicate), CancellationToken.None);
 
         Assert.Empty(source.Files);
         Assert.Equal(1, summary.Skipped);
@@ -54,7 +55,7 @@ public class FileSweepTests
 
         var summary = await Sweep(source).SweepAsync((file, _) => file.Name == "throws.json"
             ? throw new InvalidOperationException("broken handler")
-            : Task.FromResult(FileOutcome.Failed), CancellationToken.None);
+            : Task.FromResult(SweepOutcome.Failed), CancellationToken.None);
 
         Assert.Equal(2, source.Files.Count);
         Assert.Equal(2, summary.Failed);
@@ -69,7 +70,7 @@ public class FileSweepTests
             .SweepAsync(async (file, _) =>
             {
                 Assert.Equal("{\"id\":1}", Encoding.UTF8.GetString(await file.ReadAsync(_)));
-                return FileOutcome.Consumed;
+                return SweepOutcome.Consumed;
             }, CancellationToken.None);
 
         Assert.Equal(1, summary.Processed);
@@ -83,7 +84,7 @@ public class FileSweepTests
         var source = new InMemoryFileAdapter().AddFile("order.json", "{\"id\":2}");
 
         await Sweep(source, FileCompletion.Archive("archive"))
-            .SweepAsync((_, _) => Task.FromResult(FileOutcome.Duplicate), CancellationToken.None);
+            .SweepAsync((_, _) => Task.FromResult(SweepOutcome.Duplicate), CancellationToken.None);
 
         Assert.Equal("{\"id\":2}", source.GetString("archive", "order.json"));
     }
@@ -95,7 +96,7 @@ public class FileSweepTests
         source.WriteException = new IOException("archive unavailable");
 
         var summary = await Sweep(source, FileCompletion.Archive("archive"))
-            .SweepAsync((_, _) => Task.FromResult(FileOutcome.Consumed), CancellationToken.None);
+            .SweepAsync((_, _) => Task.FromResult(SweepOutcome.Consumed), CancellationToken.None);
 
         Assert.Equal(1, summary.Failed);
         Assert.True(source.Files.ContainsKey("order.json"));
@@ -110,12 +111,12 @@ public class FileSweepTests
 
         await Sweep(source, completion).SweepAsync((file, _) => Task.FromResult(file.Name switch
         {
-            "new.json" => FileOutcome.Consumed,
-            "duplicate.json" => FileOutcome.Duplicate,
-            _ => FileOutcome.Failed
+            "new.json" => SweepOutcome.Consumed,
+            "duplicate.json" => SweepOutcome.Duplicate,
+            _ => SweepOutcome.Failed
         }), CancellationToken.None);
 
-        Assert.Equal([("new.json", FileOutcome.Consumed), ("duplicate.json", FileOutcome.Duplicate)],
+        Assert.Equal([("new.json", SweepOutcome.Consumed), ("duplicate.json", SweepOutcome.Duplicate)],
             completion.Completed);
         Assert.Equal(3, source.Files.Count); // this completion leaves files in place
     }
@@ -126,7 +127,7 @@ public class FileSweepTests
         var source = new InMemoryFileAdapter().AddFile("order.json", "{}");
 
         var summary = await Sweep(source, new ThrowingCompletion())
-            .SweepAsync((_, _) => Task.FromResult(FileOutcome.Consumed), CancellationToken.None);
+            .SweepAsync((_, _) => Task.FromResult(SweepOutcome.Consumed), CancellationToken.None);
 
         Assert.Equal(0, summary.Processed);
         Assert.Equal(1, summary.Failed);
@@ -143,7 +144,7 @@ public class FileSweepTests
             .SweepAsync((file, _) =>
             {
                 scopes.Add(file.Services.GetRequiredService<ScopedMarker>());
-                return Task.FromResult(FileOutcome.Consumed);
+                return Task.FromResult(SweepOutcome.Consumed);
             }, CancellationToken.None);
 
         Assert.Equal(2, scopes.Count);
@@ -164,13 +165,16 @@ public class FileSweepTests
 
         await sweep.SweepAsync((file, _) => Task.FromResult(file.Name switch
         {
-            "consumed.json" => FileOutcome.Consumed,
-            "duplicate.json" => FileOutcome.Duplicate,
-            _ => FileOutcome.Failed
+            "consumed.json" => SweepOutcome.Consumed,
+            "duplicate.json" => SweepOutcome.Duplicate,
+            _ => SweepOutcome.Failed
         }), CancellationToken.None);
 
         var files = metrics.Of("intropy.sweep.files", "intropy.source.port", port);
         Assert.Equal(["consumed", "duplicate", "failed"], files.Select(f => (string)f.Tags["intropy.sweep.outcome"]!).Order());
+        // Files are items too: counted on the metric every kind of source shares.
+        var items = metrics.Of("intropy.sweep.items", "intropy.source.port", port);
+        Assert.Equal(["consumed", "duplicate", "failed"], items.Select(i => (string)i.Tags["intropy.sweep.outcome"]!).Order());
         Assert.All(files, f =>
         {
             Assert.Equal(1, f.Value);
@@ -194,9 +198,9 @@ public class FileSweepTests
 
     private sealed class RecordingCompletion : FileCompletion
     {
-        public List<(string, FileOutcome)> Completed { get; } = [];
+        public List<(string, SweepOutcome)> Completed { get; } = [];
 
-        public override Task CompleteAsync(IFileAdapter source, SweptFile file, FileOutcome outcome)
+        public override Task CompleteAsync(IFileAdapter source, SweptFile file, SweepOutcome outcome)
         {
             Completed.Add((file.Name, outcome));
             return Task.CompletedTask;
@@ -205,7 +209,7 @@ public class FileSweepTests
 
     private sealed class ThrowingCompletion : FileCompletion
     {
-        public override Task CompleteAsync(IFileAdapter source, SweptFile file, FileOutcome outcome) =>
+        public override Task CompleteAsync(IFileAdapter source, SweptFile file, SweepOutcome outcome) =>
             throw new IOException("target unavailable");
     }
 }

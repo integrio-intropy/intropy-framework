@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using Dapr.Client;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -23,7 +24,7 @@ public class SmbArchiveCompletionTests
         var requests = new List<BindingRequest>();
         using var client = Client(requests, refusedRenames: 0);
 
-        var summary = await Sweep(client).SweepAsync((_, _) => Task.FromResult(FileOutcome.Consumed), CancellationToken.None);
+        var summary = await Sweep(client).SweepAsync((_, _) => Task.FromResult(SweepOutcome.Consumed), CancellationToken.None);
 
         Assert.Equal(1, summary.Processed);
         Assert.Equal(["list", "rename"], requests.Select(r => r.Operation));
@@ -37,7 +38,7 @@ public class SmbArchiveCompletionTests
         var requests = new List<BindingRequest>();
         using var client = Client(requests, refusedRenames: 1);
 
-        var summary = await Sweep(client).SweepAsync((_, _) => Task.FromResult(FileOutcome.Duplicate), CancellationToken.None);
+        var summary = await Sweep(client).SweepAsync((_, _) => Task.FromResult(SweepOutcome.Duplicate), CancellationToken.None);
 
         Assert.Equal(1, summary.Skipped);
         Assert.Equal(["list", "rename", "rename"], requests.Select(r => r.Operation));
@@ -51,7 +52,7 @@ public class SmbArchiveCompletionTests
         var requests = new List<BindingRequest>();
         using var client = Client(requests, refusedRenames: 2);
 
-        var summary = await Sweep(client).SweepAsync((_, _) => Task.FromResult(FileOutcome.Consumed), CancellationToken.None);
+        var summary = await Sweep(client).SweepAsync((_, _) => Task.FromResult(SweepOutcome.Consumed), CancellationToken.None);
 
         Assert.Equal(1, summary.Failed);
         Assert.DoesNotContain(requests, r => r.Operation is "delete" or "create");

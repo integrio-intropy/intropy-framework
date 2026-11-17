@@ -10,6 +10,7 @@ using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
 using Intropy.Framework.Hosting.Extractor;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Testing.Adapters;
 using Intropy.Framework.Testing.Services;
 using Intropy.Framework.Testing.Topics;

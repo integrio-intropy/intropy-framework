@@ -1,10 +1,11 @@
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Hosting.Jobs;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace Intropy.Framework.Hosting.Test.FileSweeps;
+namespace Intropy.Framework.Hosting.Test.Sweeps;
 
 /// <summary>
 /// The run's sweep over a component's source ports: no port fails the run before anything is
@@ -12,7 +13,7 @@ namespace Intropy.Framework.Hosting.Test.FileSweeps;
 /// together in registration order, and a failing port does not stop the others but still fails
 /// the run, whose error names every failed port.
 /// </summary>
-public class SourceSweepTests
+public class SourcesSweepTests
 {
     private static readonly FrameworkOptions Identity = new() { ComponentName = "test-component", ServiceNamespace = "test" };
 
@@ -134,12 +135,12 @@ public class SourceSweepTests
         Assert.Equal([cts.Token, cts.Token], seen);
     }
 
-    private static SourceSweep Sweep(string[] ports, Func<SourcePort, IPortSweep> createSweep)
+    private static SourcesSweep Sweep(string[] ports, Func<SourcePort, IPortSweep> createSweep)
     {
         var services = new ServiceCollection();
         foreach (var port in ports)
-            services.AddSingleton(new SourcePort(port, FileCompletion.Delete));
-        return new SourceSweep(services.BuildServiceProvider(), Identity, createSweep, NullLoggerFactory.Instance);
+            services.AddSingleton<SourcePort>(new FileSourcePort(port, FileCompletion.Delete));
+        return new SourcesSweep(services.BuildServiceProvider(), Identity, createSweep, NullLoggerFactory.Instance);
     }
 
     private sealed class RecordingPortSweep(
@@ -152,7 +153,7 @@ public class SourceSweepTests
     {
         public string Port => port;
 
-        public Task ValidateAsync()
+        public Task ValidateAsync(CancellationToken ct)
         {
             calls.Add($"validate {port}");
             return failValidation

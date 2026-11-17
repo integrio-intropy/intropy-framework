@@ -7,7 +7,7 @@ namespace Intropy.Framework.Hosting.TransactionalIntegration;
 
 /// <summary>
 /// The Transactional Integration's run-to-completion job: in one run it sweeps the source,
-/// publishing each file to the integration's queue through the receive pipeline, while the
+/// publishing each item to the integration's queue through the receive pipeline, while the
 /// send side (<see cref="SendSideRun"/>) consumes the queue through the send pipeline. Hosted
 /// by the <see cref="JobRunner"/>,
 /// which owns the process around it: the sidecar lifecycle, job tracing, and exit-code mapping.
@@ -24,7 +24,7 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     /// Creates a new instance of <see cref="TransactionalIntegrationJob{TCtx}"/>.
     /// </summary>
     /// <param name="receiver">The receive side: sweeps the integration's source through the
-    /// receive pipeline, completing a file (delete or archive) only after it is on the queue.</param>
+    /// receive pipeline, completing an item (delete or archive) only after it is on the queue.</param>
     /// <param name="sendSideRun">The send side: consumes the integration's queue through the
     /// send pipeline, until the subscription goes idle.</param>
     /// <param name="loggerFactory">An instance of <see cref="ILoggerFactory"/>.</param>
@@ -45,14 +45,14 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
     /// <summary>
     /// Runs the job once: subscribes, waits until the internal queue delivers (see
     /// <see cref="InternalQueueReadinessGate"/>), sweeps the source, and returns once publishing is done and the
-    /// subscription has gone idle (or the host cancelled). When the internal queue never delivers, no file is
+    /// subscription has gone idle (or the host cancelled). When the internal queue never delivers, no item is
     /// touched and the run fails as an infrastructure failure. A failed sweep fails the run, but only after
-    /// the queue has gone idle: the messages it did publish (with several ports, the other ports' files) are
+    /// the queue has gone idle: the messages it did publish (with several ports, the other ports' items) are
     /// consumed in the same run.
     /// </summary>
-    /// <returns>Files published (and completed) as <c>Processed</c> and duplicates as
-    /// <c>Skipped</c>. <c>Failed</c> counts both sides: files left in place, and messages the run
-    /// left for redelivery — so a run whose deliveries failed exits 1 like one whose files did. The
+    /// <returns>Items published (and completed) as <c>Processed</c> and duplicates as
+    /// <c>Skipped</c>. <c>Failed</c> counts both sides: items left in place, and messages the run
+    /// left for redelivery — so a run whose deliveries failed exits 1 like one whose items did. The
     /// consumed messages' own counts are tagged on the job's span
     /// (<c>intropy.messages.processed</c>, <c>.failed</c>, <c>.skipped</c>).</returns>
     public async Task<RunSummary> ExecuteAsync(CancellationToken ct)
@@ -73,7 +73,7 @@ public class TransactionalIntegrationJob<TCtx> : IJob where TCtx : Context
         {
             try
             {
-                // A file is completed once its publish succeeds: sweep only once a publish is
+                // An item is completed once its publish succeeds: sweep only once a publish is
                 // known to reach a queue.
                 if (readinessCheck is not null)
                     await readinessCheck.WaitAsync(ct);

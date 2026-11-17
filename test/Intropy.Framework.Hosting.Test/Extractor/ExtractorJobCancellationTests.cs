@@ -1,6 +1,7 @@
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Hosting.Extractor;
 using Intropy.Framework.Hosting.FileSweeps;
+using Intropy.Framework.Hosting.Sweeps;
 using Intropy.Framework.Testing.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
