@@ -20,12 +20,24 @@ Two configuration sections, like the claim store and its mode:
 |---------|---------|-------------|
 | `ArchiveStore` | `Kind`, `DaprBindingName`, `BasePath` | The store's adapter: the same settings a port takes, validated the same way |
 | `Archive` | `Mode` | `OnIncident` (default), `OnReceipt` or `Never` |
-| `Archive` | `BrowseBaseUrl` | Optional. Where a copy can be opened, its key appended — the archive container's address, e.g. `https://<account>.blob.core.windows.net/archive/` |
+| `Archive` | `BrowseUrlTemplate` | Optional. The link to a copy, with the key placed by `{key}` (as is) or `{key:encoded}` (URL-encoded, slashes as `%2F`). For storage behind sign-in, such as the Azure portal link below |
+| `Archive` | `BrowseBaseUrl` | Optional. The link to a copy as a base URL with the key appended, e.g. `https://<account>.blob.core.windows.net/archive/`. Only opens when the storage can be read anonymously. Not together with `BrowseUrlTemplate` |
 
 ```json
 "ArchiveStore": { "DaprBindingName": "archive-store" },
-"Archive": { "Mode": "OnIncident", "BrowseBaseUrl": "https://<account>.blob.core.windows.net/archive/" }
+"Archive": {
+  "Mode": "OnIncident",
+  "BrowseUrlTemplate": "https://portal.azure.com/#view/Microsoft_Azure_Storage/BlobPropertiesBladeV2/storageAccountId/<encoded account resource id>/path/archive%2F{key:encoded}/isDeleted~/false/tabToload~/0"
+}
 ```
+
+A browser opening a blob URL sends no credentials, so a storage account without public access
+refuses it, whatever the reader's roles. The Azure portal signs the reader in with Entra ID, so a
+portal link opens for anyone with a data role on the account. `<encoded account resource id>` is the
+account's resource id URL-encoded (`%2Fsubscriptions%2F…%2FstorageAccounts%2F<account>`); the
+container name follows `path/`, then the encoded key. The link lands in the incident's `dataurl` and
+the trace's `intropy.archive.url`. Setting both browse settings, a template without a placeholder or
+one that does not give an absolute URL stops the component at startup.
 
 Without an archive store nothing is archived, whatever the mode, and incidents are raised as before.
 `Never` switches archiving off while the store stays registered.

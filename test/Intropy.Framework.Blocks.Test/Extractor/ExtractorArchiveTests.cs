@@ -49,7 +49,7 @@ public class ExtractorArchiveTests
         _provider = services.BuildServiceProvider();
     }
 
-    private Extractor<string, string, Context> Build(ArchiveMode? mode, Uri? browseBaseUrl = null) =>
+    private Extractor<string, string, Context> Build(ArchiveMode? mode, ArchiveLink? browseLink = null) =>
         ExtractorBuilder<string, string, Context>.Create("orders.Process", _provider)
             .WithDeserializer(new TextDeserializer())
             .WithValidator(new RejectingValidator())
@@ -57,7 +57,7 @@ public class ExtractorArchiveTests
             .WithSerializer(new CloudEventSerializeStep<string, Context>(s => s, _ => DateTimeOffset.UtcNow))
             .WithDaprTopicPublisher("pubsub", "orders", new Uri("urn:example:orders"), "com.example.order")
             .WithBusinessIncidents(_ => "orders", _ => "orders")
-            .WithArchive(mode is { } m ? new ArchivePolicy("orders", _store, m, browseBaseUrl, TimeProvider.System) : null)
+            .WithArchive(mode is { } m ? new ArchivePolicy("orders", _store, m, browseLink, TimeProvider.System) : null)
             .Build();
 
     private static ReadOnlyMemory<byte> Input(string text) => Encoding.Latin1.GetBytes(text);
@@ -81,19 +81,36 @@ public class ExtractorArchiveTests
         // Latin-1 bytes that are not valid UTF-8: the copy must be the bytes, not a decoding of them.
         var input = Input("reject: café crème");
 
-        var (result, context) = await Build(ArchiveMode.OnIncident, BrowseBaseUrl)
+        var (result, context) = await Build(ArchiveMode.OnIncident, ArchiveLink.FromBaseUrl(BrowseBaseUrl))
             .Execute(input, FileContext(), ct: CancellationToken.None);
 
         Assert.IsType<StepResult<CloudEvent>.RoutedIncident>(result);
-        const string key = "orders/2026/10/28/order_1.xml";
+        var key = context.Metadata[ArchiveContextKeys.Ref];
+        Assert.True(IsKey(key, "orders/2026/10/28/order_1.xml"), key);
         Assert.Equal(input.ToArray(), Assert.Single(_store.Files, f => f.Key == key).Value);
-        Assert.Equal(key, context.Metadata[ArchiveContextKeys.Ref]);
 
         var incident = RoutedIncident()!;
         Assert.Equal("rejected", incident.Description);
         Assert.Equal("kept", incident.Context!["reason"]);
         Assert.Equal(key, incident.Context[ArchiveContextKeys.IncidentDataRef]);
         Assert.Equal(BrowseBaseUrl.AbsoluteUri + key, incident.Context[ArchiveContextKeys.IncidentDataUrl]);
+    }
+
+    // Storage behind sign-in is opened through a portal, which wants the key encoded mid-link.
+    [Fact]
+    public async Task OnIncident_WithABrowseUrlTemplate_TheIncidentLinksThroughTheTemplate()
+    {
+        var link = ArchiveLink.FromTemplate("https://portal.example.com/#view/blob/path/archive%2F{key:encoded}/tab/0");
+
+        await Build(ArchiveMode.OnIncident, link).Execute(Input("reject"), FileContext(), ct: CancellationToken.None);
+
+        var incident = RoutedIncident()!;
+        var key = incident.Context![ArchiveContextKeys.IncidentDataRef];
+        Assert.True(IsKey(key, "orders/2026/10/28/order_1.xml"), key);
+        Assert.Equal($"https://portal.example.com/#view/blob/path/archive%2F{Uri.EscapeDataString(key)}/tab/0",
+            incident.Context[ArchiveContextKeys.IncidentDataUrl]);
+        Assert.StartsWith("https://portal.example.com/#view/blob/path/archive%2Forders%2F2026%2F10%2F28%2Forder_1.xml",
+            incident.Context[ArchiveContextKeys.IncidentDataUrl], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -254,4 +271,9 @@ public class ExtractorArchiveTests
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => Task.CompletedTask;
     }
+
+    // A test that runs alongside one listening to the framework's traces gets a trace id appended
+    // to the key, so a key is matched with or without one.
+    private static bool IsKey(string key, string withoutTrace) =>
+        key == withoutTrace || key.StartsWith(withoutTrace + "_", StringComparison.Ordinal);
 }

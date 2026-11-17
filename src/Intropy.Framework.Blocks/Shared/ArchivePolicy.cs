@@ -41,7 +41,7 @@ public enum ArchiveMode
 /// </remarks>
 public sealed class ArchivePolicy
 {
-    internal ArchivePolicy(string componentName, IFileAdapter store, ArchiveMode mode, Uri? browseBaseUrl,
+    internal ArchivePolicy(string componentName, IFileAdapter store, ArchiveMode mode, ArchiveLink? browseLink,
         TimeProvider time)
     {
         // The component name is the first segment of every key and is known now, so an unusable one
@@ -52,13 +52,10 @@ public sealed class ArchivePolicy
         if (mode == ArchiveMode.Never)
             throw new ArgumentException("A policy that archives nothing is no policy: leave it out instead.",
                 nameof(mode));
-        if (browseBaseUrl is { IsAbsoluteUri: false })
-            throw new ArgumentException("The browse base URL must be absolute.", nameof(browseBaseUrl));
-
         ComponentName = componentName;
         Store = store;
         Mode = mode;
-        BrowseBaseUrl = browseBaseUrl;
+        BrowseLink = browseLink;
         Time = time;
     }
 
@@ -71,19 +68,17 @@ public sealed class ArchivePolicy
     /// <summary>When payloads are written.</summary>
     internal ArchiveMode Mode { get; }
 
-    /// <summary>Where an archived payload can be opened, the key appended: the storage's own address
-    /// for the archive container, so a trace or an incident links straight to the copy. The
-    /// framework cannot read it from the binding, so it is configuration; without it, only the key
-    /// is given.</summary>
-    internal Uri? BrowseBaseUrl { get; }
+    /// <summary>How an archived payload's key becomes a link a person can open, so a trace or an
+    /// incident links straight to the copy. The framework cannot derive it from the binding, so it is
+    /// configuration; without it, only the key is given.</summary>
+    internal ArchiveLink? BrowseLink { get; }
 
     /// <summary>Supplies the date a key is partitioned by when the item carries none.</summary>
     internal TimeProvider Time { get; }
 
     /// <summary>The browse URL of <paramref name="key"/>, or <see langword="null"/> without a
-    /// browse base URL.</summary>
-    internal string? UrlOf(string key) =>
-        BrowseBaseUrl is { } baseUrl ? baseUrl.AbsoluteUri.TrimEnd('/') + "/" + key : null;
+    /// browse link.</summary>
+    internal string? UrlOf(string key) => BrowseLink?.For(key);
 }
 
 /// <summary>The archive's steps for a pipeline, so each block adds them the same way.</summary>
