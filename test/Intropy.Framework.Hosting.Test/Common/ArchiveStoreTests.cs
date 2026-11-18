@@ -76,6 +76,50 @@ public class ArchiveStoreTests
     }
 
     [Fact]
+    public void ArchiveOptions_ReadABrowseUrlTemplate()
+    {
+        const string template = "https://portal.example.com/#view/blob/path/archive%2F{key:encoded}/tab/0";
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BrowseUrlTemplate"] = template
+        }).Build();
+
+        var options = new ArchiveOptions().Bind(configuration);
+
+        Assert.Equal(template, options.BrowseUrlTemplate);
+        Assert.Null(options.BrowseBaseUrl);
+    }
+
+    [Fact]
+    public void ArchiveOptions_RefuseBothBrowseSettings()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BrowseBaseUrl"] = "https://examplearchive.blob.core.windows.net/archive/",
+            ["BrowseUrlTemplate"] = "https://portal.example.com/{key:encoded}"
+        }).Build();
+
+        var error = Assert.Throws<InvalidOperationException>(() => new ArchiveOptions().Bind(configuration));
+
+        Assert.Contains(nameof(ArchiveOptions.BrowseBaseUrl), error.Message, StringComparison.Ordinal);
+        Assert.Contains(nameof(ArchiveOptions.BrowseUrlTemplate), error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ArchiveOptions_RefuseABrowseUrlTemplateWithoutAPlaceholder()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["BrowseUrlTemplate"] = "https://portal.example.com/archive/"
+        }).Build();
+
+        var error = Assert.Throws<InvalidOperationException>(() => new ArchiveOptions().Bind(configuration));
+
+        Assert.Contains(nameof(ArchiveOptions.BrowseUrlTemplate), error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("(Parameter", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AnIncidentsFile_IsArchived_BeforeTheSweepDeletesIt()
     {
         _source.AddFile("bad order.xml", "reject");

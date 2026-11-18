@@ -56,7 +56,7 @@ public class ArchivePipelinesTests
 
         await loader.Execute(Payload, context, detachTrace: false, CancellationToken.None);
 
-        Assert.Equal(Payload, Assert.Single(_store.Files, f => f.Key == "orders/2026/10/27/evt-1").Value);
+        Assert.Equal(Payload, Assert.Single(_store.Files, f => IsKey(f.Key, "orders/2026/10/27/evt-1")).Value);
     }
 
     // A queued message carries the file name it was received as too; two messages can come from
@@ -84,7 +84,7 @@ public class ArchivePipelinesTests
 
         await pipeline.Execute(Payload, context, CancellationToken.None);
 
-        Assert.Equal(Payload, Assert.Single(_store.Files, f => f.Key == "orders/2026/10/26/msg-1").Value);
+        Assert.Equal(Payload, Assert.Single(_store.Files, f => IsKey(f.Key, "orders/2026/10/26/msg-1")).Value);
     }
 
     private static BusinessIncidentData Rejected => new() { Description = "rejected" };
@@ -180,4 +180,9 @@ public class ArchivePipelinesTests
 
         public Task DeleteAsync(string fileName, CancellationToken ct = default) => Task.CompletedTask;
     }
+
+    // A test that runs alongside one listening to the framework's traces gets a trace id appended
+    // to the key, so a key is matched with or without one.
+    private static bool IsKey(string key, string withoutTrace) =>
+        key == withoutTrace || key.StartsWith(withoutTrace + "_", StringComparison.Ordinal);
 }

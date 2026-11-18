@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
@@ -85,7 +86,7 @@ public static class ArchiveStoreServiceCollectionExtensions
         }
 
         return new ArchivePolicy(scope.GetRequiredService<FrameworkOptions>().ComponentName, store, options.Mode,
-            options.BrowseBaseUrl, scope.GetService<TimeProvider>() ?? TimeProvider.System);
+            options.BrowseLink(), scope.GetService<TimeProvider>() ?? TimeProvider.System);
     }
 }
 
@@ -98,18 +99,32 @@ public sealed class ArchiveOptions
     /// <summary>
     /// Where an archived copy can be opened, its key appended — the archive container's address, e.g.
     /// <c>https://&lt;account&gt;.blob.core.windows.net/archive/</c>. Optional: with it, traces and
-    /// incidents link straight to the copy; without it, they name its key.
+    /// incidents link straight to the copy; without it, they name its key. Only opens when the storage
+    /// can be read anonymously; for storage behind sign-in, use <see cref="BrowseUrlTemplate"/>.
+    /// Not together with <see cref="BrowseUrlTemplate"/>.
     /// </summary>
     public Uri? BrowseBaseUrl { get; set; }
 
     /// <summary>
-    /// Copies the values of an <c>Archive</c> configuration section onto these options: <c>Mode</c>
-    /// and <c>BrowseBaseUrl</c>.
+    /// Where an archived copy can be opened, as a link with the key placed anywhere in it:
+    /// <c>{key}</c> is the key as is, <c>{key:encoded}</c> the key URL-encoded (slashes as <c>%2F</c>).
+    /// Suits a portal that signs the reader in, such as an Azure portal blob link:
+    /// <c>https://portal.azure.com/#view/Microsoft_Azure_Storage/BlobPropertiesBladeV2/storageAccountId/&lt;encoded account resource id&gt;/path/archive%2F{key:encoded}/isDeleted~/false/tabToload~/0</c>.
+    /// Optional. Not together with <see cref="BrowseBaseUrl"/>.
+    /// </summary>
+    [SuppressMessage("Design", "CA1056:URI-like properties should not be strings",
+        Justification = "A template with {key} placeholders is not a URI until the key is filled in.")]
+    public string? BrowseUrlTemplate { get; set; }
+
+    /// <summary>
+    /// Copies the values of an <c>Archive</c> configuration section onto these options: <c>Mode</c>,
+    /// <c>BrowseBaseUrl</c> and <c>BrowseUrlTemplate</c>.
     /// </summary>
     /// <param name="configuration">The section holding the values.</param>
     /// <returns>These options, for chaining.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="configuration"/> is null.</exception>
-    /// <exception cref="InvalidOperationException">A key holds a value of the wrong shape.</exception>
+    /// <exception cref="InvalidOperationException">A key holds a value of the wrong shape, or both
+    /// browse settings are set.</exception>
     public ArchiveOptions Bind(IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -121,6 +136,33 @@ public sealed class ArchiveOptions
                 ? uri
                 : throw new InvalidOperationException(
                     $"{nameof(ArchiveOptions)}.{nameof(BrowseBaseUrl)}: configuration value '{url}' is not an absolute URL.");
+        if (ComponentConfigurationReader.String(configuration, nameof(BrowseUrlTemplate)) is { Length: > 0 } template)
+            BrowseUrlTemplate = template;
+
+        // At startup rather than on the first archived payload: a wrong link should stop the
+        // component, not leave every incident without one.
+        BrowseLink();
         return this;
+    }
+
+    /// <summary>The browse link these options describe, or <see langword="null"/> when neither browse
+    /// setting is set.</summary>
+    /// <exception cref="InvalidOperationException">Both are set, or the one set has the wrong shape.</exception>
+    internal ArchiveLink? BrowseLink()
+    {
+        if (BrowseBaseUrl is not null && !string.IsNullOrWhiteSpace(BrowseUrlTemplate))
+            throw new InvalidOperationException(
+                $"{nameof(ArchiveOptions)}: set {nameof(BrowseBaseUrl)} or {nameof(BrowseUrlTemplate)}, not both.");
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(BrowseUrlTemplate))
+                return ArchiveLink.FromTemplate(BrowseUrlTemplate);
+            return BrowseBaseUrl is { } baseUrl ? ArchiveLink.FromBaseUrl(baseUrl) : null;
+        }
+        catch (ArgumentException ex)
+        {
+            var setting = string.IsNullOrWhiteSpace(BrowseUrlTemplate) ? nameof(BrowseBaseUrl) : nameof(BrowseUrlTemplate);
+            throw new InvalidOperationException($"{nameof(ArchiveOptions)}.{setting}: {ex.Message.Split(" (Parameter", 2)[0]}", ex);
+        }
     }
 }
