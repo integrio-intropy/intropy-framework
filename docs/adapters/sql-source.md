@@ -66,7 +66,6 @@ The port's section holds only what differs between environments:
     "Kind": "Sql",
     "ConnectionString": "<secret>",
     "EmptyResult": "Skip",
-    "CursorStore": "statestore",
     "InitialWatermark": "2026-11-20T01:50:00",
     "CommandTimeout": "00:05:00"
   }
@@ -86,6 +85,13 @@ Declare the port with `PortRef.DefineExternal` in the system's topology. The top
 store for each component that reads an external port (`<component>-cursors`) and the host passes its
 name as `Ports__<port>__CursorStore`, so a deployed component never names its store. Set
 `CursorStore` yourself only when the component runs outside the host. A full export ignores it.
+
+**The watermark is this source's cursor.** Every polled source port is driven by a stateful sweep
+that keeps the source's position between runs, which the framework calls its *cursor*, in the
+`CursorStore`. For a SQL source that position is a watermark: the highest value of the watermark
+column read so far (`int:2`, a date and time, a `rowversion`), which the next run's query receives as
+`@watermark`. `InitialWatermark` is the cursor before the first run. The rest of this page says
+watermark.
 
 ### The initial watermark
 

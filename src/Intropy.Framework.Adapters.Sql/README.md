@@ -24,10 +24,13 @@ services.AddSqlSourcePort("campaigns", configuration, sql => sql
 "Ports": { "campaigns": {
   "Kind": "Sql",
   "ConnectionString": "<secret>",
-  "CursorStore": "statestore",
   "InitialWatermark": "2026-11-20T01:50:00"
 }}
 ```
+
+The watermark is the source's cursor. The system's host sets `CursorStore`, the state store it is
+kept in, for a port the topology declares with `PortRef.DefineExternal`; set it yourself only
+outside the host.
 
 See [SQL Source](https://github.com/integrio-intropy/intropy-framework/blob/main/docs/adapters/sql-source.md)
 for the full export and delta behaviour, idempotency, and configuration.

@@ -36,7 +36,9 @@ public sealed class SqlSourceOptions
     public string? CursorStore { get; init; }
 
     /// <summary>The watermark before the first run, such as <c>2026-11-20T01:50:00</c>: a date and
-    /// time, an integer, or a <c>0x</c> hex value. Required with a delta.</summary>
+    /// time, an integer, or a <c>0x</c> hex value. Required with a delta. The watermark is this
+    /// source's cursor, kept in <see cref="CursorStore"/>: this is the cursor's value before any run
+    /// has committed one.</summary>
     public string? InitialWatermark { get; init; }
 
     /// <summary>How long a statement may run before it fails. Default: five minutes.</summary>
