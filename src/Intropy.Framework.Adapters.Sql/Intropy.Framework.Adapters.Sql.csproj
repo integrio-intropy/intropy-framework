@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>SQL Server (and, for local runs, SQLite) source port for the Intropy.Framework pipeline framework: reads a query into one message per run, as a full export or a delta with a watermark.</Description>
+    <PackageTags>intropy;pipeline;integration;framework;adapters;sql;sqlserver;sqlite</PackageTags>
+  </PropertyGroup>
+
+  <!-- The database drivers are referenced here and nowhere else: only components that read SQL
+       reference this package, so Core, Blocks, Adapters and Hosting stay free of them. SQLite is
+       the local stand-in: a file, no server. -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Intropy.Framework.Hosting\Intropy.Framework.Hosting.csproj" />
+  </ItemGroup>
+
+</Project>

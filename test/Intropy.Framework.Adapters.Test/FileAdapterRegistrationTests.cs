@@ -101,6 +101,34 @@ public class FileAdapterRegistrationTests
             r.BindingName == "orders-source" && !r.Metadata["fileName"].Contains("workspace")), Arg.Any<CancellationToken>());
     }
 
+    public static TheoryData<string> HostSettings => new(PortServiceCollectionExtensions.HostSettings);
+
+    [Fact]
+    public void TheHostSettings_AreTheOnesTheSystemsHostWrites() =>
+        // Intropy.Topology.Aspire writes these into Ports:<port>; keep the two in step.
+        Assert.Equal(["CursorStore", "RootPath"], PortServiceCollectionExtensions.HostSettings.Order(StringComparer.Ordinal));
+
+    [Fact]
+    public void TheHostSettings_IgnoreCase_AsConfigurationKeysDo() =>
+        Assert.Contains("cursorstore", PortServiceCollectionExtensions.HostSettings);
+
+    [Theory]
+    [MemberData(nameof(HostSettings))]
+    public void EverySettingTheHostWrites_IsAccepted(string setting)
+    {
+        // The system's host writes its own settings into a port's section; the adapter must still start.
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Ports:orders-source:Kind"] = "Local",
+            [$"Ports:orders-source:{setting}"] = "set-by-the-host"
+        }).Build();
+
+        var services = new ServiceCollection();
+        services.AddFileAdapter("orders-source", configuration.GetSection("Ports:orders-source"));
+
+        Assert.Contains(services, d => d.ServiceType == typeof(IFileAdapter) && Equals(d.ServiceKey, "orders-source"));
+    }
+
     [Theory]
     [InlineData("Kind", null)]
     [InlineData("Kind", "")]

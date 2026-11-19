@@ -14,7 +14,8 @@ public static class FileAdapterServiceCollectionExtensions
 {
     /// <summary>
     /// Registers a snapshot of a caller-owned section, conventionally <c>Ports:&lt;port&gt;</c>.
-    /// Unknown or nested settings are rejected; the host's <c>RootPath</c> is accepted and ignored.
+    /// Unknown or nested settings are rejected; the settings the system's host writes
+    /// (<see cref="PortServiceCollectionExtensions.HostSettings"/>) are accepted and ignored.
     /// </summary>
     public static IServiceCollection AddFileAdapter(this IServiceCollection services, string key,
         IConfigurationSection section)
@@ -137,12 +138,10 @@ public static class FileAdapterServiceCollectionExtensions
         return services;
     }
 
-    // The system host sets Ports:<port>:RootPath for components that read the folder directly. It
-    // belongs to the port, not to the Dapr-backed adapter, which reaches the folder through the binding.
-    private const string HostRootPathSetting = "RootPath";
-
+    // The host's settings (such as RootPath, for components that read the folder directly) belong to
+    // the port, not to the Dapr-backed adapter, which reaches the folder through the binding.
     private static bool IsSetting(string key) =>
-        key.Equals(HostRootPathSetting, StringComparison.OrdinalIgnoreCase) ||
+        PortServiceCollectionExtensions.HostSettings.Contains(key) ||
         key.Equals(nameof(FileTransportOptions.Kind), StringComparison.OrdinalIgnoreCase) ||
         key.Equals(nameof(FileTransportOptions.DaprBindingName), StringComparison.OrdinalIgnoreCase) ||
         key.Equals(nameof(FileTransportOptions.BasePath), StringComparison.OrdinalIgnoreCase) ||

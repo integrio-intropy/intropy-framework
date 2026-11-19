@@ -17,6 +17,7 @@ Intropy.Framework packages the structure: declare your steps, compose them with 
 | [Intropy.Framework.Core](https://www.nuget.org/packages/Intropy.Framework.Core) | Pipeline engine, step abstractions, result types |
 | [Intropy.Framework.Blocks](https://www.nuget.org/packages/Intropy.Framework.Blocks) | Reusable pipeline blocks (Extractor, Loader, Transactional Integration) |
 | [Intropy.Framework.Adapters](https://www.nuget.org/packages/Intropy.Framework.Adapters) | File adapters (SFTP, SMB, local, Azure Blob) via Dapr bindings |
+| [Intropy.Framework.Adapters.Sql](https://www.nuget.org/packages/Intropy.Framework.Adapters.Sql) | A SQL Server query as a source port (full export or delta) |
 | [Intropy.Framework.Hosting](https://www.nuget.org/packages/Intropy.Framework.Hosting) | Runtime orchestration (Dapr sidecar lifecycle, message subscription, idle timeout) |
 | [Intropy.Framework.EventDispatcher](https://www.nuget.org/packages/Intropy.Framework.EventDispatcher) | Attribute-based CloudEvent routing to typed handlers |
 | [Intropy.Framework.Components](https://www.nuget.org/packages/Intropy.Framework.Components) | Declarative components: a class declares its rules and steps, the framework wires the rest (Gateway) |
@@ -73,6 +74,7 @@ Full documentation lives in [`docs/`](docs/index.md):
 - [Core](docs/core/pipeline.md) — pipeline engine, builders, step types, and result types
 - [Blocks](docs/blocks/transactional-integration.md) — Transactional Integration, Extractor, Loader
 - [Adapters](docs/adapters/file-adapters.md) — File adapters via Dapr bindings
+- [SQL Source](docs/adapters/sql-source.md) — A SQL Server query as a source port
 - [Event Dispatcher](docs/event-dispatcher/event-dispatcher.md) — CloudEvent routing
 
 ## Build and test

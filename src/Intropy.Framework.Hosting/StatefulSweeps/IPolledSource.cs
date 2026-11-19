@@ -71,7 +71,7 @@ public sealed record CursorOptions(string StoreName, string? Initial, bool CanPi
 {
     /// <summary>The key in a port's section (<c>Ports:&lt;port&gt;</c>) holding the name of the state
     /// store the port's cursor is kept in. The system's host sets it, from the topology.</summary>
-    public const string StoreKey = "CursorStore";
+    public const string StoreKey = PortServiceCollectionExtensions.CursorStoreSetting;
 
     /// <summary>
     /// The cursor of <paramref name="port"/>, kept in the state store its section names
