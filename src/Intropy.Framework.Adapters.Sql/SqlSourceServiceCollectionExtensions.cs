@@ -18,7 +18,7 @@ public static class SqlSourceServiceCollectionExtensions
     private static readonly string[] Settings =
     [
         nameof(SqlSourceOptions.Kind), nameof(SqlSourceOptions.ConnectionString), nameof(SqlSourceOptions.EmptyResult),
-        nameof(SqlSourceOptions.WatermarkStore), nameof(SqlSourceOptions.InitialWatermark),
+        CursorOptions.StoreKey, nameof(SqlSourceOptions.InitialWatermark),
         nameof(SqlSourceOptions.CommandTimeout)
     ];
 
@@ -135,7 +135,7 @@ public static class SqlSourceServiceCollectionExtensions
             Kind = section[nameof(SqlSourceOptions.Kind)] ?? "",
             ConnectionString = section[nameof(SqlSourceOptions.ConnectionString)],
             EmptyResult = emptyResult,
-            WatermarkStore = section[nameof(SqlSourceOptions.WatermarkStore)],
+            CursorStore = section[CursorOptions.StoreKey],
             InitialWatermark = section[nameof(SqlSourceOptions.InitialWatermark)],
             CommandTimeout = timeout
         };
@@ -154,8 +154,10 @@ public static class SqlSourceServiceCollectionExtensions
             throw Invalid(location, "CommandTimeout must be positive.");
         if (!hasDelta)
             return;
-        if (string.IsNullOrWhiteSpace(options.WatermarkStore))
-            throw Invalid(location, "WatermarkStore is required with a delta: the Dapr state store the watermark is kept in.");
+        if (string.IsNullOrWhiteSpace(options.CursorStore))
+            throw Invalid(location, "CursorStore is required with a delta: the Dapr state store the watermark is kept in. " +
+                "The system's host sets it for a component that reads a port the topology declares external " +
+                "(PortRef.DefineExternal); outside the host, set it yourself.");
         if (string.IsNullOrWhiteSpace(options.InitialWatermark))
             throw Invalid(location, "InitialWatermark is required with a delta: the watermark before the first run.");
         try

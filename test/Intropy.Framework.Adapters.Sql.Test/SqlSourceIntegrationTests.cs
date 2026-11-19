@@ -52,7 +52,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
         var services = new ServiceCollection();
         services.AddSqlSource(port, new SqlSourceOptions
         {
-            ConnectionString = ConnectionString, EmptyResult = emptyResult, WatermarkStore = "statestore",
+            ConnectionString = ConnectionString, EmptyResult = emptyResult, CursorStore = "statestore",
             InitialWatermark = "2026-01-01T00:00:00"
         }, sql =>
         {

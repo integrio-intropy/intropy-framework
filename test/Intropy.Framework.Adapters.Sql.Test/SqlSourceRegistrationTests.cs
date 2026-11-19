@@ -7,7 +7,7 @@ namespace Intropy.Framework.Adapters.Sql.Test;
 
 /// <summary>
 /// A SQL port's configuration is checked when the port is registered, without echoing a value (the
-/// connection string is a secret); a delta needs a watermark store and an initial watermark, a full
+/// connection string is a secret); a delta needs a cursor store and an initial watermark, a full
 /// export needs neither; and the query is read from the component's embedded <c>.sql</c> file.
 /// </summary>
 public class SqlSourceRegistrationTests
@@ -27,12 +27,28 @@ public class SqlSourceRegistrationTests
     }
 
     [Fact]
+    public void AFullExport_AcceptsTheCursorStoreTheHostSetsForEveryReader()
+    {
+        // The system's host sets Ports:<port>:CursorStore for every component that reads an external
+        // port, whether or not the source keeps a cursor.
+        var services = new ServiceCollection();
+        services.AddSqlSource("campaigns", Section(new()
+        {
+            ["Kind"] = "Sql", ["ConnectionString"] = Secret, [CursorOptions.StoreKey] = "campaign-extractor-cursors"
+        }), sql => sql.Query(SqlFile.Inline("SELECT 1 AS One")));
+
+        var source = services.BuildServiceProvider().GetRequiredKeyedService<IPolledSource>("campaigns");
+
+        Assert.Null(source.Cursor);
+    }
+
+    [Fact]
     public void ADelta_KeepsItsCursorInTheConfiguredStore_FromTheInitialWatermark()
     {
         var services = new ServiceCollection();
         services.AddSqlSource("campaigns", Section(new()
         {
-            ["Kind"] = "Sql", ["ConnectionString"] = Secret, ["WatermarkStore"] = "statestore",
+            ["Kind"] = "Sql", ["ConnectionString"] = Secret, ["CursorStore"] = "statestore",
             ["InitialWatermark"] = "2026-11-20T01:50:00", ["EmptyResult"] = "Send", ["CommandTimeout"] = "00:10:00"
         }), sql => sql.Query(SqlFile.Embedded("Sql/Query.sql")).Delta(Delta.Column("ModifiedAt")));
 
@@ -52,7 +68,7 @@ public class SqlSourceRegistrationTests
             sql.Query(SqlFile.Inline("SELECT 1 AS One"));
         });
 
-        // A delta added afterwards was never validated (there is no watermark store) and must not run.
+        // A delta added afterwards was never validated (there is no cursor store) and must not run.
         kept!.Delta(Delta.Column("One"));
         var source = services.BuildServiceProvider().GetRequiredKeyedService<IPolledSource>("campaigns");
 
@@ -68,7 +84,7 @@ public class SqlSourceRegistrationTests
         var error = Assert.Throws<InvalidOperationException>(() => new ServiceCollection().AddSqlSource("campaigns",
             Section(new()
             {
-                ["Kind"] = "Sql", ["ConnectionString"] = Secret, ["WatermarkStore"] = "statestore",
+                ["Kind"] = "Sql", ["ConnectionString"] = Secret, ["CursorStore"] = "statestore",
                 ["InitialWatermark"] = initial
             }), sql => sql.Query(SqlFile.Inline("SELECT 1 AS One")).Delta(Delta.Column("One"))));
 
@@ -77,13 +93,13 @@ public class SqlSourceRegistrationTests
     }
 
     [Theory]
-    [InlineData("WatermarkStore")]
+    [InlineData("CursorStore")]
     [InlineData("InitialWatermark")]
     public void ADelta_WithoutItsCursorSettings_IsRejected(string missing)
     {
         var settings = new Dictionary<string, string?>
         {
-            ["Kind"] = "Sql", ["ConnectionString"] = Secret, ["WatermarkStore"] = "statestore",
+            ["Kind"] = "Sql", ["ConnectionString"] = Secret, ["CursorStore"] = "statestore",
             ["InitialWatermark"] = "2026-11-20T01:50:00"
         };
         settings.Remove(missing);

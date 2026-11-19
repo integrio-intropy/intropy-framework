@@ -1,3 +1,5 @@
+using Intropy.Framework.Hosting.StatefulSweeps;
+
 namespace Intropy.Framework.Adapters.Sql;
 
 /// <summary>
@@ -28,8 +30,10 @@ public sealed class SqlSourceOptions
     /// <summary>What a run whose query returns no rows sends. Default: nothing.</summary>
     public SqlEmptyResult EmptyResult { get; init; } = SqlEmptyResult.Skip;
 
-    /// <summary>The Dapr state store the watermark is kept in. Required with a delta.</summary>
-    public string? WatermarkStore { get; init; }
+    /// <summary>The Dapr state store the watermark is kept in (<see cref="CursorOptions.StoreKey"/>).
+    /// Required with a delta. The system's host sets it from the topology, which mints a store for every
+    /// component that reads an external port; set it yourself only outside the host.</summary>
+    public string? CursorStore { get; init; }
 
     /// <summary>The watermark before the first run, such as <c>2026-11-20T01:50:00</c>: a date and
     /// time, an integer, or a <c>0x</c> hex value. Required with a delta.</summary>

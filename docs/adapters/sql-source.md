@@ -66,7 +66,7 @@ The port's section holds only what differs between environments:
     "Kind": "Sql",
     "ConnectionString": "<secret>",
     "EmptyResult": "Skip",
-    "WatermarkStore": "statestore",
+    "CursorStore": "statestore",
     "InitialWatermark": "2026-11-20T01:50:00",
     "CommandTimeout": "00:05:00"
   }
@@ -78,9 +78,14 @@ The port's section holds only what differs between environments:
 | `Kind` | `Sql` (SQL Server), or `Sqlite` for a local run. See [SQLite for local runs](#sqlite-for-local-runs). |
 | `ConnectionString` | SQL Server connection string. Use a SQL login: Windows integrated authentication does not work from a Linux container. |
 | `EmptyResult` | `Skip` (default): a run without rows sends nothing. `Send`: it sends an empty array. |
-| `WatermarkStore` | The Dapr state store the watermark is kept in. Required with a delta. |
+| `CursorStore` | The Dapr state store the watermark is kept in. Required with a delta. Set by the system's host; see below. |
 | `InitialWatermark` | The watermark before the first run. Required with a delta. See [The initial watermark](#the-initial-watermark). |
 | `CommandTimeout` | How long a statement may run. Default five minutes. |
+
+Declare the port with `PortRef.DefineExternal` in the system's topology. The topology mints a state
+store for each component that reads an external port (`<component>-cursors`) and the host passes its
+name as `Ports__<port>__CursorStore`, so a deployed component never names its store. Set
+`CursorStore` yourself only when the component runs outside the host. A full export ignores it.
 
 ### The initial watermark
 
@@ -111,7 +116,14 @@ CronJob's job, not the adapter's.
 `Kind: Sqlite` reads a SQLite database file instead of SQL Server, with the same query file and
 delta: a local run needs no database server. The environment chooses the kind, so a component's
 `appsettings.json` can say `Sql` while the local system host sets `Ports__<port>__Kind=Sqlite` and a
-connection string such as `Data Source=/abs/path/marketing.db`.
+connection string such as `Data Source=/abs/path/marketing.db`. In the system's development
+definition:
+
+```csharp
+development.Settings(Ports.Campaigns)
+    .Set("Kind", "Sqlite")
+    .Set("ConnectionString", "Data Source=/abs/path/marketing.db");
+```
 
 The query runs unchanged on both, so keep it to SQL both accept: a plain `SELECT … WHERE column >
 @watermark ORDER BY column` does; `TOP`, T-SQL functions and SQL Server types do not. SQLite has no

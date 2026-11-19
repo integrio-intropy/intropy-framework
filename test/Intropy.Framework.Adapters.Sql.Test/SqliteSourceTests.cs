@@ -82,7 +82,7 @@ public sealed class SqliteSourceTests : IDisposable
         {
             ["Ports:campaigns:Kind"] = "Sqlite",
             ["Ports:campaigns:ConnectionString"] = ConnectionString,
-            ["Ports:campaigns:WatermarkStore"] = "statestore",
+            ["Ports:campaigns:CursorStore"] = "statestore",
             ["Ports:campaigns:InitialWatermark"] = "int:0",
         }).Build();
         var services = new ServiceCollection();

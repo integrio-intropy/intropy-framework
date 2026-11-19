@@ -24,7 +24,7 @@ services.AddSqlSourcePort("campaigns", configuration, sql => sql
 "Ports": { "campaigns": {
   "Kind": "Sql",
   "ConnectionString": "<secret>",
-  "WatermarkStore": "statestore",
+  "CursorStore": "statestore",
   "InitialWatermark": "2026-11-20T01:50:00"
 }}
 ```

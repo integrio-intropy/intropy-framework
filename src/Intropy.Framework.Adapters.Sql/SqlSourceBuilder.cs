@@ -22,7 +22,7 @@ public sealed class SqlSourceBuilder
 
     /// <summary>
     /// Reads only what changed since the last successful run. The watermark is kept in the port's
-    /// <c>WatermarkStore</c> and moves only after the message has been handled.
+    /// <c>CursorStore</c>, set by the system's host, and moves only after the message has been handled.
     /// </summary>
     /// <param name="delta">Where the watermark comes from: <see cref="Sql.Delta.Column"/> or
     /// <see cref="Sql.Delta.Cursor"/>.</param>

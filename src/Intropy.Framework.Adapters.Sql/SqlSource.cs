@@ -32,7 +32,7 @@ internal sealed class SqlSource(
     /// <inheritdoc />
     public CursorOptions? Cursor { get; } = delta is null
         ? null
-        : new CursorOptions(options.WatermarkStore!, options.InitialWatermark, CanPin: true);
+        : new CursorOptions(options.CursorStore!, options.InitialWatermark, CanPin: true);
 
     /// <inheritdoc />
     public async Task<PolledResult> ReadAsync(CursorRange range, CancellationToken ct)
