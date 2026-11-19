@@ -136,6 +136,9 @@ public class JobRunner
 
     private async Task ShutdownSidecarAsync(int exitCode)
     {
+        if (_options.SidecarShutdown == SidecarShutdown.Never)
+            return;
+
         if (_options.SidecarShutdown == SidecarShutdown.OnSuccess && exitCode != JobExitCodes.Success)
         {
             _logger.LogInformation(
