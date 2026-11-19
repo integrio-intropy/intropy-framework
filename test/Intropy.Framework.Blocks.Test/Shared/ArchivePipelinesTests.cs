@@ -115,10 +115,10 @@ public class ArchivePipelinesTests
 
     private sealed class LoaderDiscardingSender : LoaderSteps.SendStep<string, Context>
     {
-        public override Task<(TechnicalStepResult<string> Result, Context Context)> ExecuteAsync(
+        public override Task<(BusinessStepResult<string> Result, Context Context)> ExecuteAsync(
             string input, Context context, CancellationToken ct) =>
-            Task.FromResult<(TechnicalStepResult<string>, Context)>(
-                (new TechnicalStepResult<string>.Success(input), context));
+            Task.FromResult<(BusinessStepResult<string>, Context)>(
+                (new BusinessStepResult<string>.Success(input), context));
     }
 
     private sealed class SendDeserializer : SendSteps.DeserializeStep<string, Context>

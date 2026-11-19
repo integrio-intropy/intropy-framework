@@ -125,26 +125,53 @@ public sealed class CustomerSender : SendStep<LoaderCustomerOut, Context>
 {
     public int SentCount { get; private set; }
 
-    public override Task<(TechnicalStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
+    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
         LoaderCustomerOut input, Context context, CancellationToken ct)
     {
         // Simulate successful send
         SentCount++;
-        return Task.FromResult<(TechnicalStepResult<LoaderCustomerOut>, Context)>(
-            (new TechnicalStepResult<LoaderCustomerOut>.Success(input), context));
+        return Task.FromResult<(BusinessStepResult<LoaderCustomerOut>, Context)>(
+            (new BusinessStepResult<LoaderCustomerOut>.Success(input), context));
     }
 }
 
 public sealed class FailingSender : SendStep<LoaderCustomerOut, Context>
 {
-    public override Task<(TechnicalStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
+    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
         LoaderCustomerOut input, Context context, CancellationToken ct)
     {
         throw new InvalidOperationException("Simulated send failure");
     }
 }
 
-public sealed class ReceiptSender : SendStep<LoaderCustomerOut, Context>
+/// <summary>Throws for one customer and sends the others, so a batch can mix a failed send with
+/// successful ones.</summary>
+public sealed class FailingSenderFor(int customerId) : SendStep<LoaderCustomerOut, Context>
+{
+    public List<int> Sent { get; } = [];
+
+    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
+        LoaderCustomerOut input, Context context, CancellationToken ct)
+    {
+        if (input.CustomerId == customerId)
+            throw new HttpRequestException("Destination unreachable");
+        lock (Sent) Sent.Add(input.CustomerId);
+        return Task.FromResult<(BusinessStepResult<LoaderCustomerOut>, Context)>(
+            (new BusinessStepResult<LoaderCustomerOut>.Success(input), context));
+    }
+}
+
+/// <summary>Rejects every item with a business failure of its own, retriable or not.</summary>
+public sealed class RejectingSender(bool retriable) : SendStep<LoaderCustomerOut, Context>
+{
+    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
+        LoaderCustomerOut input, Context context, CancellationToken ct) =>
+        Task.FromResult<(BusinessStepResult<LoaderCustomerOut>, Context)>(
+            (new BusinessStepResult<LoaderCustomerOut>.Failure(
+                new BusinessIncidentData { Description = "The destination rejected the customer" }, retriable), context));
+}
+
+public sealed class ReceiptSender : SendReceiptStep<LoaderCustomerOut, Context>
 {
     public List<LoaderCustomerOut> SentReceipts { get; } = new();
 
@@ -157,7 +184,7 @@ public sealed class ReceiptSender : SendStep<LoaderCustomerOut, Context>
     }
 }
 
-public sealed class FailingReceiptSender : SendStep<LoaderCustomerOut, Context>
+public sealed class FailingReceiptSender : SendReceiptStep<LoaderCustomerOut, Context>
 {
     public override Task<(TechnicalStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
         LoaderCustomerOut input, Context context, CancellationToken ct)

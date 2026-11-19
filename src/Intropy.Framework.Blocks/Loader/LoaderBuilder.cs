@@ -49,7 +49,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private ArchivePolicy? _archive;
 
     // Optional receipt sender
-    private SendStep<TOutput, TCtx>? _receiptSender;
+    private SendReceiptStep<TOutput, TCtx>? _receiptSender;
 
     // The CloudEvent type of the route this pipeline serves in a routing loader; null otherwise.
     private readonly string? _routeEventType;
@@ -302,10 +302,11 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// The receipt sender receives the pipeline output (TOutput) and can publish it in any format
     /// (e.g., CloudEvent to a Dapr topic, HTTP call, etc.).
     /// </summary>
-    /// <param name="receiptSender">The <see cref="SendStep{T,TCtx}"/> that sends the receipt.</param>
+    /// <param name="receiptSender">The <see cref="SendReceiptStep{T,TCtx}"/> that sends the receipt. A
+    /// failed receipt is a technical failure.</param>
     /// <returns>The builder for method chaining.</returns>
     public LoaderBuilder<TInput, TOutput, TCtx> WithReceiptSender(
-        SendStep<TOutput, TCtx> receiptSender)
+        SendReceiptStep<TOutput, TCtx> receiptSender)
     {
         ArgumentNullException.ThrowIfNull(receiptSender);
         _receiptSender = receiptSender;

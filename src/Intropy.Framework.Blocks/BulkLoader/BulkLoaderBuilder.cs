@@ -1,7 +1,6 @@
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.BulkLoader.Steps;
-using Intropy.Framework.Blocks.Loader.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.Shared.Steps;
 using Intropy.Framework.Blocks.Shared.Steps.External;
@@ -42,7 +41,7 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
     private IdempotencyRecordStep<TOutput, TCtx>? _idempotencyRecorder;
     private BusinessIncidentRouteStep<TOutput, TCtx>? _businessIncidentRouter;
-    private SendStep<TOutput, TCtx>? _receiptSender;
+    private SendReceiptStep<TOutput, TCtx>? _receiptSender;
     private int _degreeOfParallelism = 1;
 
     // The CloudEvent type of the route this pipeline serves in a routing bulk loader; null otherwise.
@@ -201,7 +200,7 @@ public class BulkLoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
     /// <summary>Configures an optional receipt sender that runs per message, after a successful load
     /// and, when idempotency is configured, after its record.</summary>
-    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithReceiptSender(SendStep<TOutput, TCtx> receiptSender)
+    public BulkLoaderBuilder<TInput, TOutput, TCtx> WithReceiptSender(SendReceiptStep<TOutput, TCtx> receiptSender)
     {
         ArgumentNullException.ThrowIfNull(receiptSender);
         _receiptSender = receiptSender;

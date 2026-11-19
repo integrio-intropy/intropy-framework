@@ -17,7 +17,7 @@ graph LR
     I --> J[Business Incident Route]
 ```
 
-The Bulk Loader runs the same steps as the [Loader](loader.md), in the same order, for every message of a batch. Each message keeps its own context, its own result and its own business incident, as if it were loaded on its own.
+The Bulk Loader runs the same kinds of steps as the [Loader](loader.md), in the same order, for every message of a batch. Each message keeps its own context, its own result and its own business incident, as if it were loaded on its own.
 
 The difference is that an extractor or the sender can be a **batch step**. It is called once with every message that is still succeeding at that point, rather than once per message. Use one where the external system has a batch endpoint: looking up many references in one request, or writing many records in one request.
 
@@ -28,8 +28,11 @@ The difference is that an extractor or the sender can be a **batch step**. It is
 Hosting runs a Bulk Loader on a Dapr bulk subscription with `AddBulkLoader`. You can also call `Execute` directly with a batch of payloads and contexts.
 
 !!! note "Step namespace"
-    The per-message steps are the Loader's, from `Intropy.Framework.Blocks.Loader.Steps`. The batch
-    steps, `BatchExtractStep` and `BatchSendStep`, are in `Intropy.Framework.Blocks.BulkLoader.Steps`.
+    Every Bulk Loader step is in `Intropy.Framework.Blocks.BulkLoader.Steps`: the per-message
+    `DeserializeStep`, `ExtractStep`, `ValidateStep`, `TransformStep`, `SendStep` and
+    `SendReceiptStep`, and the batch steps `BatchExtractStep` and `BatchSendStep`. They mirror the
+    Loader's steps but are separate types, so a Loader step cannot be passed to a Bulk Loader. Import
+    the Bulk Loader's namespace, not `Intropy.Framework.Blocks.Loader.Steps`.
 
 ## Building a Bulk Loader
 
@@ -92,6 +95,7 @@ public sealed class ProductLookup(IProductSource source) : BatchExtractStep<Prod
 - **The input has room for what is extracted.** A batch extractor returns the same type it is given, like `ExtractStep`. When messages carry only a reference, have the deserializer produce a model with the reference and an empty slot for the data, and let the extractor fill it in.
 - **Duplicates are the step's to collapse.** The step gets every message, including several that name the same thing. Ask the external system once per distinct key, and give each message its own result.
 - **One message's problem is that message's result.** A reference the source doesn't know, or a record the destination rejects, is that entry's own `BusinessFailure`. The other messages go on.
+- **A failed send is a business failure, per message or batch.** A per-message `SendStep` is a business step, as in the Loader, so a send that throws is that message's own retriable business failure (see [Loader: SendStep](loader.md#sendstep)); the other messages go on. A `BatchSendStep` that throws fails every message in the call the same way. A receipt sender (`WithReceiptSender`) runs per message and is a `SendReceiptStep`, whose failure is technical, as in the Loader.
 - **An exception fails every message in the call.** An exception the step doesn't catch becomes the same business failure for every entry. It is retriable by default, so the messages are redelivered; override `ExceptionsAreRetriable` to make it terminal, and `MapException` to shape the incident.
 
 ## Idempotency
@@ -106,5 +110,5 @@ Each message is traced in its own trace, under one pipeline span from its first 
 
 ## Related
 
-- [Loader](loader.md): the single-message pipeline, and the per-message steps
+- [Loader](loader.md): the single-message pipeline, whose steps the Bulk Loader's per-message steps mirror
 - [Observability](../concepts/observability.md): the trace shape of a batch

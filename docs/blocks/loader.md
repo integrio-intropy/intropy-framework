@@ -177,7 +177,17 @@ public class CustomerTransformer : TransformStep<CustomerRecord, CrmContact, Con
 
 ### SendStep
 
-Extends `TechnicalStep<T, T, TCtx>`. Sends the transformed data to the external system. The send step can enrich `TOutput` with the external system's response before returning it — this enriched version is what subsequent steps (idempotency record, receipt sender) receive:
+Extends `BusinessStep<T, T, TCtx>`. Sends the transformed data to the external system. The send step can enrich `TOutput` with the external system's response before returning it — this enriched version is what subsequent steps (idempotency record, receipt sender) receive.
+
+A failed send is a **business failure**, as in a Transactional Integration's send step: the record did not reach the system it was meant for, which is what a business incident reports. How the message continues depends on the failure:
+
+| The send | Result | The message |
+|---|---|---|
+| Throws (the destination is down, a timeout, a 5xx) | Retriable `BusinessFailure`, described as an unhandled exception in the `Send` step | The incident is routed and the message is left for redelivery |
+| Returns `BusinessStepResult<T>.Failure(incident)` | Retriable `BusinessFailure` | The incident is routed and the message is left for redelivery |
+| Returns `BusinessStepResult<T>.Failure(incident, Retriable: false)` | `RoutedIncident` | The incident is routed and the message is acknowledged |
+
+Return a non-retriable failure when the destination rejects the data itself, so a redelivery would fail the same way. Override `ExceptionsAreRetriable` to make every uncaught exception terminal. See [Classifying a business failure](../concepts/step-types.md#classifying-a-business-failure).
 
 ```csharp
 public class CrmApiSender : SendStep<CrmContact, Context>
@@ -186,20 +196,31 @@ public class CrmApiSender : SendStep<CrmContact, Context>
 
     public CrmApiSender(HttpClient httpClient) => _httpClient = httpClient;
 
-    public override async Task<(TechnicalStepResult<CrmContact> Result, Context Context)> ExecuteAsync(
-        CrmContact input, Context context)
+    public override async Task<(BusinessStepResult<CrmContact> Result, Context Context)> ExecuteAsync(
+        CrmContact input, Context context, CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(input);
         var response = await _httpClient.PostAsync("/api/contacts",
-            new StringContent(json, Encoding.UTF8, "application/json"));
+            new StringContent(json, Encoding.UTF8, "application/json"), ct);
 
+        // The CRM rejected the contact itself: sending it again would fail the same way.
+        if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
+        {
+            var incident = new BusinessIncidentData
+            {
+                Description = $"The CRM rejected contact {input.ExternalId}: {await response.Content.ReadAsStringAsync(ct)}"
+            };
+            return (new BusinessStepResult<CrmContact>.Failure(incident, Retriable: false), context);
+        }
+
+        // Anything else that failed is left to throw: a retriable business failure.
         response.EnsureSuccessStatusCode();
 
         // Enrich TOutput with the external system's response
-        var responseBody = await response.Content.ReadFromJsonAsync<CrmCreateResponse>();
+        var responseBody = await response.Content.ReadFromJsonAsync<CrmCreateResponse>(ct);
         var enriched = input with { ExternalId = responseBody!.Id };
 
-        return (new TechnicalStepResult<CrmContact>.Success(enriched), context);
+        return (new BusinessStepResult<CrmContact>.Success(enriched), context);
     }
 }
 ```
@@ -259,7 +280,9 @@ public class CustomerRecord : IHashable
 
 After the data is loaded into the external system, the Loader can optionally send a receipt. This is useful for notifying downstream systems that a record was successfully loaded.
 
-The receipt sender is a regular `SendStep<TOutput, TCtx>` that runs after the send step, and after idempotency is recorded when it is configured. Because it's a pipeline step (not a finalizer), it only executes on success — if any earlier step fails, the receipt is not sent. If the receipt sender itself fails, the pipeline result becomes a `TechnicalFailure`.
+The receipt sender is a `SendReceiptStep<TOutput, TCtx>` that runs after the send step, and after idempotency is recorded when it is configured. Because it's a pipeline step (not a finalizer), it only executes on success — if any earlier step fails, the receipt is not sent.
+
+Unlike the send, a failed receipt is a **technical failure**: the record was loaded, so there is nothing wrong with the data to raise a business incident about, only a notification that did not go out. The message is left for redelivery. When idempotency is configured the load is already recorded by then, so the redelivered message is cancelled as a duplicate and the receipt is not sent again.
 
 ```csharp
 .WithReceiptSender(new LoadReceiptPublisher(daprClient))
@@ -268,14 +291,14 @@ The receipt sender is a regular `SendStep<TOutput, TCtx>` that runs after the se
 The receipt sender receives the `TOutput` that came out of the send step. If the send step enriched the output with the external system's response (e.g., an assigned external ID), the receipt sender sees that enriched version. This means the receipt can include information from the external system's response without any extra wiring.
 
 ```csharp
-public class LoadReceiptPublisher : SendStep<CrmContact, Context>
+public class LoadReceiptPublisher : SendReceiptStep<CrmContact, Context>
 {
     private readonly DaprClient _daprClient;
 
     public LoadReceiptPublisher(DaprClient daprClient) => _daprClient = daprClient;
 
     public override async Task<(TechnicalStepResult<CrmContact> Result, Context Context)> ExecuteAsync(
-        CrmContact input, Context context)
+        CrmContact input, Context context, CancellationToken ct)
     {
         // input.ExternalId was set by the send step from the CRM API response
         var cloudEvent = new CloudEvent
@@ -288,7 +311,7 @@ public class LoadReceiptPublisher : SendStep<CrmContact, Context>
             DataContentType = "application/json"
         };
 
-        await _daprClient.PublishEventAsync("pubsub", "load-receipts", cloudEvent);
+        await _daprClient.PublishEventAsync("pubsub", "load-receipts", cloudEvent, ct);
 
         return (new TechnicalStepResult<CrmContact>.Success(input), context);
     }
