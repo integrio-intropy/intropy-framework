@@ -46,8 +46,10 @@ Both build on `AddFileAdapter`, below.
 ## Configuration-driven keyed transports
 
 Each adapter is registered under its port name, and the caller supplies one configuration
-section per port, conventionally `Ports:<port>` (the section the system host also writes
-`RootPath` into; the adapter accepts and ignores it):
+section per port, conventionally `Ports:<port>`. The system host also writes its own settings
+into that section (`RootPath`, and `CursorStore` for an external port's reader; the full list is
+`PortServiceCollectionExtensions.HostSettings`). The adapter accepts and ignores them, and rejects
+any other unknown setting:
 
 ```json
 {

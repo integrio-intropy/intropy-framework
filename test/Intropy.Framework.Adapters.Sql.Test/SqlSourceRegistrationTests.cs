@@ -1,3 +1,4 @@
+using Intropy.Framework.Adapters.File;
 using Intropy.Framework.Hosting.StatefulSweeps;
 using Intropy.Framework.Hosting.Sweeps;
 using Microsoft.Extensions.Configuration;
@@ -26,15 +27,19 @@ public class SqlSourceRegistrationTests
         Assert.Null(source.Cursor);
     }
 
-    [Fact]
-    public void AFullExport_AcceptsTheCursorStoreTheHostSetsForEveryReader()
+    public static TheoryData<string> HostSettings => new(PortServiceCollectionExtensions.HostSettings);
+
+    [Theory]
+    [MemberData(nameof(HostSettings))]
+    public void AFullExport_AcceptsEverySettingTheHostWrites(string setting)
     {
-        // The system's host sets Ports:<port>:CursorStore for every component that reads an external
-        // port, whether or not the source keeps a cursor.
+        // The system's host writes its own settings into a port's section (CursorStore for every
+        // component that reads an external port, whether or not the source keeps a cursor): a source
+        // that rejects unknown settings must still start.
         var services = new ServiceCollection();
         services.AddSqlSource("campaigns", Section(new()
         {
-            ["Kind"] = "Sql", ["ConnectionString"] = Secret, [CursorOptions.StoreKey] = "campaign-extractor-cursors"
+            ["Kind"] = "Sql", ["ConnectionString"] = Secret, [setting] = "set-by-the-host"
         }), sql => sql.Query(SqlFile.Inline("SELECT 1 AS One")));
 
         var source = services.BuildServiceProvider().GetRequiredKeyedService<IPolledSource>("campaigns");

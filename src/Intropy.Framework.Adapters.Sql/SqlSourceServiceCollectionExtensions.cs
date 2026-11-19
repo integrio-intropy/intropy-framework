@@ -18,7 +18,7 @@ public static class SqlSourceServiceCollectionExtensions
     private static readonly string[] Settings =
     [
         nameof(SqlSourceOptions.Kind), nameof(SqlSourceOptions.ConnectionString), nameof(SqlSourceOptions.EmptyResult),
-        CursorOptions.StoreKey, nameof(SqlSourceOptions.InitialWatermark),
+        nameof(SqlSourceOptions.InitialWatermark),
         nameof(SqlSourceOptions.CommandTimeout)
     ];
 
@@ -115,7 +115,11 @@ public static class SqlSourceServiceCollectionExtensions
             throw Invalid(location, "Not configured. Set Kind to Sql and the ConnectionString.");
         foreach (var child in section.GetChildren())
         {
-            if (!Settings.Contains(child.Key, StringComparer.OrdinalIgnoreCase) || child.GetChildren().Any())
+            // The host's settings are accepted: CursorStore is read below, the others are not the
+            // source's to use.
+            if ((!Settings.Contains(child.Key, StringComparer.OrdinalIgnoreCase)
+                 && !PortServiceCollectionExtensions.HostSettings.Contains(child.Key))
+                || child.GetChildren().Any())
                 throw Invalid(location, $"Unknown or non-scalar setting '{child.Key}'.");
         }
 
