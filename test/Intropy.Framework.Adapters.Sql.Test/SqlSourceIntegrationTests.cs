@@ -7,7 +7,6 @@ using Testcontainers.MsSql;
 
 namespace Intropy.Framework.Adapters.Sql.Test;
 
-/// <summary>A SQL Server in a container, with one table the tests read.</summary>
 /// <summary>A SQL source's read of one page with one item, as the adapter makes it.</summary>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1819:Properties should not return arrays",
     Justification = "The message payload.")]
@@ -25,6 +24,7 @@ public sealed record SqlRead(byte[] Content, string? Cursor, IReadOnlyDictionary
     }
 }
 
+/// <summary>A SQL Server in a container, with the tables the tests read.</summary>
 public sealed class SqlServerFixture : IAsyncLifetime
 {
     private readonly MsSqlContainer _container = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04").Build();
@@ -149,16 +149,29 @@ public class SqlSourceIntegrationTests(SqlServerFixture sql)
     }
 
     [Fact]
-    public async Task ACursorDelta_GetsBothBounds_AndReportsItsCursor()
+    public async Task AnUpToNowDelta_EndsTheReadAtTheDatabasesClockLessTheSettleTime()
     {
-        var source = Source("""
-            SELECT Id, CAST(Id AS BIGINT) AS __watermark FROM dbo.Campaign
-            WHERE Id > @watermark AND (@watermarkTo IS NULL OR Id <= @watermarkTo) AND Id <= 2
-            """, Delta.Cursor());
+        await sql.ExecuteAsync("""
+            IF OBJECT_ID('dbo.CampaignChange') IS NOT NULL DROP TABLE dbo.CampaignChange;
+            CREATE TABLE dbo.CampaignChange (Id INT NOT NULL PRIMARY KEY, ChangedAt DATETIMEOFFSET NOT NULL);
+            INSERT INTO dbo.CampaignChange VALUES
+                (1, DATEADD(HOUR, -1, SYSDATETIMEOFFSET())),
+                (2, SYSDATETIMEOFFSET());
+            """);
+        var source = Source("SELECT Id, ChangedAt FROM dbo.CampaignChange WHERE ChangedAt > @watermark ORDER BY ChangedAt",
+            Delta.Column("ChangedAt").UpToNow(TimeSpan.FromMinutes(10)));
 
-        var read = await SqlRead.Of(source.ReadAsync(new CursorRange("0", "1"), CancellationToken.None));
-        Assert.Equal("""[{"Id":1}]""", Encoding.UTF8.GetString(read.Content));
-        Assert.Equal("int:1", read.Cursor);
+        var before = DateTimeOffset.UtcNow;
+        var read = await SqlRead.Of(source.ReadAsync(
+            new CursorRange("datetimeoffset:2026-01-01T00:00:00+00:00", null), CancellationToken.None));
+        var after = DateTimeOffset.UtcNow;
+
+        // Row 2 is inside the settle time. The bound is the server's clock less ten minutes, typed as the
+        // column is; the container shares the host's clock, so it falls within this read, give or take.
+        Assert.Equal([1], Ids(read));
+        Assert.StartsWith("datetimeoffset:", read.Cursor, StringComparison.Ordinal);
+        var bound = DateTimeOffset.Parse(read.Cursor!["datetimeoffset:".Length..], System.Globalization.CultureInfo.InvariantCulture);
+        Assert.InRange(bound, before.AddMinutes(-11), after.AddMinutes(-9));
     }
 
     private IPolledSource Source(string query, Delta? delta, SqlEmptyResult emptyResult = SqlEmptyResult.Skip,

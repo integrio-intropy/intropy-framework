@@ -6,8 +6,9 @@ namespace Intropy.Framework.Adapters.Sql;
 /// </summary>
 /// <remarks>
 /// The query gets two parameters: <c>@watermark</c>, the committed watermark (exclusive), and
-/// <c>@watermarkTo</c>, an upper bound (inclusive) that is <c>NULL</c> unless the run reads again a
-/// range a previous run read but did not commit. The watermark moves only after the message has been
+/// <c>@watermarkTo</c>, an upper bound (inclusive): <c>NULL</c> unless the read has one, which it has
+/// when it reads again a range a previous run read but did not commit, and on every run of a delta
+/// read <see cref="UpToNow">up to now</see>. The watermark moves only after the message has been
 /// handled.
 /// </remarks>
 public abstract class Delta
@@ -30,39 +31,46 @@ public abstract class Delta
     public static Delta Column(string column)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(column);
-        return new ColumnDelta(column);
+        return new ColumnDelta(column, settle: null);
     }
 
     /// <summary>
-    /// The query computes the watermark itself and returns it in a column named
-    /// <see cref="CursorColumnName"/>: the new watermark is its highest value. That column is not part
-    /// of the message. The query must read only rows after <c>@watermark</c>, and, when
-    /// <c>@watermarkTo</c> is set, no row beyond it.
+    /// Reads up to now rather than up to the highest value read: before the query runs, the read's
+    /// upper bound is fixed at the current time less <paramref name="settle"/>, and that bound becomes
+    /// the new watermark once the read has been handled, also when it found no rows. For a date and
+    /// time column stamped when a row is written: a transaction that stamps its rows before a poll and
+    /// commits after it is still read, by a later run, as long as it commits within the settle time.
     /// </summary>
+    /// <remarks>
+    /// The current time is the database's (<c>SYSDATETIMEOFFSET()</c>) on SQL Server, so the
+    /// application's clock does not matter; SQLite has none, so there it is the application's
+    /// (<see cref="TimeProvider"/>). A <c>datetimeoffset</c> column compares by instant; a
+    /// <c>datetime</c>/<c>datetime2</c> column must hold UTC. A run whose bound is not after the
+    /// watermark reads nothing and keeps the watermark: it never moves back.
+    /// </remarks>
+    /// <param name="settle">How long a row's time may lag its commit: longer than the longest
+    /// transaction that writes the table. Zero reads up to the clock itself.</param>
     /// <returns>The delta.</returns>
-    public static Delta Cursor() => new CursorDelta();
-
-    /// <summary>The column a <see cref="Cursor"/> delta's query returns its watermark in.</summary>
-    public const string CursorColumnName = "__watermark";
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="settle"/> is negative.</exception>
+    public Delta UpToNow(TimeSpan settle)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(settle, TimeSpan.Zero);
+        return new ColumnDelta(WatermarkColumn, settle);
+    }
 
     /// <summary>The result column the watermark is read from.</summary>
     internal abstract string WatermarkColumn { get; }
 
-    /// <summary>Whether the adapter keeps only rows in the range on <see cref="WatermarkColumn"/>, and
-    /// whether that column stays in the message.</summary>
-    internal abstract bool IsColumn { get; }
+    /// <summary>How far behind the clock a read up to now ends, or <see langword="null"/> for a delta
+    /// that reads up to the highest value read.</summary>
+    internal abstract TimeSpan? Settle { get; }
 
-    private sealed class ColumnDelta(string column) : Delta
+    private sealed class ColumnDelta(string column, TimeSpan? settle) : Delta
     {
         internal override string WatermarkColumn => column;
-        internal override bool IsColumn => true;
-        public override string ToString() => $"column {column}";
-    }
+        internal override TimeSpan? Settle => settle;
 
-    private sealed class CursorDelta : Delta
-    {
-        internal override string WatermarkColumn => CursorColumnName;
-        internal override bool IsColumn => false;
-        public override string ToString() => $"cursor {CursorColumnName}";
+        public override string ToString() =>
+            settle is { } s ? $"column {column}, up to now less {s}" : $"column {column}";
     }
 }

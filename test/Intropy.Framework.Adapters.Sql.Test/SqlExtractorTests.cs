@@ -149,49 +149,4 @@ public sealed class SqlExtractorTests(SqlServerFixture sql) : IAsyncLifetime
     private static int[] Ids(CloudEvent cloudEvent) =>
         JsonDocument.Parse((string)cloudEvent.Data!).RootElement.EnumerateArray()
             .Select(row => row.GetProperty("Id").GetInt32()).ToArray();
-
-    private sealed class TextDeserializer : DeserializeStep<string, Context>
-    {
-        public override string StepName => "Deserialize";
-
-        public override Task<(BusinessStepResult<string> Result, Context Context)> ExecuteAsync(
-            ReadOnlyMemory<byte> input, Context context, CancellationToken ct) =>
-            Task.FromResult<(BusinessStepResult<string>, Context)>(
-                (new BusinessStepResult<string>.Success(Encoding.UTF8.GetString(input.Span)), context));
-    }
-
-    private sealed class AcceptValidator : ValidateStep<string, Context>
-    {
-        public override string StepName => "Validate";
-
-        public override Task<(BusinessStepResult<string> Result, Context Context)> ExecuteAsync(string input,
-            Context context, CancellationToken ct) =>
-            Task.FromResult<(BusinessStepResult<string>, Context)>((new BusinessStepResult<string>.Success(input), context));
-    }
-
-    private sealed class IdentityTransformer : TransformStep<string, string, Context>
-    {
-        public override string StepName => "Transform";
-
-        public override Task<(TechnicalStepResult<string> Result, Context Context)> ExecuteAsync(string input,
-            Context context, CancellationToken ct) =>
-            Task.FromResult<(TechnicalStepResult<string>, Context)>((new TechnicalStepResult<string>.Success(input), context));
-    }
-
-    private sealed class RecordingSender : SendStep<Context>
-    {
-        public List<CloudEvent> Sent { get; } = [];
-        public bool Fail { get; set; }
-
-        public override Task<(TechnicalStepResult<CloudEvent> Result, Context Context)> ExecuteAsync(CloudEvent input,
-            Context context, CancellationToken ct)
-        {
-            if (Fail)
-                return Task.FromResult<(TechnicalStepResult<CloudEvent>, Context)>(
-                    (new TechnicalStepResult<CloudEvent>.Failure(new TechnicalFailure("The broker refused it")), context));
-            Sent.Add(input);
-            return Task.FromResult<(TechnicalStepResult<CloudEvent>, Context)>(
-                (new TechnicalStepResult<CloudEvent>.Success(input), context));
-        }
-    }
 }

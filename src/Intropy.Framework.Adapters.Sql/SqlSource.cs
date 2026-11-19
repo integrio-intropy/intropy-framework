@@ -24,6 +24,7 @@ internal sealed class SqlSource(
     SqlFile query,
     Delta? delta,
     SqlFile? dataAvailable,
+    TimeProvider time,
     ILogger<SqlSource> logger) : IPolledSource
 {
     internal const string WatermarkParameter = "@watermark";
@@ -54,6 +55,23 @@ internal sealed class SqlSource(
             return PolledResult.NotReady;
         }
 
+        // A read up to now fixes its upper bound before the query runs. A pinned range keeps the bound a
+        // previous run fixed, so it is read again exactly.
+        SqlWatermark? bound = null;
+        if (delta?.Settle is { } settle && to is null)
+        {
+            bound = SqlWatermark.Instant(await NowAsync(connection, ct) - settle);
+            if (from is not null && bound.CompareTo(from.As(bound, delta.WatermarkColumn)) <= 0)
+            {
+                logger.LogInformation(
+                    "Source port {Port} reads up to {Bound}, which is not after its watermark {From}; nothing is read",
+                    port, bound, from);
+                return PolledResult.Empty;
+            }
+
+            to = bound;
+        }
+
         SqlResultWriter.Result result;
         await using (var command = Command(connection, query, from, to))
         await using (var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleResult, ct))
@@ -66,6 +84,15 @@ internal sealed class SqlSource(
 
         if (result.RowCount == 0 && options.EmptyResult == SqlEmptyResult.Skip)
         {
+            if (bound is not null)
+            {
+                // Nothing is sent, but everything up to the bound has been read: a page without items
+                // moves the watermark to it.
+                logger.LogInformation("The query of source port {Port} returned no rows up to {Bound}; nothing is sent",
+                    port, bound);
+                return PolledResult.Page([], bound.Stored);
+            }
+
             logger.LogInformation("The query of source port {Port} returned no rows; nothing is sent", port);
             return PolledResult.Empty;
         }
@@ -81,8 +108,20 @@ internal sealed class SqlSource(
             metadata[SqlContextKeys.WatermarkTo] = (to ?? result.Watermark ?? from)?.Text ?? "";
         }
 
-        // The whole result is one page with one item: the rows, as a JSON array.
-        return PolledResult.Page([new PolledItem(result.Content) { Metadata = metadata }], result.Watermark?.Stored);
+        // The whole result is one page with one item: the rows, as a JSON array. A read up to now moves
+        // the watermark to its bound, not to the highest value it read.
+        return PolledResult.Page([new PolledItem(result.Content) { Metadata = metadata }],
+            (bound ?? result.Watermark)?.Stored);
+    }
+
+    // The database's clock on SQL Server, so the application's does not matter; SQLite has none.
+    private async Task<DateTimeOffset> NowAsync(DbConnection connection, CancellationToken ct)
+    {
+        if (options.IsSqlite)
+            return time.GetUtcNow();
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT SYSDATETIMEOFFSET()";
+        return (DateTimeOffset)(await command.ExecuteScalarAsync(ct))!;
     }
 
     private async Task<bool> IsDataAvailableAsync(DbConnection connection, SqlWatermark? from, CancellationToken ct)

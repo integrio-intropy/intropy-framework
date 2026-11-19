@@ -16,8 +16,8 @@ internal static class SqlResultWriter
     /// <param name="RowCount">The rows written.</param>
     /// <param name="Watermark">The highest watermark of the rows written, or <see langword="null"/>
     /// without a delta or without rows.</param>
-    /// <param name="SkippedRows">Rows a column delta left out: outside the range, or with a
-    /// <c>NULL</c> watermark.</param>
+    /// <param name="SkippedRows">Rows a delta left out: outside the range, or with a <c>NULL</c>
+    /// watermark.</param>
     internal sealed record Result(byte[] Content, int RowCount, SqlWatermark? Watermark, int SkippedRows);
 
     /// <summary>Reads every row of <paramref name="reader"/>'s first result set.</summary>
@@ -65,8 +65,6 @@ internal static class SqlResultWriter
                 json.WriteStartObject();
                 for (var i = 0; i < columns.Length; i++)
                 {
-                    if (i == watermarkOrdinal && delta is { IsColumn: false })
-                        continue;
                     json.WritePropertyName(columns[i]);
                     WriteValue(json, reader, i);
                 }
@@ -81,21 +79,21 @@ internal static class SqlResultWriter
         return new Result(buffer.WrittenSpan.ToArray(), rows, highest, skipped);
     }
 
-    /// <returns>Whether the row is kept: a column delta keeps rows in <c>(from, to]</c> with a watermark.</returns>
+    /// <returns>Whether the row is kept: a delta keeps rows in <c>(from, to]</c> with a watermark.</returns>
     private static bool Watermark(DbDataReader reader, int ordinal, Delta delta, SqlWatermark? from,
         SqlWatermark? to, ref SqlWatermark? highest)
     {
         if (reader.IsDBNull(ordinal))
-            return !delta.IsColumn;
+            return false;
 
         var value = SqlWatermark.FromValue(reader.GetValue(ordinal), delta.WatermarkColumn);
-        if (delta.IsColumn)
-        {
-            if (from is not null && value.CompareTo(from.As(value, delta.WatermarkColumn)) <= 0)
-                return false;
-            if (to is not null && value.CompareTo(to.As(value, delta.WatermarkColumn)) > 0)
-                return false;
-        }
+        // A read up to now compares dates as instants, also SQLite's, which are text.
+        if (delta.Settle is not null)
+            value = value.AsDateTime(delta.WatermarkColumn);
+        if (from is not null && value.CompareTo(from.As(value, delta.WatermarkColumn)) <= 0)
+            return false;
+        if (to is not null && value.CompareTo(to.As(value, delta.WatermarkColumn)) > 0)
+            return false;
 
         if (highest is null || value.CompareTo(highest.As(value, delta.WatermarkColumn)) > 0)
             highest = value;

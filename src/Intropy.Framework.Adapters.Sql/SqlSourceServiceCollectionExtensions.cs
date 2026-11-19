@@ -33,7 +33,7 @@ public static class SqlSourceServiceCollectionExtensions
     /// <code>
     /// services.AddSqlSource("source", configuration.GetSection("Ports:source"), sql => sql
     ///     .Query(SqlFile.Embedded("Sql/Query.sql"))
-    ///     .Delta(Delta.Column("MODIFIEDDATETIME")));
+    ///     .Delta(Delta.Column("MODIFIEDDATETIME").UpToNow(TimeSpan.FromMinutes(5))));
     /// </code>
     /// </example>
     /// <param name="services">The service collection to add services to.</param>
@@ -77,11 +77,12 @@ public static class SqlSourceServiceCollectionExtensions
         var query = builder.QueryFile ?? throw Invalid(location, "No query is set; call Query.");
         var delta = builder.DeltaMode;
         var dataAvailable = builder.DataAvailableFile;
-        Validate(options, delta is not null, location);
+        Validate(options, delta, location);
         if (services.Any(d => d.ServiceType == typeof(IPolledSource) && Equals(d.ServiceKey, port)))
             throw Invalid(location, "A polled source is already registered for this port.");
 
         return services.AddPolledSource(port, sp => new SqlSource(port, options, query, delta, dataAvailable,
+            sp.GetService<TimeProvider>() ?? TimeProvider.System,
             sp.GetService<ILogger<SqlSource>>() ?? NullLogger<SqlSource>.Instance));
     }
 
@@ -145,7 +146,7 @@ public static class SqlSourceServiceCollectionExtensions
         };
     }
 
-    private static void Validate(SqlSourceOptions options, bool hasDelta, string location)
+    private static void Validate(SqlSourceOptions options, Delta? delta, string location)
     {
         if (!string.Equals(options.Kind?.Trim(), SqlSourceOptions.SqlKind, StringComparison.OrdinalIgnoreCase)
             && !options.IsSqlite)
@@ -156,7 +157,7 @@ public static class SqlSourceServiceCollectionExtensions
             throw Invalid(location, "EmptyResult must be Skip or Send.");
         if (options.CommandTimeout <= TimeSpan.Zero)
             throw Invalid(location, "CommandTimeout must be positive.");
-        if (!hasDelta)
+        if (delta is null)
             return;
         if (string.IsNullOrWhiteSpace(options.CursorStore))
             throw Invalid(location, "CursorStore is required with a delta: the Dapr state store the watermark is kept in. " +
@@ -164,15 +165,21 @@ public static class SqlSourceServiceCollectionExtensions
                 "(PortRef.DefineExternal); outside the host, set it yourself.");
         if (string.IsNullOrWhiteSpace(options.InitialWatermark))
             throw Invalid(location, "InitialWatermark is required with a delta: the watermark before the first run.");
+        SqlWatermark initial;
         try
         {
-            _ = SqlWatermark.Parse(options.InitialWatermark);
+            initial = SqlWatermark.Parse(options.InitialWatermark);
         }
         catch (Exception e) when (e is FormatException or OverflowException)
         {
             throw Invalid(location, "InitialWatermark does not match its type tag (datetime:, datetimeoffset:, int:, " +
                 "decimal:, binary: or string:).");
         }
+
+        // A read up to now compares the watermark with a time; the value stays out of the message.
+        if (delta.Settle is not null && !initial.IsDateTime)
+            throw Invalid(location, "InitialWatermark must be a date and time for a delta read up to now (UpToNow), " +
+                "such as datetimeoffset:2026-01-01T00:00:00+00:00.");
     }
 
     private static InvalidOperationException Invalid(string location, string reason) =>

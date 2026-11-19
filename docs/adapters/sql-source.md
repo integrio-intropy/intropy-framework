@@ -31,11 +31,16 @@ using Intropy.Framework.Adapters.Sql;
 services.AddSqlSourcePort("campaigns", configuration, sql => sql
     .Query(SqlFile.Embedded("Sql/Query.sql")));
 
-// Delta on a column.
+// Delta on a column: each read ends at the highest value it read.
 services.AddSqlSourcePort("campaigns", configuration, sql => sql
     .Query(SqlFile.Embedded("Sql/Query.sql"))                       // filters on @watermark
-    .Delta(Delta.Column("MODIFIEDDATETIME"),
+    .Delta(Delta.Column("CHANGEID"),
            dataAvailable: SqlFile.Embedded("Sql/DataAvailable.sql"))); // optional pre-check
+
+// Delta on a date and time column: each read ends at now less a settle time.
+services.AddSqlSourcePort("campaigns", configuration, sql => sql
+    .Query(SqlFile.Embedded("Sql/Query.sql"))
+    .Delta(Delta.Column("MODIFIEDDATETIME").UpToNow(TimeSpan.FromMinutes(5))));
 ```
 
 `AddSqlSourcePort` reads `Ports:<port>`, registers the source, and declares the port as the
@@ -134,7 +139,9 @@ development.Settings(Ports.Campaigns)
 The query runs unchanged on both, so keep it to SQL both accept: a plain `SELECT … WHERE column >
 @watermark ORDER BY column` does; `TOP`, T-SQL functions and SQL Server types do not. SQLite has no
 declared types: use an integer or a text watermark column, and a date and time watermark is passed
-as ISO 8601 text.
+as ISO 8601 text. The adapter compares a read up to now's dates as instants, but the query's
+`WHERE ChangedAt > @watermark` compares them as text on SQLite: keep a local database's dates in one
+offset, such as UTC, or the query can leave out rows SQL Server would return.
 
 ## Behaviour
 
@@ -142,11 +149,11 @@ as ISO 8601 text.
 |---|---|---|
 | Query | Runs as written | Gets `@watermark` and `@watermarkTo` |
 | Watermark | None | Dapr state store, one record per component and port: `committed` and `pending` |
-| New watermark | – | `Delta.Column(x)`: highest `x` in the result. `Delta.Cursor()`: highest `__watermark` the query returns. Saved as `pending` before the message is handed over |
+| New watermark | – | `Delta.Column(x)`: highest `x` in the result. `.UpToNow(settle)`: now less `settle`, fixed before the query runs. Saved as `pending` before the message is handed over |
 | After success | Nothing to complete | `committed = pending`, `pending` cleared |
 | After a failure | The next run exports again | `pending` stays, so the next run reads exactly `(committed, pending]` |
 | Idempotency | None needed | Key `{port}:{committed}:{pending}` in the context metadata |
-| Empty result | `EmptyResult` | `EmptyResult`; the watermark does not move |
+| Empty result | `EmptyResult` | `EmptyResult`; the watermark does not move, except up to now, where it moves to the bound |
 
 The adapter never writes to the database it reads: no timestamp table, no rows marked as sent.
 
@@ -158,15 +165,27 @@ only rows in `(@watermark, @watermarkTo]` on that column itself, so the query ne
 sent. The column can be a date and time, an integer, a decimal, a `rowversion`/binary or a string
 (compared ordinally).
 
-### Delta.Cursor
+### Up to now
 
-The query computes the watermark itself and returns it in a column named `__watermark`, which is not
-part of the message. The query must read only rows after `@watermark` and, when `@watermarkTo` is set,
-none beyond it:
+`Delta.Column("MODIFIEDDATETIME").UpToNow(settle)` is for a date and time column stamped when a row
+is written. A row's time is set when its statement runs, not when its transaction commits: a
+transaction that stamps a row at 08:00:00 and commits at 08:00:05 is invisible to a run at 08:00:03.
+A delta that ends at the highest value it read moves the watermark past 08:00:00 on a later row and
+never reads that one. A read up to now fixes its upper bound before the query runs, at the current
+time less the settle time, and reads `(@watermark, bound]`; a row stamped before the bound whose
+transaction commits within the settle time is read by a later run. So:
 
-```sql
-WHERE Id > @watermark AND (@watermarkTo IS NULL OR Id <= @watermarkTo)
-```
+- The settle time is required. Make it longer than the longest transaction that writes the table;
+  `TimeSpan.Zero` reads up to the clock itself.
+- The current time is the database's (`SYSDATETIMEOFFSET()`) on SQL Server, so the application's
+  clock does not matter. SQLite has no clock to ask; there it is the application's (`TimeProvider`).
+- The bound becomes the watermark also when the read finds no rows, so the range a run scans stays
+  small on a quiet table. A run whose bound is not after the watermark reads nothing: the watermark
+  never moves back.
+- A `datetimeoffset` column compares by instant; a `datetime`/`datetime2` column must hold UTC.
+  `InitialWatermark` must be a date and time, such as `datetimeoffset:2026-01-01T00:00:00+00:00`.
+- A pinned range keeps its bound: a run after a failure reads exactly the range the failed run fixed,
+  including a row that committed into it late, and none written since.
 
 ### Data available
 
@@ -183,7 +202,8 @@ upper bound recomputed, new rows would move it, the key would differ, and the ov
 be sent twice. So:
 
 1. If `pending` exists, the previous run did not commit: read exactly `(committed, pending]`.
-2. Otherwise read `(committed, …]` and compute the new watermark.
+2. Otherwise read `(committed, …]` and compute the new watermark (up to now: fix the bound, then
+   read `(committed, bound]`).
 3. Save `pending`, then hand over the message with the key `{port}:{committed}:{pending}`.
 4. Once it is handled, save `committed = pending` and clear `pending`.
 

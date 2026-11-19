@@ -57,6 +57,30 @@ internal sealed class SqlWatermark : IComparable<SqlWatermark>
             "an integer, a decimal, a rowversion/binary or a string.")
     };
 
+    /// <summary>The watermark of an instant: the upper bound of a read up to now.</summary>
+    internal static SqlWatermark Instant(DateTimeOffset value) => new(DateTimeOffsetTag, value);
+
+    /// <summary>Whether the value is a date and time, which a read up to now compares with its bound.</summary>
+    internal bool IsDateTime => Value is DateTime or DateTimeOffset;
+
+    /// <summary>
+    /// This column value as a date and time, for a read up to now: a date and time as it is, and text
+    /// (SQLite has no date type) parsed as ISO 8601, so it compares by instant rather than as text,
+    /// whatever its offset. Text without an offset is read as UTC.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The value is not a date and time.</exception>
+    internal SqlWatermark AsDateTime(string column)
+    {
+        if (IsDateTime)
+            return this;
+        if (Value is string text && DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal, out var instant))
+            return Instant(instant);
+        throw new InvalidOperationException(
+            $"The watermark column '{column}' holds a {Tag} value; a delta read up to now (UpToNow) needs a date " +
+            "and time column.");
+    }
+
     /// <summary>Reads a stored watermark or a configured initial watermark. Either is tagged with its
     /// type (<c>datetime:</c>, <c>datetimeoffset:</c>, <c>int:</c>, <c>decimal:</c>, <c>binary:</c>,
     /// <c>string:</c>), which decides the parameter's SQL type; an untagged initial watermark is

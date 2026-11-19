@@ -17,7 +17,7 @@ using Intropy.Framework.Adapters.Sql;
 
 services.AddSqlSourcePort("campaigns", configuration, sql => sql
     .Query(SqlFile.Embedded("Sql/Query.sql"))
-    .Delta(Delta.Column("MODIFIEDDATETIME")));
+    .Delta(Delta.Column("MODIFIEDDATETIME").UpToNow(TimeSpan.FromMinutes(5))));
 ```
 
 ```json

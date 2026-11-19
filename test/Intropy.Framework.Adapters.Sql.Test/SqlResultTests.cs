@@ -57,15 +57,6 @@ public class SqlResultTests(SqlServerFixture sql)
     }
 
     [Fact]
-    public async Task ACursorDelta_ReportsTheCursorColumn_AndLeavesItOutOfTheMessage()
-    {
-        var read = await SqlRead.Of(sql.Source("SELECT Id, __watermark FROM (VALUES (1, CAST(10 AS BIGINT)), (2, CAST(12 AS BIGINT))) AS r(Id, __watermark)",
-            Delta.Cursor()).ReadAsync(new CursorRange("5", null), CancellationToken.None));
-        Assert.Equal("""[{"Id":1},{"Id":2}]""", Encoding.UTF8.GetString(read.Content));
-        Assert.Equal("int:12", read.Cursor);
-    }
-
-    [Fact]
     public async Task AnInitialWatermarkWithoutAnOffset_ComparesWithADateTimeOffsetColumn()
     {
         var read = await SqlRead.Of(sql.Source("""

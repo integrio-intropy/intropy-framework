@@ -24,8 +24,8 @@ public sealed class SqlSourceBuilder
     /// Reads only what changed since the last successful run. The watermark is kept in the port's
     /// <c>CursorStore</c>, set by the system's host, and moves only after the message has been handled.
     /// </summary>
-    /// <param name="delta">Where the watermark comes from: <see cref="Sql.Delta.Column"/> or
-    /// <see cref="Sql.Delta.Cursor"/>.</param>
+    /// <param name="delta">The column the watermark comes from (<see cref="Sql.Delta.Column"/>), and
+    /// whether a read ends at the highest value it read or <see cref="Sql.Delta.UpToNow">up to now</see>.</param>
     /// <param name="dataAvailable">An optional check run before the query, with <c>@watermark</c>:
     /// a statement returning one value, where <c>NULL</c>, <c>0</c>, <c>false</c> or no row means the
     /// data is not ready yet, and the run sends nothing and keeps the watermark. It is skipped when a
