@@ -56,6 +56,24 @@ public class InFlightMessagesTests
     }
 
     [Fact]
+    public void IsIdle_MeasuresFromTheLastMessageThatFinished_WhenItOutlivedTheIdleTimeout()
+    {
+        // A consumer handling one message at a time delivers the next only once the slow one has
+        // finished: a clock started on arrival would already be past the timeout by then, and the
+        // consumer would stop just as the queued message arrives.
+        using var inFlight = new InFlightMessages(_time);
+        Assert.True(inFlight.TryEnter());
+        _time.Advance(TimeSpan.FromSeconds(8));
+        inFlight.Exit();
+
+        _time.Advance(TimeSpan.FromMilliseconds(500));
+        Assert.False(inFlight.IsIdle(TimeSpan.FromSeconds(5)));
+
+        _time.Advance(TimeSpan.FromSeconds(5));
+        Assert.True(inFlight.IsIdle(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
     public void RestartIdleClock_MeasuresTheNextWindowFromTheRestart_NotFromConstruction()
     {
         using var inFlight = new InFlightMessages(_time);

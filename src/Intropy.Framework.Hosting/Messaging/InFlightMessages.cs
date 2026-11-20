@@ -5,8 +5,8 @@ namespace Intropy.Framework.Hosting.Messaging;
 /// <summary>
 /// The messages a consumer is processing, and how it stops: once stopping begins it takes no new
 /// message, gives those in flight a grace period to finish, then interrupts them so they are left
-/// for redelivery. Also the idle clock: when the last message arrived, for consumers that stop once
-/// their queue goes quiet.
+/// for redelivery. Also the idle clock: when the last message arrived or finished, for consumers
+/// that stop once their queue goes quiet.
 /// </summary>
 internal sealed class InFlightMessages : IDisposable
 {
@@ -52,13 +52,22 @@ internal sealed class InFlightMessages : IDisposable
         return false;
     }
 
-    /// <summary>Counts a message out.</summary>
-    internal void Exit() => Interlocked.Decrement(ref _count);
+    /// <summary>Counts a message out, and restarts the idle clock: a consumer that handles one
+    /// message at a time is handed the next only now, so a message that took longer than the idle
+    /// timeout must not leave the clock already expired.</summary>
+    internal void Exit()
+    {
+        // Clock first, then the count: IsIdle reads the count before the clock, so it can never
+        // see no message in flight together with the clock from before this one finished.
+        RestartIdleClock();
+        Interlocked.Decrement(ref _count);
+    }
 
-    /// <summary>Restarts the idle clock, as if a message had just arrived.</summary>
+    /// <summary>Restarts the idle clock, as if a message had just arrived or finished.</summary>
     internal void RestartIdleClock() => Interlocked.Exchange(ref _lastActivityTicks, _time.GetUtcNow().UtcTicks);
 
-    /// <summary>Whether no message is in flight and none arrived for <paramref name="idleTimeout"/>.</summary>
+    /// <summary>Whether no message is in flight and none arrived or finished for
+    /// <paramref name="idleTimeout"/>.</summary>
     internal bool IsIdle(TimeSpan idleTimeout) =>
         Count == 0 &&
         _time.GetUtcNow() - new DateTimeOffset(Interlocked.Read(ref _lastActivityTicks), TimeSpan.Zero) >= idleTimeout;
