@@ -2,7 +2,6 @@ using System.Diagnostics;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Contracts.IdempotencyService;
 using Intropy.Framework.Blocks.BulkLoader.Steps;
-using Intropy.Framework.Blocks.Loader.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Core.Configuration;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
@@ -444,6 +443,45 @@ public class BulkLoaderTests
         Assert.Single(lookup.Calls);
         Assert.Equal(3, sender.SentCount);
         await _idempotencyServiceClient.Received(3).CommitAsync(Arg.Any<MessageInfo>());
+    }
+
+    [Fact]
+    public async Task Execute_WhenAPerMessageSendThrows_OnlyThatMessageFails_AsARetriableBusinessFailure()
+    {
+        var sender = new FailingSenderFor(customerId: 2);
+        var pipeline = Builder(new BatchCustomerSender()).WithSender(sender).Build();
+
+        var batch = new[]
+        {
+            (Payload("1", "Alice"), NewContext("m1")),
+            (Payload("2", "Bob"), NewContext("m2")),
+            (Payload("3", "Carol"), NewContext("m3")),
+        };
+
+        var results = await pipeline.Execute(batch);
+
+        // The failed send is that message's own business failure: routed as an incident, and left for
+        // redelivery. The other messages are sent.
+        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(results[0].Result);
+        var failure = Assert.IsType<StepResult<LoaderCustomerOut>.BusinessFailure>(results[1].Result);
+        Assert.True(failure.Retriable);
+        Assert.Equal(typeof(HttpRequestException).FullName, failure.Value.Context?["exceptionType"]);
+        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(results[2].Result);
+        Assert.Equal([1, 3], sender.Sent.Order());
+        await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            "m2", Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task Execute_WhenAReceiptFails_ThatMessageIsATechnicalFailure_WithNoIncident()
+    {
+        var pipeline = Builder(new BatchCustomerSender()).WithReceiptSender(new FailingReceiptSender()).Build();
+
+        var results = await pipeline.Execute([(Payload("1", "Alice"), NewContext("m1"))]);
+
+        // The record was loaded, so the failed receipt raises no business incident.
+        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(Assert.Single(results).Result);
+        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(default!, default!, default!, default!, default);
     }
 
     [Fact]

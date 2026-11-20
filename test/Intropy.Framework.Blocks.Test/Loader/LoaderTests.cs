@@ -267,7 +267,7 @@ public class LoaderTests
     }
 
     [Fact]
-    public async Task Execute_WithReceiptSender_ResultsInTechnicalFailure_WhenSendFails()
+    public async Task Execute_WithReceiptSender_ResultsInATechnicalFailure_WhenTheReceiptFails()
     {
         // Arrange
         var cloudEvent = CreateCloudEvent("1337", "John Doe");
@@ -279,8 +279,53 @@ public class LoaderTests
         // Act
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
+        // Assert: the record was loaded, so a failed receipt raises no business incident.
+        var failure = Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        Assert.Equal(["SendReceipt"], failure.Value.ErrorMessageArgs);
+        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(default!, default!, default!, default!, default);
+    }
+
+    [Fact]
+    public async Task Execute_WhenTheSendThrows_RoutesAnIncidentAndLeavesTheMessageForRedelivery()
+    {
+        // Arrange
+        var cloudEvent = CreateCloudEvent("1337", "John Doe");
+        var context = GetInitialContext();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), sender: new FailingSender())
+            .Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(cloudEvent, context);
+
+        // Assert: a business failure, not a technical one. It is routed as an incident and, being
+        // retriable by default, stays a failure so the host redelivers the message.
+        var failure = Assert.IsType<StepResult<LoaderCustomerOut>.BusinessFailure>(result);
+        Assert.True(failure.Retriable);
+        Assert.Contains("'Send'", failure.Value.Description, StringComparison.Ordinal);
+        Assert.Equal(typeof(InvalidOperationException).FullName, failure.Value.Context?["exceptionType"]);
+        await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Is<BusinessIncidentData>(i => i.Description == failure.Value.Description),
+            Arg.Any<string?>());
+        await _idempotencyServiceClient.DidNotReceive().CommitAsync(Arg.Any<MessageInfo>());
+    }
+
+    [Fact]
+    public async Task Execute_WhenTheSendRejectsTheItemAsNotRetriable_RoutesAnIncidentAndEndsTheMessage()
+    {
+        // Arrange
+        var cloudEvent = CreateCloudEvent("1337", "John Doe");
+        var context = GetInitialContext();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(),
+            sender: new RejectingSender(retriable: false)).Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(cloudEvent, context);
+
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        var routed = Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
+        Assert.Equal("The destination rejected the customer", routed.Description);
+        await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
     }
 
     [Fact]
@@ -439,7 +484,7 @@ public class LoaderTests
     }
 
     private static LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> GetPipelineBuilder(
-        IServiceProvider serviceProvider, bool withIdempotency = true, CustomerSender? sender = null)
+        IServiceProvider serviceProvider, bool withIdempotency = true, SendStep<LoaderCustomerOut, Context>? sender = null)
     {
         var builder = LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context>.Create("LoaderTest", serviceProvider)
             .WithDeserializer(new CustomerDeserializer())
@@ -455,7 +500,7 @@ public class LoaderTests
     }
 
     private static Loader<LoaderCustomerIn, LoaderCustomerOut, Context> GetPipelineWithReceiptSender(
-        IServiceProvider serviceProvider, SendStep<LoaderCustomerOut, Context> receiptSender)
+        IServiceProvider serviceProvider, SendReceiptStep<LoaderCustomerOut, Context> receiptSender)
     {
         return GetPipelineBuilder(serviceProvider)
             .WithReceiptSender(receiptSender)

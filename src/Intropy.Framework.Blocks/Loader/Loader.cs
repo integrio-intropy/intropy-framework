@@ -62,7 +62,7 @@ public class Loader<TInput, TOutput, TCtx>(
     IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
     IdempotencyRecordStep<TOutput, TCtx>? idempotencyRecorder,
     BusinessIncidentRouteStep<TOutput, TCtx> businessIncidentRouter,
-    SendStep<TOutput, TCtx>? receiptSender = null,
+    SendReceiptStep<TOutput, TCtx>? receiptSender = null,
     ArchivePolicy? archive = null)
     where TCtx : Context
 {

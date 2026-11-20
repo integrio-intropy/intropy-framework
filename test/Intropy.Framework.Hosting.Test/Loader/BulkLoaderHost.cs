@@ -1,3 +1,4 @@
+using System.Text.Json;
 using CloudNative.CloudEvents;
 using Intropy.Contracts.BusinessIncidentService;
 using Intropy.Framework.Blocks.BulkLoader;
@@ -87,12 +88,12 @@ public sealed class BulkLoaderHost : IAsyncDisposable
     private static BulkLoaderBuilder<T, T, Context> Pipeline<T>(BulkLoaderBuilder<T, T, Context> builder,
         RecordingBatchSender<T> sender, Func<T, bool>? reject = null, BatchExtractStep<T, Context>? lookup = null)
     {
-        builder.WithDeserializer(new JsonDeserializer<T>());
+        builder.WithDeserializer(new BulkJsonDeserializer<T>());
         if (lookup is not null)
             builder.WithBatchExtractor(lookup);
         return builder
-            .WithValidator(new TestValidator<T>(reject))
-            .WithTransformer(new IdentityTransformer<T>())
+            .WithValidator(new BulkTestValidator<T>(reject))
+            .WithTransformer(new BulkIdentityTransformer<T>())
             .WithBatchSender(sender)
             .WithBusinessIncidents(ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"),
                 ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"));
@@ -133,4 +134,60 @@ public sealed class RecordingBatchSender<T> : BatchSendStep<T, Context>
         return Task.FromResult<IReadOnlyList<StepResult<T>>>(
             [.. entries.Select(e => (StepResult<T>)new StepResult<T>.Success(e.Value))]);
     }
+}
+
+// The bulk loader's own per-message steps (Intropy.Framework.Blocks.BulkLoader.Steps), mirroring the
+// Loader's test steps in LoaderTestSupport.
+
+/// <summary>Deserializes camelCase JSON; a payload that will not parse is a terminal business failure,
+/// so no redelivery is left behind for later tests.</summary>
+public sealed class BulkJsonDeserializer<T> : DeserializeStep<T, Context>
+{
+    private static readonly JsonSerializerOptions s_options = new(JsonSerializerDefaults.Web);
+
+    public override Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(ReadOnlyMemory<byte> input,
+        Context context, CancellationToken ct)
+    {
+        T? value;
+        try
+        {
+            value = JsonSerializer.Deserialize<T>(input.Span, s_options);
+        }
+        catch (JsonException e)
+        {
+            var incident = new BusinessIncidentData
+            {
+                Description = "The payload is not valid JSON for this pipeline",
+                Context = new Dictionary<string, string> { ["error"] = e.Message }
+            };
+            return Task.FromResult<(BusinessStepResult<T>, Context)>(
+                (new BusinessStepResult<T>.Failure(incident, Retriable: false), context));
+        }
+
+        return Task.FromResult<(BusinessStepResult<T>, Context)>((new BusinessStepResult<T>.Success(value!), context));
+    }
+}
+
+/// <summary>Accepts every input, or rejects the ones <paramref name="reject"/> matches as a terminal
+/// business failure.</summary>
+public sealed class BulkTestValidator<T>(Func<T, bool>? reject = null) : ValidateStep<T, Context>
+{
+    public override Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(T input, Context context,
+        CancellationToken ct)
+    {
+        BusinessStepResult<T> result = reject?.Invoke(input) == true
+            ? new BusinessStepResult<T>.Failure(new BusinessIncidentData
+            {
+                Description = "Rejected by the test validator", Context = new Dictionary<string, string>()
+            }, Retriable: false)
+            : new BusinessStepResult<T>.Success(input);
+        return Task.FromResult<(BusinessStepResult<T>, Context)>((result, context));
+    }
+}
+
+public sealed class BulkIdentityTransformer<T> : TransformStep<T, T, Context>
+{
+    public override Task<(TechnicalStepResult<T> Result, Context Context)> ExecuteAsync(T input, Context context,
+        CancellationToken ct) =>
+        Task.FromResult<(TechnicalStepResult<T>, Context)>((new TechnicalStepResult<T>.Success(input), context));
 }

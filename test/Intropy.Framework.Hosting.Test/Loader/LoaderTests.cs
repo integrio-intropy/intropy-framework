@@ -219,14 +219,17 @@ public class LoaderTests
     }
 
     [Fact]
-    public async Task SenderFailure_LeavesTheMessageForRedelivery()
+    public async Task SenderFailure_RoutesAnIncidentAndLeavesTheMessageForRedelivery()
     {
         await using var host = await LoaderHost.StartRoutingAsync();
         host.CreatedSender.Failure = new InvalidOperationException("Destination unreachable");
 
         var ack = await host.DeliverAsync(Event(LoaderHost.Created, "ORD-1", Created("ORD-1")));
 
+        // A failed send is a business failure: the incident is routed, and being retriable by
+        // default it still leaves the message for redelivery.
         Assert.Equal(DeliveryAck.Retry, ack);
+        Assert.Single(host.Incidents.Incidents);
         Assert.Empty(host.Idempotency.Committed);
     }
 

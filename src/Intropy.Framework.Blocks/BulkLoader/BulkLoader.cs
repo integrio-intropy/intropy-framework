@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Intropy.Framework.Blocks.BulkLoader.Steps;
-using Intropy.Framework.Blocks.Loader.Steps;
 using Intropy.Framework.Blocks.Shared;
 using Intropy.Framework.Blocks.Shared.Steps;
 using Intropy.Framework.Core.Pipeline.Abstractions.Results;
@@ -44,7 +43,7 @@ public class BulkLoader<TInput, TOutput, TCtx> where TCtx : Context
     private readonly IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
     private readonly IdempotencyRecordStep<TOutput, TCtx>? _idempotencyRecorder;
     private readonly BusinessIncidentRouteStep<TOutput, TCtx> _businessIncidentRouter;
-    private readonly SendStep<TOutput, TCtx>? _receiptSender;
+    private readonly SendReceiptStep<TOutput, TCtx>? _receiptSender;
     private readonly int _degreeOfParallelism;
 
     /// <param name="pipelineName">The name of the pipeline.</param>
@@ -76,7 +75,7 @@ public class BulkLoader<TInput, TOutput, TCtx> where TCtx : Context
         IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
         IdempotencyRecordStep<TOutput, TCtx>? idempotencyRecorder,
         BusinessIncidentRouteStep<TOutput, TCtx> businessIncidentRouter,
-        SendStep<TOutput, TCtx>? receiptSender,
+        SendReceiptStep<TOutput, TCtx>? receiptSender,
         int degreeOfParallelism)
     {
         if ((sender is null) == (batchSender is null))

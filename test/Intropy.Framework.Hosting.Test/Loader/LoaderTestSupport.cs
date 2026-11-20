@@ -109,7 +109,7 @@ public sealed class RecordingSender<T> : SendStep<T, Context>
     /// host put there before the pipeline ran.</summary>
     public Context? LastContext { get; private set; }
 
-    public override async Task<(TechnicalStepResult<T> Result, Context Context)> ExecuteAsync(T input,
+    public override async Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(T input,
         Context context, CancellationToken ct)
     {
         Interlocked.Increment(ref _attempts);
@@ -122,6 +122,6 @@ public sealed class RecordingSender<T> : SendStep<T, Context>
             throw new InvalidOperationException("Destination unreachable (scripted failure)");
         LastContext = context;
         lock (_sent) _sent.Add((input, context.IsRetry));
-        return (new TechnicalStepResult<T>.Success(input), context);
+        return (new BusinessStepResult<T>.Success(input), context);
     }
 }

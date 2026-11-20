@@ -153,6 +153,21 @@ The Blocks package provides pre-named step abstractions for common integration p
 | `SerializeStep<T, TCtx>` | `TechnicalStep<T, byte[], TCtx>` | Typed object → bytes |
 | `SendStep<TCtx>` | `BusinessStep<byte[], byte[], TCtx>` | Send to destination |
 
+### Loader steps
+
+The Bulk Loader has its own per-message steps with the same names and base classes, in
+`Intropy.Framework.Blocks.BulkLoader.Steps`, next to its batch steps `BatchExtractStep` and
+`BatchSendStep`.
+
+| Abstract class | Base class | Input → Output |
+|---|---|---|
+| `DeserializeStep<TInput, TCtx>` | `BusinessStep<ReadOnlyMemory<byte>, TInput, TCtx>` | Raw bytes → typed object |
+| `ExtractStep<TInput, TCtx>` | `BusinessStep<TInput, TInput, TCtx>` | Enrichment (same type in/out) |
+| `ValidateStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Validation (same type in/out) |
+| `TransformStep<TInput, TOutput, TCtx>` | `TechnicalStep<TInput, TOutput, TCtx>` | Type conversion |
+| `SendStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Send to the external system |
+| `SendReceiptStep<T, TCtx>` | `TechnicalStep<T, T, TCtx>` | Send a receipt after a successful load |
+
 ### Receive pipeline steps
 
 | Abstract class | Base class | Input → Output |
@@ -202,9 +217,9 @@ An uncaught exception takes the step class's answer, `ExceptionsAreRetriable`, w
 message destroys it, while leaving it for redelivery still ends in the broker's dead-letter queue.
 Override it to `false` on a step whose throws are verdicts on the data.
 
-A Transactional Integration's `SendStep` relies on that default: failing to *reach* a destination
-says nothing about the payload, so the incident is raised and the message survives for another
-attempt.
+A Transactional Integration's and a Loader's `SendStep` rely on that default: failing to *reach* a
+destination says nothing about the payload, so the incident is raised and the message survives for
+another attempt.
 
 !!! note "Source files are different"
     `Retriable` governs redelivery, so it has no effect on a file swept from a source port — a sweep
