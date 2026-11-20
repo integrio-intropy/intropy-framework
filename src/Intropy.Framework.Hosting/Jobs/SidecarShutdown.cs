@@ -19,4 +19,12 @@ public enum SidecarShutdown
     /// a failed run then leaves the sidecar running and the pod never completes.
     /// </summary>
     OnSuccess,
+
+    /// <summary>
+    /// Never. For a pod whose sidecar is a Kubernetes native sidecar (an init container with
+    /// <c>restartPolicy: Always</c>): the kubelet stops it when the app exits, under either
+    /// restart policy. A shutdown call there only makes the kubelet restart the sidecar once
+    /// more before the pod ends. With an ordinary sidecar container the pod never completes.
+    /// </summary>
+    Never,
 }

@@ -18,6 +18,7 @@ public class SidecarShutdownConfigurationTests
     [InlineData("OnSuccess", SidecarShutdown.OnSuccess)]
     [InlineData(" onsuccess ", SidecarShutdown.OnSuccess)]
     [InlineData("always", SidecarShutdown.Always)]
+    [InlineData("Never", SidecarShutdown.Never)]
     public void Parse_AcceptsTheMemberNames(string? value, SidecarShutdown? expected)
     {
         Assert.Equal(expected, JobOptions.ParseSidecarShutdown(value));
