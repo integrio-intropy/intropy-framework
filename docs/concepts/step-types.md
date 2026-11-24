@@ -155,9 +155,10 @@ The Blocks package provides pre-named step abstractions for common integration p
 
 ### Loader steps
 
-The Bulk Loader has its own per-message steps with the same names and base classes, in
+The Bulk Loader has its own per-message steps with the same names, in
 `Intropy.Framework.Blocks.BulkLoader.Steps`, next to its batch steps `BatchExtractStep` and
-`BatchSendStep`.
+`BatchSendStep`. It has no serialize step: its `SendStep<T, TCtx>` and `SendReceiptStep<T, TCtx>`
+still take the transformed output.
 
 | Abstract class | Base class | Input → Output |
 |---|---|---|
@@ -165,8 +166,9 @@ The Bulk Loader has its own per-message steps with the same names and base class
 | `ExtractStep<TInput, TCtx>` | `BusinessStep<TInput, TInput, TCtx>` | Enrichment (same type in/out) |
 | `ValidateStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Validation (same type in/out) |
 | `TransformStep<TInput, TOutput, TCtx>` | `TechnicalStep<TInput, TOutput, TCtx>` | Type conversion |
-| `SendStep<T, TCtx>` | `BusinessStep<T, T, TCtx>` | Send to the external system |
-| `SendReceiptStep<T, TCtx>` | `TechnicalStep<T, T, TCtx>` | Send a receipt after a successful load |
+| `SerializeStep<T, TCtx>` | `TechnicalStep<T, byte[], TCtx>` | Typed object → bytes (`PassThroughSerializer<TCtx>` for `byte[]`) |
+| `SendStep<TCtx>` | `BusinessStep<byte[], byte[], TCtx>` | Send to the external system |
+| `SendReceiptStep<T, TCtx>` | `TechnicalStep<T, T, TCtx>` | Send a receipt after a successful load (`T` is `byte[]` in the Loader) |
 
 ### Receive pipeline steps
 

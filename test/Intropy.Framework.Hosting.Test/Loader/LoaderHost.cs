@@ -145,6 +145,7 @@ public sealed class LoaderHost : IAsyncDisposable
             builder.WithIdempotency();
         return builder
             .WithTransformer(new IdentityTransformer<T>())
+            .WithSerializer(new JsonSerializeStep<T>())
             .WithSender(sender)
             .WithBusinessIncidents(ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"),
                 ctx => ctx.Metadata.GetValueOrDefault("cloudevent.subject", "unknown"));

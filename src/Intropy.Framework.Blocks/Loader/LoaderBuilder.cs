@@ -19,7 +19,8 @@ namespace Intropy.Framework.Blocks.Loader;
 ///   <item>Validate: validates the POCO</item>
 ///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
-///   <item>Send: sends the data to the external system</item>
+///   <item>Serialize: converts the output POCO into the bytes that are sent</item>
+///   <item>Send: sends the bytes to the external system</item>
 ///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Send receipt (optional): sends a receipt after a successful load</item>
 ///   <item>Route business incidents: routes any business incidents that occurred during the execution</item>
@@ -28,7 +29,7 @@ namespace Intropy.Framework.Blocks.Loader;
 /// skipped, and every message that reaches the pipeline is loaded.
 /// </summary>
 /// <typeparam name="TInput">The input type (deserialized from CloudEvent.Data)</typeparam>
-/// <typeparam name="TOutput">The output type (sent to external system)</typeparam>
+/// <typeparam name="TOutput">The output type of the transform, serialized before it is sent</typeparam>
 /// <typeparam name="TCtx">The context type</typeparam>
 public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
 {
@@ -42,14 +43,15 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     private readonly List<ExtractStep<TInput, TCtx>> _extractors = new();
     private ValidateStep<TInput, TCtx>? _validator;
     private TransformStep<TInput, TOutput, TCtx>? _transformer;
-    private SendStep<TOutput, TCtx>? _sender;
+    private SerializeStep<TOutput, TCtx>? _serializer;
+    private SendStep<TCtx>? _sender;
     private IdempotencyCheckStep<TInput, TCtx>? _idempotencyChecker;
-    private IdempotencyRecordStep<TOutput, TCtx>? _idempotencyRecorder;
-    private BusinessIncidentRouteStep<TOutput, TCtx>? _businessIncidentRouter;
+    private IdempotencyRecordStep<byte[], TCtx>? _idempotencyRecorder;
+    private BusinessIncidentRouteStep<byte[], TCtx>? _businessIncidentRouter;
     private ArchivePolicy? _archive;
 
     // Optional receipt sender
-    private SendReceiptStep<TOutput, TCtx>? _receiptSender;
+    private SendReceiptStep<byte[], TCtx>? _receiptSender;
 
     // The CloudEvent type of the route this pipeline serves in a routing loader; null otherwise.
     private readonly string? _routeEventType;
@@ -241,12 +243,44 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         => WithTransformer(StepFromServices.Resolve<TStep>(_serviceProvider));
 
     /// <summary>
-    /// Configures sending using a custom sender.
-    /// This step sends the transformed data to the external system.
+    /// Configures serialization using a custom serializer.
+    /// This step converts the transformed output into the bytes the sender writes as they are.
     /// </summary>
-    /// <param name="sender">The <see cref="SendStep{T,TCtx}"/> that sends data to the external system.</param>
+    /// <param name="serializer">The <see cref="SerializeStep{T,TCtx}"/> that converts TOutput to bytes.
+    /// Use <see cref="PassThroughSerializer{TCtx}"/> when the transform already produces the bytes.</param>
     /// <returns>The builder for method chaining.</returns>
-    public LoaderBuilder<TInput, TOutput, TCtx> WithSender(SendStep<TOutput, TCtx> sender)
+    public LoaderBuilder<TInput, TOutput, TCtx> WithSerializer(SerializeStep<TOutput, TCtx> serializer)
+    {
+        _serializer = serializer;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures serialization by resolving the registered <typeparamref name="TStep"/> from the
+    /// service provider.
+    /// This step converts the transformed output into the bytes the sender writes as they are.
+    /// </summary>
+    /// <remarks>
+    /// Register the step against its concrete type, e.g. <c>services.AddScoped&lt;MySerializer&gt;()</c>.
+    /// The step is resolved once, when this method is called, in the scope the pipeline is built in,
+    /// which is each message's own scope for a hosted loader — so a scoped registration exercises
+    /// its per-message lifetime. In a routing loader, each route builds its own pipeline, so one
+    /// route's generic resolution does not clash with another route's step type.
+    /// </remarks>
+    /// <typeparam name="TStep">The concrete <see cref="SerializeStep{T,TCtx}"/> to resolve from DI.</typeparam>
+    /// <returns>The builder for method chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
+    public LoaderBuilder<TInput, TOutput, TCtx> WithSerializer<TStep>()
+        where TStep : SerializeStep<TOutput, TCtx>
+        => WithSerializer(StepFromServices.Resolve<TStep>(_serviceProvider));
+
+    /// <summary>
+    /// Configures sending using a custom sender.
+    /// This step sends the serialized bytes to the external system.
+    /// </summary>
+    /// <param name="sender">The <see cref="SendStep{TCtx}"/> that sends the bytes to the external system.</param>
+    /// <returns>The builder for method chaining.</returns>
+    public LoaderBuilder<TInput, TOutput, TCtx> WithSender(SendStep<TCtx> sender)
     {
         _sender = sender;
         return this;
@@ -257,7 +291,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// provider. Use this when the sender is registered in DI by its concrete type, so the "which
     /// sender?" decision lives in service registration alongside the other external edges, and
     /// tests can replace the registration with a fake. Unlike <see cref="WithSenderFromServices"/>,
-    /// which resolves the abstract <see cref="SendStep{T,TCtx}"/>, this resolves the concrete
+    /// which resolves the abstract <see cref="SendStep{TCtx}"/>, this resolves the concrete
     /// type — both can coexist.
     /// </summary>
     /// <remarks>
@@ -267,31 +301,31 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// route builds its own pipeline, so one route's generic resolution does not clash with another
     /// route's sender type.
     /// </remarks>
-    /// <typeparam name="TStep">The concrete <see cref="SendStep{T,TCtx}"/> to resolve from DI.</typeparam>
+    /// <typeparam name="TStep">The concrete <see cref="SendStep{TCtx}"/> to resolve from DI.</typeparam>
     /// <returns>The builder for method chaining.</returns>
     /// <exception cref="InvalidOperationException">Thrown when no <typeparamref name="TStep"/> is registered in the service provider.</exception>
     public LoaderBuilder<TInput, TOutput, TCtx> WithSender<TStep>()
-        where TStep : SendStep<TOutput, TCtx>
+        where TStep : SendStep<TCtx>
         => WithSender(StepFromServices.Resolve<TStep>(_serviceProvider));
 
     /// <summary>
-    /// Configures sending by resolving the registered <see cref="SendStep{T,TCtx}"/> from the service provider.
+    /// Configures sending by resolving the registered <see cref="SendStep{TCtx}"/> from the service provider.
     /// Use this when the sender is registered in DI, so the "which sender?" decision lives in service
     /// registration alongside the other external edges, and tests can replace the registration with a fake.
     /// </summary>
     /// <remarks>
     /// Register the sender against the abstract base type, e.g.
-    /// <c>services.AddSingleton&lt;SendStep&lt;MyOutput, MyContext&gt;&gt;(sp =&gt; new MySender(...))</c>.
+    /// <c>services.AddSingleton&lt;SendStep&lt;MyContext&gt;&gt;(sp =&gt; new MySender(...))</c>.
     /// The sender is resolved once, when this method is called; register it as a singleton (or transient) rather than scoped.
     /// </remarks>
     /// <returns>The builder for method chaining.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when no <see cref="SendStep{T,TCtx}"/> is registered in the service provider.</exception>
+    /// <exception cref="InvalidOperationException">Thrown when no <see cref="SendStep{TCtx}"/> is registered in the service provider.</exception>
     public LoaderBuilder<TInput, TOutput, TCtx> WithSenderFromServices()
     {
-        _sender = _serviceProvider.GetService<SendStep<TOutput, TCtx>>()
+        _sender = _serviceProvider.GetService<SendStep<TCtx>>()
                   ?? throw new InvalidOperationException(
-                      $"{nameof(SendStep<TOutput, TCtx>)}<{typeof(TOutput).Name}, {typeof(TCtx).Name}> is not registered in the service provider. " +
-                      $"Please register it using services.AddSingleton<{nameof(SendStep<TOutput, TCtx>)}<{typeof(TOutput).Name}, {typeof(TCtx).Name}>>(...) " +
+                      $"{nameof(SendStep<TCtx>)}<{typeof(TCtx).Name}> is not registered in the service provider. " +
+                      $"Please register it using services.AddSingleton<{nameof(SendStep<TCtx>)}<{typeof(TCtx).Name}>>(...) " +
                       "with a sender implementation.");
         return this;
     }
@@ -299,14 +333,14 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
     /// <summary>
     /// Configures an optional receipt sender that runs after a successful load and, when idempotency
     /// is configured, after its record.
-    /// The receipt sender receives the pipeline output (TOutput) and can publish it in any format
+    /// The receipt sender receives the bytes that were sent and can publish a receipt in any format
     /// (e.g., CloudEvent to a Dapr topic, HTTP call, etc.).
     /// </summary>
     /// <param name="receiptSender">The <see cref="SendReceiptStep{T,TCtx}"/> that sends the receipt. A
     /// failed receipt is a technical failure.</param>
     /// <returns>The builder for method chaining.</returns>
     public LoaderBuilder<TInput, TOutput, TCtx> WithReceiptSender(
-        SendReceiptStep<TOutput, TCtx> receiptSender)
+        SendReceiptStep<byte[], TCtx> receiptSender)
     {
         ArgumentNullException.ThrowIfNull(receiptSender);
         _receiptSender = receiptSender;
@@ -330,8 +364,8 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
                                                 $"{nameof(IBusinessIncidentServiceClient)} is not registered in the service provider. Please register it using services.AddBusinessIncidentServiceClient() or register your own implementation.");
 
         _businessIncidentRouter =
-            new ExternalBusinessIncidentRouter<TOutput, TCtx>(businessIncidentServiceClient,
-                _frameworkOptions, messageIdExtractor, subjectExtractor, defaultValueFactory: () => default!);
+            new ExternalBusinessIncidentRouter<byte[], TCtx>(businessIncidentServiceClient,
+                _frameworkOptions, messageIdExtractor, subjectExtractor, defaultValueFactory: () => []);
 
         return this;
     }
@@ -390,7 +424,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
 
         var checker = new ExternalIdempotencyChecker<TInput, TCtx>(
             client, _frameworkOptions, idExtractor, DateExtractor, hashGenerator);
-        var recorder = new ExternalIdempotencyRecorder<TOutput, TCtx>(client, _frameworkOptions);
+        var recorder = new ExternalIdempotencyRecorder<byte[], TCtx>(client, _frameworkOptions);
 
         _idempotencyChecker = checker;
         _idempotencyRecorder = recorder;
@@ -449,6 +483,10 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
         if (_transformer == null)
             throw new InvalidOperationException("Transform step must be configured using WithTransformer()");
 
+        if (_serializer == null)
+            throw new InvalidOperationException(
+                "Serialize step must be configured using WithSerializer(); use PassThroughSerializer when the transform already produces the bytes");
+
         if (_sender == null)
             throw new InvalidOperationException(
                 "Sender step must be configured using WithSender() or WithSenderFromServices()");
@@ -464,6 +502,7 @@ public class LoaderBuilder<TInput, TOutput, TCtx> where TCtx : Context
             _extractors,
             _validator,
             _transformer,
+            _serializer,
             _sender,
             _idempotencyChecker,
             _idempotencyRecorder,

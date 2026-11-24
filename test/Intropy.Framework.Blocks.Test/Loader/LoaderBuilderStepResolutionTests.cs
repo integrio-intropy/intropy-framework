@@ -28,13 +28,15 @@ public class LoaderBuilderStepResolutionTests
         var validator = Assert.Throws<InvalidOperationException>(() => builder.WithValidator<ValidateStep<int, Context>>());
         var transformer = Assert.Throws<InvalidOperationException>(() => builder.WithTransformer<TransformStep<int, int, Context>>());
         var extractor = Assert.Throws<InvalidOperationException>(() => builder.WithExtractor<ExtractStep<int, Context>>());
-        var sender = Assert.Throws<InvalidOperationException>(() => builder.WithSender<SendStep<int, Context>>());
+        var serializer = Assert.Throws<InvalidOperationException>(() => builder.WithSerializer<SerializeStep<int, Context>>());
+        var sender = Assert.Throws<InvalidOperationException>(() => builder.WithSender<SendStep<Context>>());
 
         Assert.Contains("not registered in the service provider", deserializer.Message);
         Assert.Contains("Please register it using services.AddScoped", deserializer.Message);
         Assert.Contains("not registered in the service provider", validator.Message);
         Assert.Contains("not registered in the service provider", transformer.Message);
         Assert.Contains("not registered in the service provider", extractor.Message);
+        Assert.Contains("not registered in the service provider", serializer.Message);
         Assert.Contains("not registered in the service provider", sender.Message);
     }
 
@@ -46,14 +48,16 @@ public class LoaderBuilderStepResolutionTests
                 .AddSingleton(Substitute.For<ValidateStep<int, Context>>())
                 .AddSingleton(Substitute.For<TransformStep<int, int, Context>>())
                 .AddSingleton(Substitute.For<ExtractStep<int, Context>>())
-                .AddSingleton(Substitute.For<SendStep<int, Context>>())
+                .AddSingleton(Substitute.For<SerializeStep<int, Context>>())
+                .AddSingleton(Substitute.For<SendStep<Context>>())
                 .BuildServiceProvider())
             .WithDeserializer<DeserializeStep<int, Context>>()
             .WithIdempotency()
             .WithValidator<ValidateStep<int, Context>>()
             .WithTransformer<TransformStep<int, int, Context>>()
             .WithExtractor<ExtractStep<int, Context>>()
-            .WithSender<SendStep<int, Context>>()
+            .WithSerializer<SerializeStep<int, Context>>()
+            .WithSender<SendStep<Context>>()
             .WithBusinessIncidents(_ => "test", _ => "test");
 
         // All required steps configured, the last one through DI: the pipeline builds.

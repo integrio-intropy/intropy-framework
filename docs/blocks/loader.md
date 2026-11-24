@@ -11,14 +11,15 @@ graph LR
     C --> D[Validate]
     D --> E["Idempotency Check (optional)"]
     E --> F[Transform]
-    F --> G[Send]
+    F --> S[Serialize]
+    S --> G[Send]
     G --> H["Idempotency Record (optional)"]
     H --> I["Send Receipt (optional)"]
     I --> J[Business Incident Route]
 ```
 
 
-The Loader is a standalone pipeline for loading canonical data into a target system. It takes the message's **payload bytes** as input, deserializes them, optionally enriches the result via extract steps, validates it, transforms it to the target model, and sends it to the external system. The output is a `StepResult<TOutput>`.
+The Loader is a standalone pipeline for loading canonical data into a target system. It takes the message's **payload bytes** as input, deserializes them, optionally enriches the result via extract steps, validates it, transforms it to the target model, serializes that to the bytes to send, and sends them to the external system. The output is a `StepResult<byte[]>`.
 
 The message's own attributes — id, subject, time, source, type, data content type — travel on the context, not through the pipeline. Whoever runs the pipeline puts them there first: the hosting layer projects them from each delivery, and the `CloudEvent` overload of `Execute` does it for a standalone caller.
 
@@ -40,10 +41,20 @@ The pipeline executes in this order:
 3. **Validate** (`TInput → TInput`) — Validate the enriched object
 4. **Idempotency Check** (`TInput → TInput`) — Check if this message was already processed (uses `Subject` and `Time` from the context; optional, configured with `WithIdempotency`)
 5. **Transform** (`TInput → TOutput`) — Convert to the target system's model
-6. **Send** (`TOutput → TOutput`) — Send the data to the external system
-7. **Idempotency Record** — Record that this CloudEvent was processed (optional, configured with `WithIdempotency`)
-8. **Send Receipt** (`TOutput → TOutput`) — Send a receipt after a successful load (optional step)
-9. **Business Incident Route** — Route any business incidents (finalizer)
+6. **Serialize** (`TOutput → byte[]`) — Write the target model as the bytes to send
+7. **Send** (`byte[] → byte[]`) — Send the bytes to the external system
+8. **Idempotency Record** — Record that this CloudEvent was processed (optional, configured with `WithIdempotency`)
+9. **Send Receipt** (`byte[] → byte[]`) — Send a receipt after a successful load (optional step)
+10. **Business Incident Route** — Route any business incidents (finalizer)
+
+The steps split the work the same way as a Transactional Integration's send pipeline: Transform shapes the payload, Serialize owns its wire format (encoding, declaration, line endings), and Send resolves the destination from the context and its configuration and writes the bytes as they are.
+
+!!! danger "Migrating from a typed SendStep"
+    Before 2.1.0-beta.18 the Loader's sender was `SendStep<TOutput, TCtx>` and did its own
+    serialization. Move that serialization into a `SerializeStep<TOutput, TCtx>`, change the sender
+    to `SendStep<TCtx>` (it receives `byte[]`), and add `.WithSerializer(...)` to the builder. A
+    loader whose transform already produces the bytes uses `new PassThroughSerializer<TCtx>()`.
+    A `SendReceiptStep` is now `SendReceiptStep<byte[], TCtx>`.
 
 Each pipeline execution is traced via `PipelineTracing.ExecuteWithTracing`, continuing the caller's trace unless `detachTrace: true` asks for a new root span linked to it.
 
@@ -175,52 +186,61 @@ public class CustomerTransformer : TransformStep<CustomerRecord, CrmContact, Con
 }
 ```
 
+### SerializeStep
+
+Extends `TechnicalStep<T, byte[], TCtx>`. Writes the transformed output as the bytes the sender writes as they are, so the step owns the encoding of text formats. A failed serialization is a technical failure: writing a document the transform has already built does not depend on the business data.
+
+```csharp
+public class CrmContactSerializer : SerializeStep<CrmContact, Context>
+{
+    private static readonly JsonSerializerOptions s_options = new(JsonSerializerDefaults.Web);
+
+    public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        CrmContact input, Context context, CancellationToken ct) =>
+        Task.FromResult<(TechnicalStepResult<byte[]>, Context)>(
+            (new TechnicalStepResult<byte[]>.Success(JsonSerializer.SerializeToUtf8Bytes(input, s_options)), context));
+}
+```
+
+When the transform already produces the bytes (`TOutput` is `byte[]`), use the built-in `PassThroughSerializer<TCtx>`, which returns its input untouched.
+
 ### SendStep
 
-Extends `BusinessStep<T, T, TCtx>`. Sends the transformed data to the external system. The send step can enrich `TOutput` with the external system's response before returning it — this enriched version is what subsequent steps (idempotency record, receipt sender) receive.
+Extends `BusinessStep<byte[], byte[], TCtx>`. Resolves the destination from the context and its own configuration, and sends the serialized bytes as they are. What it returns is what the later steps (idempotency record, receipt sender) receive — usually the bytes it was given.
 
 A failed send is a **business failure**, as in a Transactional Integration's send step: the record did not reach the system it was meant for, which is what a business incident reports. How the message continues depends on the failure:
 
 | The send | Result | The message |
 |---|---|---|
 | Throws (the destination is down, a timeout, a 5xx) | Retriable `BusinessFailure`, described as an unhandled exception in the `Send` step | The incident is routed and the message is left for redelivery |
-| Returns `BusinessStepResult<T>.Failure(incident)` | Retriable `BusinessFailure` | The incident is routed and the message is left for redelivery |
-| Returns `BusinessStepResult<T>.Failure(incident, Retriable: false)` | `RoutedIncident` | The incident is routed and the message is acknowledged |
+| Returns `BusinessStepResult<byte[]>.Failure(incident)` | Retriable `BusinessFailure` | The incident is routed and the message is left for redelivery |
+| Returns `BusinessStepResult<byte[]>.Failure(incident, Retriable: false)` | `RoutedIncident` | The incident is routed and the message is acknowledged |
 
 Return a non-retriable failure when the destination rejects the data itself, so a redelivery would fail the same way. Override `ExceptionsAreRetriable` to make every uncaught exception terminal. See [Classifying a business failure](../concepts/step-types.md#classifying-a-business-failure).
 
 ```csharp
-public class CrmApiSender : SendStep<CrmContact, Context>
+public class CrmApiSender(HttpClient httpClient) : SendStep<Context>
 {
-    private readonly HttpClient _httpClient;
-
-    public CrmApiSender(HttpClient httpClient) => _httpClient = httpClient;
-
-    public override async Task<(BusinessStepResult<CrmContact> Result, Context Context)> ExecuteAsync(
-        CrmContact input, Context context, CancellationToken ct)
+    public override async Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct)
     {
-        var json = JsonSerializer.Serialize(input);
-        var response = await _httpClient.PostAsync("/api/contacts",
-            new StringContent(json, Encoding.UTF8, "application/json"), ct);
+        var content = new ByteArrayContent(input);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        var response = await httpClient.PostAsync("/api/contacts", content, ct);
 
         // The CRM rejected the contact itself: sending it again would fail the same way.
         if (response.StatusCode == HttpStatusCode.UnprocessableEntity)
         {
             var incident = new BusinessIncidentData
             {
-                Description = $"The CRM rejected contact {input.ExternalId}: {await response.Content.ReadAsStringAsync(ct)}"
+                Description = $"The CRM rejected the contact: {await response.Content.ReadAsStringAsync(ct)}"
             };
-            return (new BusinessStepResult<CrmContact>.Failure(incident, Retriable: false), context);
+            return (new BusinessStepResult<byte[]>.Failure(incident, Retriable: false), context);
         }
 
         // Anything else that failed is left to throw: a retriable business failure.
         response.EnsureSuccessStatusCode();
-
-        // Enrich TOutput with the external system's response
-        var responseBody = await response.Content.ReadFromJsonAsync<CrmCreateResponse>(ct);
-        var enriched = input with { ExternalId = responseBody!.Id };
-
-        return (new BusinessStepResult<CrmContact>.Success(enriched), context);
+        return (new BusinessStepResult<byte[]>.Success(input), context);
     }
 }
 ```
@@ -280,7 +300,7 @@ public class CustomerRecord : IHashable
 
 After the data is loaded into the external system, the Loader can optionally send a receipt. This is useful for notifying downstream systems that a record was successfully loaded.
 
-The receipt sender is a `SendReceiptStep<TOutput, TCtx>` that runs after the send step, and after idempotency is recorded when it is configured. Because it's a pipeline step (not a finalizer), it only executes on success — if any earlier step fails, the receipt is not sent.
+The receipt sender is a `SendReceiptStep<byte[], TCtx>` that runs after the send step, and after idempotency is recorded when it is configured. Because it's a pipeline step (not a finalizer), it only executes on success — if any earlier step fails, the receipt is not sent.
 
 Unlike the send, a failed receipt is a **technical failure**: the record was loaded, so there is nothing wrong with the data to raise a business incident about, only a notification that did not go out. The message is left for redelivery. When idempotency is configured the load is already recorded by then, so the redelivered message is cancelled as a duplicate and the receipt is not sent again.
 
@@ -288,32 +308,27 @@ Unlike the send, a failed receipt is a **technical failure**: the record was loa
 .WithReceiptSender(new LoadReceiptPublisher(daprClient))
 ```
 
-The receipt sender receives the `TOutput` that came out of the send step. If the send step enriched the output with the external system's response (e.g., an assigned external ID), the receipt sender sees that enriched version. This means the receipt can include information from the external system's response without any extra wiring.
+The receipt sender receives the bytes the send step returned — the serialized output that was sent. Business keys for the receipt are on the context (the CloudEvent attributes, or keys your own steps put there).
 
 ```csharp
-public class LoadReceiptPublisher : SendReceiptStep<CrmContact, Context>
+public class LoadReceiptPublisher(DaprClient daprClient) : SendReceiptStep<byte[], Context>
 {
-    private readonly DaprClient _daprClient;
-
-    public LoadReceiptPublisher(DaprClient daprClient) => _daprClient = daprClient;
-
-    public override async Task<(TechnicalStepResult<CrmContact> Result, Context Context)> ExecuteAsync(
-        CrmContact input, Context context, CancellationToken ct)
+    public override async Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct)
     {
-        // input.ExternalId was set by the send step from the CRM API response
         var cloudEvent = new CloudEvent
         {
-            Subject = input.ExternalId.ToString(),
+            Subject = context.Metadata[CloudEventContextKeys.Subject],
             Time = DateTimeOffset.UtcNow,
             Source = new Uri("urn:company:system:loader"),
             Type = "com.company.contact.loaded",
-            Data = input,                 // the object itself, not pre-serialized text
+            Data = input,
             DataContentType = "application/json"
         };
 
-        await _daprClient.PublishEventAsync("pubsub", "load-receipts", cloudEvent, ct);
+        await daprClient.PublishEventAsync("pubsub", "load-receipts", cloudEvent, ct);
 
-        return (new TechnicalStepResult<CrmContact>.Success(input), context);
+        return (new TechnicalStepResult<byte[]>.Success(input), context);
     }
 }
 ```
@@ -330,6 +345,7 @@ var loader = LoaderBuilder<CustomerRecord, CrmContact, Context>
     .WithValidator(new CustomerValidator())
     .WithIdempotency()
     .WithTransformer(new CustomerTransformer())
+    .WithSerializer(new CrmContactSerializer())
     .WithSender(new CrmApiSender(httpClient))
     .WithBusinessIncidents(ctx => ctx.Metadata[CloudEventContextKeys.Id])
     // Optional receipt sending:

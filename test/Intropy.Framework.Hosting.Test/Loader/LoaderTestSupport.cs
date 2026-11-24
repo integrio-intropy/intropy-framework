@@ -79,10 +79,22 @@ public sealed class IdentityTransformer<T> : TransformStep<T, T, Context>
         Task.FromResult<(TechnicalStepResult<T>, Context)>((new TechnicalStepResult<T>.Success(input), context));
 }
 
-/// <summary>Records what it sends and how often it was called; fails while <see cref="Failure"/> is
+/// <summary>Writes the output as camelCase JSON: the bytes <see cref="RecordingSender{T}"/> receives.</summary>
+public sealed class JsonSerializeStep<T> : SerializeStep<T, Context>
+{
+    internal static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
+
+    public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(T input, Context context,
+        CancellationToken ct) =>
+        Task.FromResult<(TechnicalStepResult<byte[]>, Context)>(
+            (new TechnicalStepResult<byte[]>.Success(JsonSerializer.SerializeToUtf8Bytes(input, Options)), context));
+}
+
+/// <summary>Records what it sends, read back from the bytes <see cref="JsonSerializeStep{T}"/>
+/// wrote, and how often it was called; fails while <see cref="Failure"/> is
 /// set or for the next <see cref="FailNext"/> calls, and waits for <see cref="Gate"/> when one is
 /// set.</summary>
-public sealed class RecordingSender<T> : SendStep<T, Context>
+public sealed class RecordingSender<T> : SendStep<Context>
 {
     private readonly List<(T Value, bool IsRetry)> _sent = [];
     private int _attempts;
@@ -109,7 +121,7 @@ public sealed class RecordingSender<T> : SendStep<T, Context>
     /// host put there before the pipeline ran.</summary>
     public Context? LastContext { get; private set; }
 
-    public override async Task<(BusinessStepResult<T> Result, Context Context)> ExecuteAsync(T input,
+    public override async Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(byte[] input,
         Context context, CancellationToken ct)
     {
         Interlocked.Increment(ref _attempts);
@@ -121,7 +133,8 @@ public sealed class RecordingSender<T> : SendStep<T, Context>
         if (Interlocked.Decrement(ref _failNext) >= 0)
             throw new InvalidOperationException("Destination unreachable (scripted failure)");
         LastContext = context;
-        lock (_sent) _sent.Add((input, context.IsRetry));
-        return (new BusinessStepResult<T>.Success(input), context);
+        var value = JsonSerializer.Deserialize<T>(input, JsonSerializeStep<T>.Options)!;
+        lock (_sent) _sent.Add((value, context.IsRetry));
+        return (new BusinessStepResult<byte[]>.Success(input), context);
     }
 }
