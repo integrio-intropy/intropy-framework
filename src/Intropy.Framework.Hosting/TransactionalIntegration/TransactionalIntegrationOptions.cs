@@ -41,8 +41,9 @@ public class TransactionalIntegrationOptions
 
 
     /// <summary>
-    /// The time to wait between messages before deciding to shut down.
-    /// This time begins when the adapter has returned all items, and they have been published to the queue.
+    /// The time to wait between messages before deciding to shut down: no message in flight and
+    /// none received or finished for this long. This time begins when the adapter has returned all
+    /// items, and they have been published to the queue.
     /// </summary>
     /// <value>Default: 5 seconds</value>
     public TimeSpan IdleTimeout { get; set; } = TimeSpan.FromSeconds(5);

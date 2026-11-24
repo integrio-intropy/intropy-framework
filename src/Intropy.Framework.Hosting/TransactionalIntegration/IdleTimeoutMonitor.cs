@@ -51,7 +51,7 @@ internal class IdleTimeoutMonitor
                 continue;
 
             _logger.LogInformation(
-                "No messages received for {TimeoutSeconds}s and no messages in progress. Shutting down.",
+                "No message received or finished for {TimeoutSeconds}s and none in progress. Shutting down.",
                 _idleTimeout.TotalSeconds);
             return;
         }
