@@ -18,7 +18,8 @@ namespace Intropy.Framework.Blocks.Loader;
 ///   <item>Validate: validates the POCO</item>
 ///   <item>Idempotency check (optional): checks so that the same data has not been processed already</item>
 ///   <item>Transform: transforms the input POCO into an output POCO</item>
-///   <item>Send: sends the data to the external system</item>
+///   <item>Serialize: converts the output POCO into the bytes that are sent</item>
+///   <item>Send: sends the bytes to the external system</item>
 ///   <item>Record idempotency (optional): records that the data has been processed</item>
 ///   <item>Send receipt (optional): sends a receipt after a successful load</item>
 ///   <item>Archive incident (optional): makes sure an incident's payload is archived, and names the copy on the incident</item>
@@ -41,7 +42,8 @@ namespace Intropy.Framework.Blocks.Loader;
 /// <param name="extractors">Steps that extract data from the input</param>
 /// <param name="validator">Step that validates the input</param>
 /// <param name="transformer">Step that transforms TInput to TOutput</param>
-/// <param name="sender">Step that sends data to the external system</param>
+/// <param name="serializer">Step that converts TOutput to the bytes that are sent</param>
+/// <param name="sender">Step that sends the bytes to the external system</param>
 /// <param name="idempotencyChecker">Optional step that checks for duplicate processing. Skipped when null.</param>
 /// <param name="idempotencyRecorder">Optional step that records successful processing. Skipped when null.</param>
 /// <param name="businessIncidentRouter">Finalizer that routes business incidents</param>
@@ -49,7 +51,7 @@ namespace Intropy.Framework.Blocks.Loader;
 /// <param name="archive">Optional archive the received payload is copied to: on receipt, on a
 /// business incident, or both (see <see cref="ArchiveMode"/>). Skipped when null.</param>
 /// <typeparam name="TInput">The input type (deserialized from the payload)</typeparam>
-/// <typeparam name="TOutput">The output type (sent to external system)</typeparam>
+/// <typeparam name="TOutput">The output type of the transform, serialized before it is sent</typeparam>
 /// <typeparam name="TCtx">The context type</typeparam>
 public class Loader<TInput, TOutput, TCtx>(
     string pipelineName,
@@ -58,11 +60,12 @@ public class Loader<TInput, TOutput, TCtx>(
     IReadOnlyList<ExtractStep<TInput, TCtx>> extractors,
     ValidateStep<TInput, TCtx> validator,
     TransformStep<TInput, TOutput, TCtx> transformer,
-    SendStep<TOutput, TCtx> sender,
+    SerializeStep<TOutput, TCtx> serializer,
+    SendStep<TCtx> sender,
     IdempotencyCheckStep<TInput, TCtx>? idempotencyChecker,
-    IdempotencyRecordStep<TOutput, TCtx>? idempotencyRecorder,
-    BusinessIncidentRouteStep<TOutput, TCtx> businessIncidentRouter,
-    SendReceiptStep<TOutput, TCtx>? receiptSender = null,
+    IdempotencyRecordStep<byte[], TCtx>? idempotencyRecorder,
+    BusinessIncidentRouteStep<byte[], TCtx> businessIncidentRouter,
+    SendReceiptStep<byte[], TCtx>? receiptSender = null,
     ArchivePolicy? archive = null)
     where TCtx : Context
 {
@@ -79,7 +82,7 @@ public class Loader<TInput, TOutput, TCtx>(
     /// trace, linked to the current one. Hosts that prepare a message trace pass false explicitly;
     /// standalone callers rarely need to detach.</param>
     /// <returns>The result of the pipeline execution and the final context</returns>
-    public async Task<(StepResult<TOutput> Result, TCtx Context)> Execute(ReadOnlyMemory<byte> input, TCtx context,
+    public async Task<(StepResult<byte[]> Result, TCtx Context)> Execute(ReadOnlyMemory<byte> input, TCtx context,
         bool detachTrace = false, CancellationToken ct = default)
     {
         return await PipelineTracing.ExecuteWithTracing(async () =>
@@ -92,6 +95,7 @@ public class Loader<TInput, TOutput, TCtx>(
                     .AddStep(validator)
                     .AddOptionalStep(idempotencyChecker)
                     .AddStep(transformer)
+                    .AddStep(serializer)
                     .AddStep(sender)
                     .AddOptionalStep(idempotencyRecorder);
 
@@ -99,7 +103,7 @@ public class Loader<TInput, TOutput, TCtx>(
                     pipeline = pipeline.AddStep(receiptSender);
 
                 return await pipeline
-                    .AddOptionalFinalizer(ArchiveSteps.OnIncident<TOutput, TCtx>(archive, input))
+                    .AddOptionalFinalizer(ArchiveSteps.OnIncident<byte[], TCtx>(archive, input))
                     .AddFinalizer(businessIncidentRouter);
             },
             pipelineName: pipelineName,
@@ -127,7 +131,7 @@ public class Loader<TInput, TOutput, TCtx>(
     /// <returns>The result of the pipeline execution and the final context</returns>
     /// <exception cref="ArgumentNullException"><paramref name="input"/> or <paramref name="context"/>
     /// is null.</exception>
-    public Task<(StepResult<TOutput> Result, TCtx Context)> Execute(CloudEvent input, TCtx context,
+    public Task<(StepResult<byte[]> Result, TCtx Context)> Execute(CloudEvent input, TCtx context,
         bool detachTrace = false, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(input);

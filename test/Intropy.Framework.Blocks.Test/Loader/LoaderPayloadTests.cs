@@ -114,7 +114,7 @@ public class LoaderPayloadTests
 
         var (result, _) = await pipeline.Execute(payload, context);
 
-        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        Assert.IsType<StepResult<byte[]>.TechnicalFailure>(result);
     }
 
     private static CloudEvent EventWith(object data) => new()
@@ -137,6 +137,7 @@ public class LoaderPayloadTests
             .WithValidator(new CustomerValidator())
             .WithIdempotency()
             .WithTransformer(new CustomerTransformer())
+            .WithSerializer(new CustomerSerializer())
             .WithSender(new CustomerSender())
             .WithBusinessIncidents(
                 context => context.Metadata.GetValueOrDefault(CloudEventContextKeys.Subject, "unknown"),

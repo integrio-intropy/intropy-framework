@@ -111,7 +111,7 @@ public class LoaderIdempotencyScopeTests
 
         var result = await Execute(builder);
 
-        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        Assert.IsType<StepResult<byte[]>.TechnicalFailure>(result);
         await _idempotency.DidNotReceiveWithAnyArgs().GetStatusAsync(default!);
     }
 
@@ -124,11 +124,12 @@ public class LoaderIdempotencyScopeTests
             .WithDeserializer(new CustomerDeserializer())
             .WithValidator(new CustomerValidator())
             .WithTransformer(new CustomerTransformer())
+            .WithSerializer(new CustomerSerializer())
             .WithSender(new CustomerSender())
             .WithBusinessIncidents(_ => "unknown", _ => "unknown");
     }
 
-    private static async Task<StepResult<LoaderCustomerOut>> Execute(LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> builder)
+    private static async Task<StepResult<byte[]>> Execute(LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> builder)
     {
         var cloudEvent = new CloudEvent
         {

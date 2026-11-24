@@ -121,24 +121,49 @@ public sealed class CustomerTransformer : TransformStep<LoaderCustomerIn, Loader
     }
 }
 
-public sealed class CustomerSender : SendStep<LoaderCustomerOut, Context>
+/// <summary>Writes the output customer as camelCase JSON, the bytes the senders receive.</summary>
+public sealed class CustomerSerializer : SerializeStep<LoaderCustomerOut, Context>
+{
+    private static readonly JsonSerializerOptions s_options = new(JsonSerializerDefaults.Web);
+
+    public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        LoaderCustomerOut input, Context context, CancellationToken ct) =>
+        Task.FromResult<(TechnicalStepResult<byte[]>, Context)>(
+            (new TechnicalStepResult<byte[]>.Success(JsonSerializer.SerializeToUtf8Bytes(input, s_options)), context));
+
+    /// <summary>Reads back what <see cref="CustomerSerializer"/> wrote.</summary>
+    public static LoaderCustomerOut Read(byte[] bytes) =>
+        JsonSerializer.Deserialize<LoaderCustomerOut>(bytes, s_options)!;
+}
+
+public sealed class CustomerSender : SendStep<Context>
 {
     public int SentCount { get; private set; }
 
-    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
-        LoaderCustomerOut input, Context context, CancellationToken ct)
+    public List<byte[]> SentPayloads { get; } = [];
+
+    public override Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct)
     {
         // Simulate successful send
         SentCount++;
-        return Task.FromResult<(BusinessStepResult<LoaderCustomerOut>, Context)>(
-            (new BusinessStepResult<LoaderCustomerOut>.Success(input), context));
+        SentPayloads.Add(input);
+        return Task.FromResult<(BusinessStepResult<byte[]>, Context)>(
+            (new BusinessStepResult<byte[]>.Success(input), context));
     }
 }
 
-public sealed class FailingSender : SendStep<LoaderCustomerOut, Context>
+public sealed class FailingSerializer : SerializeStep<LoaderCustomerOut, Context>
 {
-    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
-        LoaderCustomerOut input, Context context, CancellationToken ct)
+    public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        LoaderCustomerOut input, Context context, CancellationToken ct) =>
+        throw new InvalidOperationException("Simulated serialize failure");
+}
+
+public sealed class FailingSender : SendStep<Context>
+{
+    public override Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct)
     {
         throw new InvalidOperationException("Simulated send failure");
     }
@@ -146,48 +171,49 @@ public sealed class FailingSender : SendStep<LoaderCustomerOut, Context>
 
 /// <summary>Throws for one customer and sends the others, so a batch can mix a failed send with
 /// successful ones.</summary>
-public sealed class FailingSenderFor(int customerId) : SendStep<LoaderCustomerOut, Context>
+public sealed class FailingSenderFor(int customerId) : SendStep<Context>
 {
     public List<int> Sent { get; } = [];
 
-    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
-        LoaderCustomerOut input, Context context, CancellationToken ct)
+    public override Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct)
     {
-        if (input.CustomerId == customerId)
+        var customer = CustomerSerializer.Read(input);
+        if (customer.CustomerId == customerId)
             throw new HttpRequestException("Destination unreachable");
-        lock (Sent) Sent.Add(input.CustomerId);
-        return Task.FromResult<(BusinessStepResult<LoaderCustomerOut>, Context)>(
-            (new BusinessStepResult<LoaderCustomerOut>.Success(input), context));
+        lock (Sent) Sent.Add(customer.CustomerId);
+        return Task.FromResult<(BusinessStepResult<byte[]>, Context)>(
+            (new BusinessStepResult<byte[]>.Success(input), context));
     }
 }
 
 /// <summary>Rejects every item with a business failure of its own, retriable or not.</summary>
-public sealed class RejectingSender(bool retriable) : SendStep<LoaderCustomerOut, Context>
+public sealed class RejectingSender(bool retriable) : SendStep<Context>
 {
-    public override Task<(BusinessStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
-        LoaderCustomerOut input, Context context, CancellationToken ct) =>
-        Task.FromResult<(BusinessStepResult<LoaderCustomerOut>, Context)>(
-            (new BusinessStepResult<LoaderCustomerOut>.Failure(
+    public override Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct) =>
+        Task.FromResult<(BusinessStepResult<byte[]>, Context)>(
+            (new BusinessStepResult<byte[]>.Failure(
                 new BusinessIncidentData { Description = "The destination rejected the customer" }, retriable), context));
 }
 
-public sealed class ReceiptSender : SendReceiptStep<LoaderCustomerOut, Context>
+public sealed class ReceiptSender : SendReceiptStep<byte[], Context>
 {
-    public List<LoaderCustomerOut> SentReceipts { get; } = new();
+    public List<byte[]> SentReceipts { get; } = new();
 
-    public override Task<(TechnicalStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
-        LoaderCustomerOut input, Context context, CancellationToken ct)
+    public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct)
     {
         SentReceipts.Add(input);
-        return Task.FromResult<(TechnicalStepResult<LoaderCustomerOut>, Context)>(
-            (new TechnicalStepResult<LoaderCustomerOut>.Success(input), context));
+        return Task.FromResult<(TechnicalStepResult<byte[]>, Context)>(
+            (new TechnicalStepResult<byte[]>.Success(input), context));
     }
 }
 
-public sealed class FailingReceiptSender : SendReceiptStep<LoaderCustomerOut, Context>
+public sealed class FailingReceiptSender : SendReceiptStep<byte[], Context>
 {
-    public override Task<(TechnicalStepResult<LoaderCustomerOut> Result, Context Context)> ExecuteAsync(
-        LoaderCustomerOut input, Context context, CancellationToken ct)
+    public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+        byte[] input, Context context, CancellationToken ct)
     {
         throw new InvalidOperationException("Simulated receipt publish failure");
     }

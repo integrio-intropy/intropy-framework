@@ -57,7 +57,7 @@ This is a type-safe, observable pipeline framework for building system integrati
 Located in `src/Intropy.Framework.Blocks/`:
 
 - **Extractor** (`string` → `CloudEvent`): system-to-queue. Extract → deserialize → idempotency → validate → transform → serialize → publish (Dapr pub/sub or service invoke).
-- **Loader** (`CloudEvent` → `TOutput`): queue-to-system. Consume CloudEvent → transform → send.
+- **Loader** (`CloudEvent` → `byte[]`): queue-to-system. Consume CloudEvent → transform → serialize → send.
 - **TransactionalIntegration**: file-based full lifecycle. Receive files → enqueue → process → send, with idempotency.
 
 Each block exposes a fluent builder (e.g. `ExtractorBuilder<TInput, TOutput, TCtx>.Create(...)`).

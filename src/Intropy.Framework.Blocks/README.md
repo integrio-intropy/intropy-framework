@@ -7,7 +7,7 @@ Each block is a ready-made pipeline shape for a common integration pattern:
 | Block | Input → Output | Use case |
 |-------|---------------|----------|
 | **Extractor** | `byte[]` → `CloudEvent` | System-to-queue: extract data, transform, publish as CloudEvent |
-| **Loader** | `CloudEvent` → `TOutput` | Queue-to-system: consume CloudEvent, transform, send |
+| **Loader** | `CloudEvent` → `byte[]` | Queue-to-system: consume CloudEvent, transform, serialize, send |
 | **TransactionalIntegration** | File-based | Receive files → enqueue → process → send, with idempotency |
 
 Each block exposes a fluent builder and wires up deserialization, validation, transformation, idempotency, and finalizers in the right order.
@@ -26,7 +26,7 @@ The builders follow one rule for how steps are supplied:
   `WithTransformer`, ...).
 
 For the send edge, `WithSenderFromServices()` resolves the sender registered against its abstract base
-type — `SendStep<TCtx>` for the Extractor, `SendStep<TOutput, TCtx>` for the Loader:
+type — `SendStep<TCtx>` for the Extractor and the Loader (each block has its own `SendStep<TCtx>`):
 
 ```csharp
 // Registration (composition root)

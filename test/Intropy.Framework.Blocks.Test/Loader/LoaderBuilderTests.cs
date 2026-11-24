@@ -17,7 +17,8 @@ public class LoaderBuilderTests
     private readonly DeserializeStep<int, Context> _deserializer = Substitute.For<DeserializeStep<int, Context>>();
     private readonly ValidateStep<int, Context> _validator = Substitute.For<ValidateStep<int, Context>>();
     private readonly TransformStep<int, int, Context> _transformer = Substitute.For<TransformStep<int, int, Context>>();
-    private readonly SendStep<int, Context> _sender = Substitute.For<SendStep<int, Context>>();
+    private readonly SerializeStep<int, Context> _serializer = Substitute.For<SerializeStep<int, Context>>();
+    private readonly SendStep<Context> _sender = Substitute.For<SendStep<Context>>();
 
     [Fact]
     public void Create_WithNullServiceProvider_ThrowsException()
@@ -82,6 +83,7 @@ public class LoaderBuilderTests
     [InlineData("Deserialize")]
     [InlineData("Validate")]
     [InlineData("Transform")]
+    [InlineData("Serialize")]
     [InlineData("Sender")]
     [InlineData("Business incident route")]
     public void Build_WhenDependencyMissing_ThrowsInvalidOperationException(string missingDependency)
@@ -103,6 +105,7 @@ public class LoaderBuilderTests
             .WithIdempotency()
             .WithValidator(_validator)
             .WithTransformer(_transformer)
+            .WithSerializer(_serializer)
             .WithSender(_sender)
             .WithBusinessIncidents(x => x.Metadata["TEST"],
                 x => x.Metadata["TEST"]);
@@ -161,6 +164,7 @@ public class LoaderBuilderTests
             .WithIdempotency(hashGenerator: _ => "custom-hash")
             .WithValidator(_validator)
             .WithTransformer(_transformer)
+            .WithSerializer(_serializer)
             .WithSender(_sender)
             .WithBusinessIncidents(x => x.Metadata["TEST"],
                 x => x.Metadata["TEST"]);
@@ -189,7 +193,7 @@ public class LoaderBuilderTests
     {
         // Arrange
         var services = GetServiceCollection();
-        services.AddSingleton<SendStep<int, Context>>(_sender);
+        services.AddSingleton<SendStep<Context>>(_sender);
         var builder = LoaderBuilder<int, int, Context>.Create("Test", services.BuildServiceProvider());
 
         builder
@@ -197,6 +201,7 @@ public class LoaderBuilderTests
             .WithIdempotency()
             .WithValidator(_validator)
             .WithTransformer(_transformer)
+            .WithSerializer(_serializer)
             .WithSenderFromServices()
             .WithBusinessIncidents(x => x.Metadata["TEST"],
                 x => x.Metadata["TEST"]);
@@ -238,6 +243,7 @@ public class LoaderBuilderTests
         if (skip != "Idempotency") builder.WithIdempotency();
         if (skip != "Validate") builder.WithValidator(_validator);
         if (skip != "Transform") builder.WithTransformer(_transformer);
+        if (skip != "Serialize") builder.WithSerializer(_serializer);
         if (skip != "Sender") builder.WithSender(_sender);
         if (skip != "Business incident route") builder.WithBusinessIncidents(x => x.Metadata["TEST"],
             x => x.Metadata["TEST"]);

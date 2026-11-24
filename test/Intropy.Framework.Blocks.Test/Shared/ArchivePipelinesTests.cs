@@ -44,6 +44,7 @@ public class ArchivePipelinesTests
             .WithDeserializer(new LoaderDeserializer())
             .WithValidator(new LoaderRejectingValidator())
             .WithTransformer(new LoaderIdentityTransformer())
+            .WithSerializer(new LoaderUtf8Serializer())
             .WithSender(new LoaderDiscardingSender())
             .WithBusinessIncidents(_ => "orders", _ => "orders")
             .WithArchive(Policy())
@@ -113,12 +114,20 @@ public class ArchivePipelinesTests
                 (new TechnicalStepResult<string>.Success(input), context));
     }
 
-    private sealed class LoaderDiscardingSender : LoaderSteps.SendStep<string, Context>
+    private sealed class LoaderUtf8Serializer : LoaderSteps.SerializeStep<string, Context>
     {
-        public override Task<(BusinessStepResult<string> Result, Context Context)> ExecuteAsync(
+        public override Task<(TechnicalStepResult<byte[]> Result, Context Context)> ExecuteAsync(
             string input, Context context, CancellationToken ct) =>
-            Task.FromResult<(BusinessStepResult<string>, Context)>(
-                (new BusinessStepResult<string>.Success(input), context));
+            Task.FromResult<(TechnicalStepResult<byte[]>, Context)>(
+                (new TechnicalStepResult<byte[]>.Success(System.Text.Encoding.UTF8.GetBytes(input)), context));
+    }
+
+    private sealed class LoaderDiscardingSender : LoaderSteps.SendStep<Context>
+    {
+        public override Task<(BusinessStepResult<byte[]> Result, Context Context)> ExecuteAsync(
+            byte[] input, Context context, CancellationToken ct) =>
+            Task.FromResult<(BusinessStepResult<byte[]>, Context)>(
+                (new BusinessStepResult<byte[]>.Success(input), context));
     }
 
     private sealed class SendDeserializer : SendSteps.DeserializeStep<string, Context>

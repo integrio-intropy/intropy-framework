@@ -61,7 +61,7 @@ public class LoaderTests
         await _idempotencyServiceClient.ReceivedWithAnyArgs(1).CommitAsync(Arg.Any<MessageInfo>());
         await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
         AssertIdempotencyContextExists(finalContext);
     }
 
@@ -84,7 +84,7 @@ public class LoaderTests
         await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().CommitAsync(Arg.Any<MessageInfo>());
         await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-        Assert.IsType<StepResult<LoaderCustomerOut>.Cancelled>(result);
+        Assert.IsType<StepResult<byte[]>.Cancelled>(result);
     }
 
     [Fact]
@@ -109,7 +109,7 @@ public class LoaderTests
                 Arg.Is<string>(x => x.Equals("customer-invalid-id", StringComparison.Ordinal)),
                 Arg.Any<BusinessIncidentData>(),
                 Arg.Any<string?>());
-        Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
+        Assert.IsType<StepResult<byte[]>.RoutedIncident>(result);
     }
 
     [Fact]
@@ -131,7 +131,7 @@ public class LoaderTests
         await _idempotencyServiceClient.DidNotReceiveWithAnyArgs().CommitAsync(Arg.Any<MessageInfo>());
         await _businessIncidentServiceClient.ReceivedWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
-        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        Assert.IsType<StepResult<byte[]>.TechnicalFailure>(result);
     }
 
     [Fact]
@@ -150,7 +150,7 @@ public class LoaderTests
         var (result, finalContext) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
         Assert.Equal(customHash, finalContext.Metadata[IdempotencyContextKeys.Hash]);
     }
 
@@ -166,7 +166,7 @@ public class LoaderTests
         var (result, finalContext) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
         Assert.True(finalContext.Metadata.ContainsKey(CloudEventContextKeys.Id));
         Assert.True(finalContext.Metadata.ContainsKey(CloudEventContextKeys.Subject));
         Assert.True(finalContext.Metadata.ContainsKey(CloudEventContextKeys.Time));
@@ -197,7 +197,7 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        Assert.IsType<StepResult<byte[]>.TechnicalFailure>(result);
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        Assert.IsType<StepResult<byte[]>.TechnicalFailure>(result);
     }
 
     [Fact]
@@ -239,8 +239,8 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
-        var receipt = Assert.Single(receiptSender.SentReceipts);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
+        var receipt = CustomerSerializer.Read(Assert.Single(receiptSender.SentReceipts));
         Assert.Equal(1337, receipt.CustomerId);
     }
 
@@ -262,7 +262,7 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
+        Assert.IsType<StepResult<byte[]>.RoutedIncident>(result);
         Assert.Empty(receiptSender.SentReceipts);
     }
 
@@ -280,7 +280,7 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
         // Assert: the record was loaded, so a failed receipt raises no business incident.
-        var failure = Assert.IsType<StepResult<LoaderCustomerOut>.TechnicalFailure>(result);
+        var failure = Assert.IsType<StepResult<byte[]>.TechnicalFailure>(result);
         Assert.Equal(["SendReceipt"], failure.Value.ErrorMessageArgs);
         await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(default!, default!, default!, default!, default);
     }
@@ -299,7 +299,7 @@ public class LoaderTests
 
         // Assert: a business failure, not a technical one. It is routed as an incident and, being
         // retriable by default, stays a failure so the host redelivers the message.
-        var failure = Assert.IsType<StepResult<LoaderCustomerOut>.BusinessFailure>(result);
+        var failure = Assert.IsType<StepResult<byte[]>.BusinessFailure>(result);
         Assert.True(failure.Retriable);
         Assert.Contains("'Send'", failure.Value.Description, StringComparison.Ordinal);
         Assert.Equal(typeof(InvalidOperationException).FullName, failure.Value.Context?["exceptionType"]);
@@ -322,7 +322,7 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, context);
 
         // Assert
-        var routed = Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
+        var routed = Assert.IsType<StepResult<byte[]>.RoutedIncident>(result);
         Assert.Equal("The destination rejected the customer", routed.Description);
         await _businessIncidentServiceClient.Received(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
@@ -343,6 +343,7 @@ public class LoaderTests
             .WithValidator(new CustomerValidator())
             .WithIdempotency(input => $"{input.CustomerId}|{input.Name}")
             .WithTransformer(new CustomerTransformer())
+            .WithSerializer(new CustomerSerializer())
             .WithSender(new CustomerSender())
             .WithBusinessIncidents(ctx =>
                     ctx.Metadata.GetValueOrDefault(CloudEventContextKeys.Subject, "unknown"),
@@ -354,7 +355,7 @@ public class LoaderTests
         var (result, finalContext) = await pipeline.Execute(cloudEvent, context);
 
         // Assert — pipeline completed successfully
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
 
         // Assert — CloudEvent metadata was extracted to context
         Assert.Equal(cloudEvent.Id, finalContext.Metadata[CloudEventContextKeys.Id]);
@@ -370,8 +371,8 @@ public class LoaderTests
         await _idempotencyServiceClient.ReceivedWithAnyArgs(1).GetStatusAsync(Arg.Any<MessageInfo>());
         await _idempotencyServiceClient.ReceivedWithAnyArgs(1).CommitAsync(Arg.Any<MessageInfo>());
 
-        // Assert — receipt was sent with the transformed output
-        var receipt = Assert.Single(receiptSender.SentReceipts);
+        // Assert — receipt was sent with the serialized output
+        var receipt = CustomerSerializer.Read(Assert.Single(receiptSender.SentReceipts));
         Assert.Equal(1337, receipt.CustomerId);
 
         // Assert — no business incidents were routed
@@ -395,8 +396,8 @@ public class LoaderTests
 
         // Assert
         Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(first);
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(second);
+        Assert.IsType<StepResult<byte[]>.Success>(first);
+        Assert.IsType<StepResult<byte[]>.Success>(second);
         Assert.Equal(2, sender.SentCount);
         Assert.False(firstContext.Metadata.ContainsKey(IdempotencyContextKeys.Id));
         Assert.False(firstContext.Metadata.ContainsKey(IdempotencyContextKeys.Hash));
@@ -416,8 +417,8 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
 
         // Assert - the receipt follows the load even with no idempotency record in between
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
-        var receipt = Assert.Single(receiptSender.SentReceipts);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
+        var receipt = CustomerSerializer.Read(Assert.Single(receiptSender.SentReceipts));
         Assert.Equal(1337, receipt.CustomerId);
         Assert.Empty(_idempotencyServiceClient.ReceivedCalls());
     }
@@ -443,7 +444,7 @@ public class LoaderTests
         await _businessIncidentServiceClient.ReceivedWithAnyArgs(1).Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
         Assert.Empty(receiptSender.SentReceipts);
-        Assert.IsType<StepResult<LoaderCustomerOut>.RoutedIncident>(result);
+        Assert.IsType<StepResult<byte[]>.RoutedIncident>(result);
     }
 
     [Fact]
@@ -460,7 +461,7 @@ public class LoaderTests
         var (result, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
 
         // Assert
-        Assert.IsType<StepResult<LoaderCustomerOut>.Success>(result);
+        Assert.IsType<StepResult<byte[]>.Success>(result);
     }
 
     private static CloudEvent CreateCloudEvent(string customerId, string name)
@@ -477,6 +478,59 @@ public class LoaderTests
         };
     }
 
+    [Fact]
+    public async Task Execute_SendsTheBytesTheSerializerWrote()
+    {
+        // Arrange
+        var cloudEvent = CreateCloudEvent("1337", "John Doe");
+        var sender = new CustomerSender();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), sender: sender).Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
+
+        // Assert: the sender got the serialized output of the transform, and the pipeline returns it
+        var success = Assert.IsType<StepResult<byte[]>.Success>(result);
+        var sent = CustomerSerializer.Read(Assert.Single(sender.SentPayloads));
+        Assert.Equal(1337, sent.CustomerId);
+        Assert.Equal("John Doe", sent.Name);
+        Assert.Equal(Assert.Single(sender.SentPayloads), success.Value);
+    }
+
+    [Fact]
+    public async Task Execute_WhenTheSerializerThrows_IsATechnicalFailureAndNothingIsSent()
+    {
+        // Arrange
+        var cloudEvent = CreateCloudEvent("1337", "John Doe");
+        var sender = new CustomerSender();
+        var pipeline = GetPipelineBuilder(_serviceCollection.BuildServiceProvider(), sender: sender,
+            serializer: new FailingSerializer()).Build();
+
+        // Act
+        var (result, _) = await pipeline.Execute(cloudEvent, GetInitialContext());
+
+        // Assert: writing the output is not a verdict on the data, so no incident is routed and the
+        // message is left for redelivery
+        var failure = Assert.IsType<StepResult<byte[]>.TechnicalFailure>(result);
+        Assert.Equal(["Serialize"], failure.Value.ErrorMessageArgs);
+        Assert.Equal(0, sender.SentCount);
+        await _businessIncidentServiceClient.DidNotReceiveWithAnyArgs().Trigger(Arg.Any<Uri>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<BusinessIncidentData>(), Arg.Any<string?>());
+        await _idempotencyServiceClient.DidNotReceive().CommitAsync(Arg.Any<MessageInfo>());
+    }
+
+    [Fact]
+    public async Task PassThroughSerializer_ReturnsItsInputUntouched()
+    {
+        var bytes = new byte[] { 0xEF, 0xBB, 0xBF, 0x3C, 0x0D, 0x0A };
+
+        var (result, _) = await new PassThroughSerializer<Context>()
+            .ExecuteAsync(bytes, GetInitialContext(), CancellationToken.None);
+
+        var success = Assert.IsType<TechnicalStepResult<byte[]>.Success>(result);
+        Assert.Same(bytes, success.Value);
+    }
+
     private static Context GetInitialContext()
     {
         var metadata = new Dictionary<string, string>();
@@ -484,7 +538,8 @@ public class LoaderTests
     }
 
     private static LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context> GetPipelineBuilder(
-        IServiceProvider serviceProvider, bool withIdempotency = true, SendStep<LoaderCustomerOut, Context>? sender = null)
+        IServiceProvider serviceProvider, bool withIdempotency = true, SendStep<Context>? sender = null,
+        SerializeStep<LoaderCustomerOut, Context>? serializer = null)
     {
         var builder = LoaderBuilder<LoaderCustomerIn, LoaderCustomerOut, Context>.Create("LoaderTest", serviceProvider)
             .WithDeserializer(new CustomerDeserializer())
@@ -493,6 +548,7 @@ public class LoaderTests
             builder.WithIdempotency();
         return builder
             .WithTransformer(new CustomerTransformer())
+            .WithSerializer(serializer ?? new CustomerSerializer())
             .WithSender(sender ?? new CustomerSender())
             .WithBusinessIncidents(context =>
                     context.Metadata.GetValueOrDefault(CloudEventContextKeys.Subject, "unknown"),
@@ -500,7 +556,7 @@ public class LoaderTests
     }
 
     private static Loader<LoaderCustomerIn, LoaderCustomerOut, Context> GetPipelineWithReceiptSender(
-        IServiceProvider serviceProvider, SendReceiptStep<LoaderCustomerOut, Context> receiptSender)
+        IServiceProvider serviceProvider, SendReceiptStep<byte[], Context> receiptSender)
     {
         return GetPipelineBuilder(serviceProvider)
             .WithReceiptSender(receiptSender)
