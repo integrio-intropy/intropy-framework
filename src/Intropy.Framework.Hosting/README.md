@@ -83,8 +83,15 @@ set in code wins, and any other value fails at startup.
 | `restartPolicy: Never` | `Always` (default) | The retry is a new pod. This pod only completes once the sidecar has stopped. |
 | `restartPolicy: OnFailure` | `OnSuccess` | The retry restarts the app in the same pod. A sidecar that exited cleanly is not restarted, so every retry would wait for a sidecar that never comes. |
 
+| Either, with the sidecar as a Kubernetes native sidecar | `Never` | The kubelet stops a native sidecar when the app exits. A shutdown call only makes the kubelet restart it once more before the pod ends. |
+
 `OnSuccess` under `restartPolicy: Never` leaves the sidecar running after a failed run, and the pod
-never completes.
+never completes. So does `Never` with a sidecar that is an ordinary container.
+
+With an ordinary sidecar container, a run that gives up waiting for the sidecar (exit code 2) does
+not stop a sidecar that starts afterwards: it waits for the app without a time limit, and the pod
+never completes. Run the sidecar as a native sidecar (`dapr.io/enable-native-sidecar: "true"`), or
+bound the Job with `activeDeadlineSeconds`.
 
 ### Counting skipped items
 

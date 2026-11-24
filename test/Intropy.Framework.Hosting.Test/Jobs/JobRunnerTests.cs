@@ -440,6 +440,28 @@ public class JobRunnerTests
         await _daprClient.Received(1).ShutdownSidecarAsync(Arg.Any<CancellationToken>());
     }
 
+    public static TheoryData<int, int> RunsUnderNever => new()
+    {
+        { 0, JobExitCodes.Success },
+        { 1, JobExitCodes.JobFailure },
+    };
+
+    [Theory]
+    [MemberData(nameof(RunsUnderNever))]
+    public async Task RunAsync_Never_LeavesTheSidecarToTheKubelet_WhateverTheOutcome(int failed, int exitCode)
+    {
+        // Arrange: a native sidecar, which the kubelet stops when the app exits.
+        _options.SidecarShutdown = SidecarShutdown.Never;
+        _job.ExecuteAsync(Arg.Any<CancellationToken>()).Returns(new RunSummary(Processed: 1, Failed: failed, Skipped: 0));
+
+        // Act
+        var result = await CreateRunner().RunAsync();
+
+        // Assert
+        Assert.Equal(exitCode, result);
+        await _daprClient.DidNotReceive().ShutdownSidecarAsync(Arg.Any<CancellationToken>());
+    }
+
     private JobRunner CreateRunner() =>
         new(_daprClient, _job, _options, _loggerFactory);
 }
