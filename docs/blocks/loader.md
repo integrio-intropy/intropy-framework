@@ -50,7 +50,7 @@ The pipeline executes in this order:
 The steps split the work the same way as a Transactional Integration's send pipeline: Transform shapes the payload, Serialize owns its wire format (encoding, declaration, line endings), and Send resolves the destination from the context and its configuration and writes the bytes as they are.
 
 !!! danger "Migrating from a typed SendStep"
-    Before 2.1.0-beta.17 the Loader's sender was `SendStep<TOutput, TCtx>` and did its own
+    Before 2.1.0-beta.18 the Loader's sender was `SendStep<TOutput, TCtx>` and did its own
     serialization. Move that serialization into a `SerializeStep<TOutput, TCtx>`, change the sender
     to `SendStep<TCtx>` (it receives `byte[]`), and add `.WithSerializer(...)` to the builder. A
     loader whose transform already produces the bytes uses `new PassThroughSerializer<TCtx>()`.
